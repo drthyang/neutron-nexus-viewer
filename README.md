@@ -2,25 +2,53 @@
 
 [![Live demo](https://img.shields.io/badge/demo-live-2563eb)](https://drthyang.github.io/neutron-nexus-viewer/)
 [![Tests](https://github.com/drthyang/neutron-nexus-viewer/actions/workflows/test.yml/badge.svg)](https://github.com/drthyang/neutron-nexus-viewer/actions/workflows/test.yml)
-[![Runs in your browser](https://img.shields.io/badge/runs%20in-your%20browser-6b6b6b)](https://drthyang.github.io/neutron-nexus-viewer/)
-[![License: AGPL v3](https://img.shields.io/badge/License-AGPL_v3-blue.svg)](LICENSE)
+[![License: AGPL v3](https://img.shields.io/badge/license-AGPL--3.0-3c8c3c)](LICENSE)
+[![Runs in the browser](https://img.shields.io/badge/runs-in%20your%20browser-6b6b6b)](https://drthyang.github.io/neutron-nexus-viewer/)
 
-**Reciprocal-space slices of 3-D neutron histograms, with symmetry averaging, artifact masking and a 3-D view — all in your browser.**
+**Reciprocal-space slices of 3-D neutron scattering data, with symmetry averaging,
+artifact masking, two-dataset comparison and a 3-D view, all in your browser.**
 
-**▶ Try it: [drthyang.github.io/neutron-nexus-viewer](https://drthyang.github.io/neutron-nexus-viewer/)** — open a Mantid `.nxs` file, the [example data](https://drthyang.github.io/neutron-nexus-viewer/?url=examples/demo_hexagonal.nxs), or [two examples side by side](https://drthyang.github.io/neutron-nexus-viewer/?url=examples/demo_hexagonal.nxs&compare=examples/demo_hexagonal_lowT.nxs). Nothing to install, and your file never leaves your machine.
+**▶ Try it: [drthyang.github.io/neutron-nexus-viewer](https://drthyang.github.io/neutron-nexus-viewer/)** —
+nothing to install, and your data never leaves your machine. Open a Mantid `.nxs`
+file, the [example dataset](https://drthyang.github.io/neutron-nexus-viewer/?url=examples/demo_hexagonal.nxs), or
+[two examples compared](https://drthyang.github.io/neutron-nexus-viewer/?url=examples/demo_hexagonal.nxs&compare=examples/demo_hexagonal_lowT.nxs).
 
-<p align="center"><img src="docs/screenshot.png" alt="NeXus Viewer comparing two hexagonal example datasets: each of the HK, HL and KL slices is cut along its diagonal, with the first dataset in the lower-left half and a low-temperature variant with superlattice peaks in the upper-right half. The control panel shows the Compare card and the processing pipeline with 6/mmm symmetry averaging and a mask; the 3-D view shows the isosurface with the split slice planes." width="100%"/></p>
+<p align="center">
+  <img src="docs/screenshot.png" alt="NeXus Viewer comparing two hexagonal example datasets: the HK, HL and KL slices are each cut along their diagonal, with the first dataset in the lower-left half and a low-temperature variant with superlattice peaks in the upper-right half. The control panel lists both files in one Dataset table and shows the processing pipeline with 6/mmm symmetry averaging and a mask; the 3-D view shows the isosurface with the split slice planes." width="100%" />
+</p>
+
+## Goals
+
+- **The data as measured, in its true geometry.** Slices are drawn with the
+  reciprocal metric from the file's UB matrix, so oblique axes meet at their real
+  angle and equal lengths in r.l.u. look equal. Nothing is smoothed or interpolated.
+- **Processing you can check.** Symmetry averaging maps bins onto bins exactly and
+  warns when the operations do not fit the cell. Masks can be previewed voxel by
+  voxel and exported. The slice engine is tested against the reference Python
+  implementation. See [docs/METHOD.md](docs/METHOD.md).
+- **Fast, private, nothing to install.** A static page reads the file locally with
+  [h5wasm](https://github.com/usnistgov/h5wasm): a 401³ volume opens in about 2 s,
+  and slices update in tens of milliseconds.
 
 ## Features
 
-- **Orthogonal slices** — HK, HL and KL cuts with live slab center and thickness, drawn in the true lattice geometry from the UB matrix. Click to move the other two slices through a point, drag a box to zoom, or drag to pan.
-- **Symmetry averaging** — any Laue class or your own operations, closed into a group and applied exactly on the bin grid, with no interpolation. A warning appears when the operations do not fit the cell.
-- **Artifact masking** — removes detector-edge voxels and symmetry outliers before averaging. Preview what is removed, and export the mask as a NumPy array.
-- **Two-dataset comparison** — open a second file, for example another temperature, and every slice is split along its diagonal: one dataset below, the other above, with the same positions, processing and color scale. Hover reads both values.
-- **3-D view** — a transparent isosurface of the processed volume, with the current slices as planes.
-- **Private and fast** — the file is read locally with [h5wasm](https://github.com/usnistgov/h5wasm). A 401³ volume loads in about 2 s, and slices update in tens of milliseconds.
+| Area | What you get | Read more |
+| --- | --- | --- |
+| **Slices** | HK, HL and KL cuts with live slab center and thickness. Click to move the other slices through a point, drag a box to zoom, or drag to pan; quad, focus and single layouts | [Slice views](docs/USER_GUIDE.md#slice-views) |
+| **Symmetry averaging** | Any Laue class or your own operations, closed into a group and applied exactly on the bin grid, with a check that they fit the cell | [Symmetry](docs/METHOD.md#symmetry-averaging) |
+| **Artifact masking** | Removes detector-edge voxels and symmetry outliers before averaging; preview what is removed and export the mask as a NumPy array | [Masking](docs/METHOD.md#masking-detector-edge-artifacts) |
+| **Two-dataset comparison** | A second file, such as another temperature, splits every slice along its diagonal, with shared positions, processing and color scale; hover reads both values | [Comparing](docs/USER_GUIDE.md#comparing-two-datasets) |
+| **3-D view** | A transparent isosurface of the processed volume, with the current slices as planes | [3-D view](docs/USER_GUIDE.md#3-d-view) |
+| **Files and export** | Mantid `MDHistoWorkspace` (`SaveMD`) and any 3-D `NXdata`; local files or `?url=` links; PNG export with a colorbar | [Supported files](docs/USER_GUIDE.md#supported-files) |
 
-Reads Mantid `MDHistoWorkspace` files written by `SaveMD`, and any NeXus/HDF5 file whose `NXdata` group holds a 3-D histogram. The [user guide](docs/USER_GUIDE.md#supported-files) lists the details.
+## Quick start
+
+1. Open the [live app](https://drthyang.github.io/neutron-nexus-viewer/) and choose a `.nxs` file, or drop one on the page.
+2. Pick a Laue class under **Processing → Symmetry averaging**, and apply a
+   **Mask** if detector edges show up as bright rims.
+3. Click a slice to move the other two through that point. Switch the header to
+   **Zoom** or **Move** to explore, and **Focus** to show one view large.
+4. To compare, open a second file under **Dataset → Compare two datasets**.
 
 ## Run locally
 
@@ -32,23 +60,21 @@ cd neutron-nexus-viewer
 python3 -m http.server 8000   # open http://localhost:8000
 ```
 
-Tests (`npm install && npm test`), code layout and deployment are covered in [docs/DEVELOPMENT.md](docs/DEVELOPMENT.md).
+Tests (`npm install && npm test`), the code layout and deployment are covered in
+[docs/DEVELOPMENT.md](docs/DEVELOPMENT.md).
 
 ## Documentation
 
 | Document | What it covers |
 | --- | --- |
-| [User guide](docs/USER_GUIDE.md) | The interface, every control, layouts, export, remote files and supported formats |
-| [Method](docs/METHOD.md) | How slices, symmetry averaging, masking and the 3-D view are computed, and how they are validated |
+| [User guide](docs/USER_GUIDE.md) | The interface, every control, comparison, layouts, export, remote files and supported formats |
+| [Method](docs/METHOD.md) | How slices, symmetry averaging, masking, comparison and the 3-D view are computed, and how they are validated |
 | [Development](docs/DEVELOPMENT.md) | Code layout, tests and fixtures, example data, dependencies and deployment |
 
 ## License
 
 Released under the [GNU Affero General Public License v3.0](LICENSE) © 2026 Tsung-Han Yang.
-
-The AGPL is a strong copyleft license: you may use, study, modify, and redistribute this
-software, but derivative works must also be released under the AGPLv3. Notably, if you run a
-modified version as a **network service**, you must offer its complete source code to the users
-of that service (AGPL §13).
+If you run a modified version on a network server, you must make its complete source
+available to its users (AGPL §13).
 
 *This project is personal work, developed and maintained in my personal capacity.*

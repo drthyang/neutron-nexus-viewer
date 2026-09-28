@@ -20,9 +20,9 @@ The histogram is held in memory as float32. A 401³ volume needs about 260 MB an
 
 ## The screen
 
-- **Top bar**: the dataset, its axes and grid, the engine status, and ⓘ for dataset details and a summary of the method.
+- **Top bar**: the open file (A and B, joined by the split icon, when comparing), the engine status, and ⓘ for dataset details, a summary of the method and links to these guides. Long file names are shortened in the middle; hover for the full name.
 - **Control panel** (left, collapsible; each section folds to a one-line summary):
-  - **Dataset**: unit cell (from UB), reciprocal lattice, grid and measured fraction, and the Compare card for a second dataset.
+  - **Dataset**: unit cell (from UB), reciprocal lattice, grid and measured fraction, and the Compare card for opening a second dataset.
   - **Processing**: the pipeline *Measured voxels → Mask → Symmetry average → Views*, followed by the Symmetry and Mask controls. Active stages are highlighted.
   - **Display**: colormap, color range, scale, view range, guides and cell angles.
 - **Workspace**: a header row with the click mode, the shared color legend and the layout, then four views (HK, HL, KL and 3-D).
@@ -79,15 +79,17 @@ A transparent isosurface of the binned, symmetrized and masked volume, with the 
 
 ## Comparing two datasets
 
-*Open second file (B)* in the Compare card, or drop a file on the card, opens a second dataset next to the first (A). Every slice is then cut along its diagonal, from the top-left to the bottom-right corner of the view: A fills the lower-left half and B the upper-right half. A white gap marks the cut, B's half is hatched where it has no data, and tags in the corners name the files. The top bar shows both.
+*Open second file (B)* in the Compare card, or drop a file on the card, opens a second dataset next to the first (A). Every slice is then cut along its diagonal, from the top-left to the bottom-right corner of the view: A fills the lower-left half and B the upper-right half. A white gap marks the cut, B's half is hatched where it has no data, and tags in the corners name the files.
+
+Once B is open, the Dataset section lists both files and one table for the two: a value they share (often the cell and grid) appears once, and a value that differs gets a line for each, tagged A and B.
 
 - **Shared**: slice positions and thickness, zoom and pan, symmetry, mask settings and the color scale apply to both datasets, so the two halves are directly comparable. *Auto range* pools both.
 - **A / Split / B** in the workspace header shows one dataset over the whole view, or the split.
 - **Hover** reads both datasets at the cursor, the one under it first. View headers show the coverage of each.
 - **Processing**: B has its own worker and mask, built with the same parameters on its own data. Symmetry operations are mapped onto B's grid; if they do not fit it, B is used as measured and the card says so.
-- **Axes**: B is drawn on A's axes and lattice geometry. Files should share the same axes (for example both `[H,0,0]`, `[0,K,0]`, `[0,0,L]`); the grids may differ. The card warns when the axis names differ.
+- **Axes**: B is drawn on A's axes and lattice geometry. Files should share the same axes (for example both `[H,0,0]`, `[0,K,0]`, `[0,0,L]`); the grids may differ. A warning under the Dataset table appears when the axis names differ.
 - **3-D view**: the isosurface is A's; the slice planes show the same split as the views.
-- **Replace B…** swaps in another file, and *Remove B* returns to a single dataset. Opening a new file as A also removes B.
+- **Replace** (⇄ on B's line, or the B half of the top bar) swaps in another file, and **Remove** (×) returns to a single dataset. Opening a new file as A also removes B.
 
 ## Layouts and export
 

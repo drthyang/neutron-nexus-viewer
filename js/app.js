@@ -100,6 +100,58 @@ function setSegmented(el, value) {
   for (const b of el.querySelectorAll('button')) b.classList.toggle('on', b.dataset.value === value);
 }
 
+/**
+ * `name` shortened with "…" until `fits` accepts it. On its own, a name keeps
+ * its start and its last 12 characters (often a temperature or run number).
+ * Next to the name of the file it is compared with (`other`), it keeps the part
+ * where the two names differ, with as much context around it as fits.
+ */
+function shortenName(name, fits, other = null) {
+  if (fits(name)) return name;
+  const label = (s, e) => `${s > 0 ? '…' : ''}${name.slice(s, e)}${e < name.length ? '…' : ''}`;
+  if (!other || other === name) {
+    const tail = name.slice(-12);
+    let head = name.length - tail.length;
+    while (head > 0 && !fits(`${name.slice(0, head)}…${tail}`)) head--;
+    return `${name.slice(0, head)}…${tail}`;
+  }
+  let p = 0, q = 0;
+  while (p < name.length && name[p] === other[p]) p++;
+  while (q < name.length - p && q < other.length - p && name.at(-1 - q) === other.at(-1 - q)) q++;
+  let s = Math.min(p, name.length - 1), e = Math.max(s + 1, name.length - q);
+  while (e > s + 1 && !fits(label(s, e))) e--;
+  // Widen the kept part, toward the start first, while it fits.
+  for (let grew = true; grew;) {
+    grew = false;
+    if (s > 0 && fits(label(s - 1, e))) { s--; grew = true; }
+    if (e < name.length && fits(label(s, e + 1))) { e++; grew = true; }
+  }
+  return label(s, e);
+}
+
+// File names in the page are fitted to their element (CSS .fname), again whenever it resizes.
+const nameFitter = new ResizeObserver((entries) => { for (const { target } of entries) fitName(target); });
+
+/** Show a file name in `el`, shortened to fit (see shortenName); the full name is the tooltip. */
+function setFileName(el, name, other = null) {
+  el.dataset.name = name;
+  if (other) el.dataset.other = other;
+  else delete el.dataset.other;
+  el.title = name;
+  fitName(el);
+  nameFitter.observe(el);
+}
+
+function fitName(el) {
+  const fits = (text) => {
+    el.textContent = text;
+    return el.scrollWidth <= el.clientWidth;
+  };
+  el.textContent = shortenName(el.dataset.name ?? '', fits, el.dataset.other ?? null);
+}
+
+const urlName = (url) => decodeURIComponent(new URL(url, location.href).pathname.split('/').pop()) || 'remote.nxs';
+
 function status(state, text) {
   $('status-dot').className = `status-dot ${state}`;
   $('status-text').textContent = text;
@@ -144,8 +196,10 @@ function show(stage) {
   for (const el of document.querySelectorAll('[data-loaded]')) el.hidden = stage !== 'workspace';
 }
 
+/** Loading card: the current step, and the fraction done (0 hides the percentage). */
 function progress(label, fraction) {
   $('progress-label').textContent = label;
+  $('progress-pct').textContent = fraction > 0 ? `${Math.round(100 * clamp(fraction, 0, 1))}%` : '';
   $('progress').style.width = `${Math.round(100 * clamp(fraction, 0, 1))}%`;
 }
 
@@ -178,9 +232,11 @@ function openFile(file) {
   error('');
   show('loading');
   status('busy', 'reading');
-  $('dataset-name').textContent = file.name;
-  $('loading-title').textContent = `Opening ${file.name}`;
-  progress(`${mb(file.size)}`, 0);
+  setFileName($('dataset-name'), file.name);
+  $('loading-title').textContent = 'Opening file';
+  setFileName($('loading-name'), file.name);
+  $('loading-size').textContent = mb(file.size);
+  progress('Starting', 0);
   document.title = `${file.name} · NeXus Slice Viewer`;
   worker = new Worker(new URL('./worker.js', import.meta.url), { type: 'module' });
   worker.onmessage = ({ data }) => handlers[data.type]?.(data);
@@ -204,7 +260,7 @@ async function fetchFile(url, onProgress) {
     got += value.length;
     onProgress(got, total);
   }
-  return new File(parts, decodeURIComponent(new URL(url, location.href).pathname.split('/').pop()) || 'remote.nxs');
+  return new File(parts, urlName(url));
 }
 
 const downloaded = (got, total) => `${mb(got)}${total ? ` of ${mb(total)}` : ''}`;
@@ -213,7 +269,9 @@ async function openURL(url) {
   show('loading');
   status('busy', 'downloading');
   $('loading-title').textContent = 'Downloading';
-  progress(url, 0);
+  setFileName($('loading-name'), urlName(url));
+  $('loading-size').textContent = '';
+  progress(`from ${new URL(url, location.href).host}`, 0);
   try {
     openFile(await fetchFile(url, (got, total) => progress(downloaded(got, total), total ? got / total : 0)));
   } catch (err) {
@@ -222,7 +280,7 @@ async function openURL(url) {
 }
 
 const handlers = {
-  progress: ({ label, fraction }) => progress(`${label} · ${Math.round(100 * fraction)}%`, fraction),
+  progress: ({ label, fraction }) => progress(label, fraction),
   meta: ({ info }) => { meta = info; },
   ready: ({ stats, seconds }) => {
     meta.stats = stats;
@@ -367,25 +425,23 @@ function describe() {
   const { dims, shape, lattice, stats } = meta;
   const bins = [0, 1, 2].map((d) => shape[2 - d]);
   const widths = dims.map((d) => fmt((d.edges[d.edges.length - 1] - d.edges[0]) / (d.edges.length - 1), 4));
-  $('ident').innerHTML = dims.map((d, i) => `<span class="hue-${i}">${escapeHTML(d.label)}</span>`).join('<span class="dot">·</span>');
-  $('ident-grid').textContent = bins.every((b) => b === bins[0]) ? `${bins[0]}³` : bins.join('×');
 
-  // Dataset section of the control panel.
-  let recip = null;
-  if (lattice) {
-    const G = reciprocalMetric(lattice), len = [0, 1, 2].map((i) => Math.sqrt(G[i][i]));
-    const ang = (i, j) => Math.acos(G[i][j] / (len[i] * len[j])) * 180 / Math.PI;
-    recip = { len, angles: [ang(1, 2), ang(0, 2), ang(0, 1)] };
-  }
+  // Dataset section of the control panel: one table, and when comparing, a value
+  // shared by A and B appears once while differing values get a line each.
   const { a, b, c, alpha, beta, gamma } = lattice ?? {};
-  $('data-cell').innerHTML = lattice
-    ? `${a.toFixed(3)} ${b.toFixed(3)} ${c.toFixed(3)} Å<br>${alpha.toFixed(2)}° ${beta.toFixed(2)}° ${gamma.toFixed(2)}° <span class="note">(${escapeHTML(lattice.source)})</span>`
-    : 'not in file';
-  $('data-recip').innerHTML = recip
-    ? `${recip.len.map((l) => l.toFixed(4)).join(' ')} Å⁻¹<br>${recip.angles.map((x) => x.toFixed(2)).join('° ')}°`
-    : '—';
-  $('data-grid').textContent = `${bins.join(' × ')}, Δ ${widths.join(' ')}`;
-  $('data-measured').textContent = `${pct(stats.fraction)} of voxels`;
+  const recip = recipOf(lattice);
+  const A = datasetFacts(meta, mask), B = compare?.ready ? datasetFacts(compare.meta, compare.mask) : null;
+  const rows = [['Cell', 'cell'], ['Recip.', 'recip'], ['Grid', 'grid'], ['Measured', 'measured']];
+  if (B && (mask || compare.mask)) rows.push(['Masked', 'masked']);
+  $('data-kv').innerHTML = rows.map(([label, key]) => {
+    const va = A[key] ?? '—', vb = B ? B[key] ?? '—' : null;
+    let dd;
+    if (!B) dd = `<dd>${va}${key === 'measured' ? ' of voxels' : ''}</dd>`;
+    else if (va === vb) dd = `<dd title="Same for A and B">${va}</dd>`;
+    else if (!/<br>/.test(va + vb) && (va + vb).length < 28) dd = `<dd><span class="ab-inline"><span class="ab-mini">A</span>${va}</span><span class="ab-inline"><span class="ab-mini">B</span>${vb}</span></dd>`;
+    else dd = `<dd class="ab-rows"><span class="ab-row"><span class="ab-mini">A</span><span>${va}</span></span><span class="ab-row"><span class="ab-mini">B</span><span>${vb}</span></span></dd>`;
+    return `<dt>${label}</dt>${dd}`;
+  }).join('');
   $('sum-dataset').textContent = (lattice ? `${a.toFixed(3)} ${b.toFixed(3)} ${c.toFixed(3)} Å · ${gamma.toFixed(1)}°` : `${bins.join('×')}`)
     + (compare?.ready ? ' · vs B' : '');
   $('pipe-measured').textContent = `${(stats.valid / 1e6).toFixed(1)} M · ${pct(stats.fraction)} of the grid`;
@@ -414,6 +470,28 @@ function describe() {
   }
   $('info-meta').innerHTML = items.map(([k, v]) => `<dt>${escapeHTML(k)}</dt><dd>${escapeHTML(v).replace(/\n/g, '<br>')}</dd>`).join('');
   updateStates();
+}
+
+/** Reciprocal lengths (Å⁻¹, no 2π) and angles (α*, β*, γ*) of a cell, or null. */
+function recipOf(lattice) {
+  if (!lattice) return null;
+  const G = reciprocalMetric(lattice), len = [0, 1, 2].map((i) => Math.sqrt(G[i][i]));
+  const ang = (i, j) => Math.acos(G[i][j] / (len[i] * len[j])) * 180 / Math.PI;
+  return { len, angles: [ang(1, 2), ang(0, 2), ang(0, 1)] };
+}
+
+/** The Dataset table's values (HTML) for one dataset. */
+function datasetFacts(m, userMask) {
+  const l = m.lattice, r = recipOf(l), bins = [0, 1, 2].map((d) => m.shape[2 - d]);
+  const widths = m.dims.map((d) => fmt((d.edges[d.edges.length - 1] - d.edges[0]) / (d.edges.length - 1), 4));
+  const same = (xs) => xs.every((x) => x === xs[0]);
+  return {
+    cell: l ? `${l.a.toFixed(3)} ${l.b.toFixed(3)} ${l.c.toFixed(3)} Å<br>${l.alpha.toFixed(2)}° ${l.beta.toFixed(2)}° ${l.gamma.toFixed(2)}° <span class="note">(${escapeHTML(l.source)})</span>` : 'not in file',
+    recip: r ? `${r.len.map((x) => x.toFixed(4)).join(' ')} Å⁻¹<br>${r.angles.map((x) => x.toFixed(2)).join('° ')}°` : '—',
+    grid: `${same(bins) ? `${bins[0]}³` : bins.join(' × ')}, Δ ${same(widths) ? widths[0] : widths.join(' ')}`,
+    measured: pct(m.stats.fraction),
+    masked: userMask ? pct((userMask.edge + userMask.outlier) / userMask.measured) : 'none',
+  };
 }
 
 /** Processing pipeline, section badges and the legend above the views. */
@@ -1041,12 +1119,10 @@ function datasetTag(c, letter, name, at, along, side, room, flip) {
   c.save();
   c.font = `600 12px ${SANS}`;
   const h = 26, badge = 20, maxText = room - badge - 16;
-  let text = name;
-  if (c.measureText(text).width > maxText) {
-    while (text.length > 1 && c.measureText(`${text}…`).width > maxText) text = text.slice(0, -1);
-    text += '…';
-  }
-  const tw = maxText > 24 ? c.measureText(text).width : 0;
+  // A long name keeps the part that differs from the other dataset's name.
+  const fits = (t) => c.measureText(t).width <= maxText;
+  const text = maxText > 24 ? shortenName(name, fits, name === sourceName ? compare?.name : sourceName) : '';
+  const tw = text && fits(text) ? c.measureText(text).width : 0;
   const w = 3 + badge + (tw ? 7 + tw + 9 : 3), left = flip ? x - w : x, top = flip ? y : y - h;
   c.fillStyle = 'rgba(255, 255, 255, 0.9)';
   c.strokeStyle = 'rgba(18, 24, 33, 0.18)';
@@ -1422,16 +1498,16 @@ function openCompare(file) {
     error(`Dataset B: ${e.message || 'the HDF5 reader could not start.'}`);
   };
   w.postMessage({ type: 'open', file });
-  showCompare('opening…');
+  showCompare('Opening', 0);
 }
 
 async function openCompareURL(url) {
   if (!panels.length) return;
   closeCompare();
-  const current = compare = { worker: null, name: decodeURIComponent(url.split('/').pop()), ready: false };
-  showCompare('downloading…');
+  const current = compare = { worker: null, name: urlName(url), ready: false };
+  showCompare('Downloading', 0);
   try {
-    const file = await fetchFile(url, (got, total) => { if (compare === current) showCompare(`downloading ${downloaded(got, total)}`); });
+    const file = await fetchFile(url, (got, total) => { if (compare === current) showCompare(`Downloading ${downloaded(got, total)}`, total ? got / total : 0); });
     if (compare === current) openCompare(file);
   } catch (err) {
     if (compare !== current) return;
@@ -1469,11 +1545,11 @@ function sendCompareMask(radius, k) {
   compare.maskNote = k && !kb ? 'Outlier cut not applied to B: it needs a symmetry of at least 3 operations that fits B\'s grid.' : '';
   compare.maskBusy = true;
   compare.worker.postMessage({ type: 'mask', id: ++requestId, radius, k: kb, maps: compare.maps, symmetry: symmetry.name });
-  showCompare('building mask…');
+  showCompare('Building mask', 0);
 }
 
 const compareHandlers = {
-  progress: ({ label, fraction }) => showCompare(`${label.toLowerCase()} · ${Math.round(100 * fraction)}%`),
+  progress: ({ label, fraction }) => showCompare(label, fraction),
   meta: ({ info }) => { compare.meta = info; },
   ready: ({ stats, seconds }) => {
     Object.assign(compare.meta, { stats, seconds });
@@ -1483,7 +1559,8 @@ const compareHandlers = {
     // B gets A's mask before its first slices.
     if (mask) sendCompareMask(mask.radius, mask.k);
     else panels.forEach((p) => request(p, 'b'));
-    showCompare(compare.maskBusy ? 'building mask…' : '');
+    if (compare.maskBusy) showCompare('Building mask', 0);
+    else showCompare();
     describe();
     redraw();
   },
@@ -1512,7 +1589,7 @@ const compareHandlers = {
     if (p.b.wanted) sendB(p);
     redraw();
   },
-  'progress-mask': ({ label, fraction }) => showCompare(`${label.toLowerCase()}… ${Math.round(100 * fraction)}%`),
+  'progress-mask': ({ label, fraction }) => showCompare(label, fraction),
   mask: ({ stats, radius, k }) => {
     compare.maskBusy = false;
     compare.mask = stats ? { ...stats, radius, k } : null;
@@ -1528,50 +1605,57 @@ const compareHandlers = {
   },
 };
 
-/** The Compare card, the B button in the top bar and the A / Split / B control. */
-function showCompare(progressText = '') {
+/**
+ * The Compare card, the B button in the top bar and the A / Split / B control.
+ * `step` and `fraction` describe work in progress on B (loading or masking).
+ */
+function showCompare(step = '', fraction = null) {
   const ready = !!compare?.ready;
   document.body.classList.toggle('comparing', ready);
+  // Loaded, A and B share the Dataset table; the Compare card only opens and loads B.
+  $('compare').hidden = ready;
+  $('data-files').hidden = !ready;
   $('compare-open').hidden = !!compare;
-  $('compare-actions').hidden = !compare;
-  $('compare-info').hidden = !ready;
-  $('compare-view').hidden = $('compare-button').hidden = $('dataset-tag').hidden = !ready;
-  $('compare').classList.toggle('active', ready);
-  $('compare-state').textContent = ready ? { split: 'split', a: 'A only', b: 'B only' }[compareView] : compare ? 'loading' : 'off';
-  $('compare-state').className = `state${ready ? ' on' : compare ? ' busy' : ''}`;
+  $('compare-file').hidden = !compare || ready;
+  $('compare-progress').hidden = !compare || ready || fraction === null;
+  if (sourceName) setFileName($('dataset-name'), sourceName, ready ? compare.name : null);
+  if (compare && !ready) {
+    setFileName($('compare-name'), compare.name, sourceName);
+    $('compare-size').textContent = compare.size ? mb(compare.size) : '';
+    $('compare-bar').style.width = `${Math.round(100 * clamp(fraction ?? 0, 0, 1))}%`;
+  }
+  const stepText = step && `${step}${fraction > 0 ? ` · ${Math.round(100 * fraction)}%` : '…'}`;
+  $('compare-view').hidden = $('compare-button').hidden = $('file-sep').hidden = $('dataset-tag').hidden = !ready;
+  $('compare-state').textContent = compare ? 'loading' : 'off';
+  $('compare-state').className = `state${compare ? ' busy' : ''}`;
   const title3d = views['3d']?.section.querySelector('.view-title');
   if (title3d) title3d.textContent = ready ? 'Isosurface · A' : 'Isosurface';
-  const statusEl = $('compare-status');
-  statusEl.className = 'note';
+  const note = $('compare-note');
+  note.hidden = true;
   if (!compare) {
-    statusEl.textContent = 'Open a second file to split every slice along its diagonal: this dataset (A) below, the second (B) above.';
+    $('compare-status').textContent = 'Split every slice along its diagonal: this dataset (A) below, a second one (B) above.';
     return;
   }
   if (!ready) {
-    statusEl.textContent = `${compare.name}: ${progressText || 'opening…'}`;
+    $('compare-status').textContent = stepText || 'Opening…';
     return;
   }
-  const B = compare.meta, l = B.lattice, bins = [0, 1, 2].map((d) => B.shape[2 - d]);
-  $('compare-button-name').textContent = compare.name;
+  setFileName($('file-a-name'), sourceName, compare.name);
+  $('file-a-size').textContent = mb(sourceSize);
+  setFileName($('file-b-name'), compare.name, sourceName);
+  $('file-b-size').textContent = compare.size ? mb(compare.size) : '';
+  setFileName($('compare-button-name'), compare.name, sourceName);
   $('compare-button').title = `Dataset B: ${compare.name} (click to replace)`;
-  $('compare-name').textContent = `${compare.name} (${mb(compare.size)})`;
-  $('compare-cell').innerHTML = l
-    ? `${l.a.toFixed(3)} ${l.b.toFixed(3)} ${l.c.toFixed(3)} Å<br>${l.alpha.toFixed(2)}° ${l.beta.toFixed(2)}° ${l.gamma.toFixed(2)}°`
-    : 'not in file';
-  $('compare-grid').textContent = bins.join(' × ');
-  $('compare-measured').textContent = `${pct(B.stats.fraction)} of voxels`
-    + (compare.mask ? ` · mask ${pct((compare.mask.edge + compare.mask.outlier) / compare.mask.measured)}` : '');
+  // Work in progress on B, or warnings, under the Dataset table.
   const labels = (dims) => dims.map((d) => d.label).join(' ');
   const warnings = [];
-  if (labels(B.dims) !== labels(meta.dims)) warnings.push(`B's axes (${labels(B.dims)}) differ from A's (${labels(meta.dims)}); B is drawn on A's axes.`);
+  if (labels(compare.meta.dims) !== labels(meta.dims)) warnings.push(`B's axes (${labels(compare.meta.dims)}) differ from A's (${labels(meta.dims)}); B is drawn on A's axes.`);
   if (compare.mapsNote) warnings.push(compare.mapsNote);
   if (compare.maskNote) warnings.push(compare.maskNote);
-  if (progressText) statusEl.textContent = `B: ${progressText}`;
-  else if (warnings.length) {
-    statusEl.className = 'note warn';
-    statusEl.textContent = warnings.join(' ');
-  } else {
-    statusEl.textContent = 'Slice positions, symmetry, mask and color scale apply to both. B\'s half is hatched where it has no data; hover shows both values.';
+  if (stepText || warnings.length) {
+    note.hidden = false;
+    note.className = stepText ? 'note' : 'note warn';
+    note.textContent = stepText ? `B: ${stepText}` : warnings.join(' ');
   }
 }
 
@@ -1610,10 +1694,9 @@ $('open-compare-example').onclick = () => { pendingCompare = 'examples/demo_hexa
 $('file').onchange = () => { if ($('file').files[0]) { pendingCompare = null; openFile($('file').files[0]); } $('file').value = ''; };
 $('compare-open').onclick = $('compare-replace').onclick = $('compare-button').onclick = () => $('file-b').click();
 $('file-b').onchange = () => { if ($('file-b').files[0]) openCompare($('file-b').files[0]); $('file-b').value = ''; };
-$('compare-close').onclick = closeCompare;
+$('compare-close').onclick = $('compare-cancel').onclick = closeCompare;
 segmented($('compare-view'), (value) => {
   compareView = value;
-  showCompare();
   redraw();
 });
 $('error-close').onclick = () => error('');
@@ -1683,7 +1766,7 @@ $('mask-removed').onchange = () => { updateStates(); panels.forEach(request); };
 $('mask-download').onclick = () => worker.postMessage({ type: 'mask-download' });
 
 // Dropping a file opens it, or opens it as dataset B over the Compare card or the B button.
-const dropsOnB = (e) => panels.length > 0 && !!e.target.closest?.('#compare, #compare-button');
+const dropsOnB = (e) => panels.length > 0 && !!e.target.closest?.('#compare, #compare-button, #data-files');
 document.addEventListener('dragover', (e) => {
   e.preventDefault();
   document.body.classList.add('dragging');
