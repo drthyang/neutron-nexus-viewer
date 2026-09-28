@@ -33,6 +33,7 @@ export class View3D {
     this.controls = new OrbitControls(this.camera, canvas);
     this.controls.addEventListener('change', () => this.render());
     this.slices = new Map();
+    this.sliceOpacity = 1;
     this.mesh = null;
     this.frame = null;
     new ResizeObserver(() => this.resize()).observe(canvas);
@@ -131,6 +132,17 @@ export class View3D {
     this.render();
   }
 
+  /**
+   * Slice planes are opaque at 1; below that they blend and stop writing depth,
+   * so the isosurface shows through. No-data pixels (texture alpha 0) stay cut
+   * out because the alpha test sits below the plane opacity.
+   */
+  setSliceOpacity(opacity) {
+    this.sliceOpacity = opacity;
+    for (const { plane } of this.slices.values()) styleSlice(plane.material, opacity);
+    this.render();
+  }
+
   setOpacity(opacity) {
     if (this.mesh) this.mesh.material.opacity = opacity;
     this.render();
@@ -146,7 +158,8 @@ export class View3D {
       keep.add(s.fixed);
       let entry = this.slices.get(s.fixed);
       if (!entry) {
-        const material = new THREE.MeshBasicMaterial({ side: THREE.DoubleSide, alphaTest: 0.5 });
+        const material = new THREE.MeshBasicMaterial({ side: THREE.DoubleSide });
+        styleSlice(material, this.sliceOpacity);
         const plane = new THREE.Mesh(new THREE.BufferGeometry(), material);
         const outline = new THREE.LineLoop(new THREE.BufferGeometry(), new THREE.LineBasicMaterial({ color: PLANE_COLORS[s.fixed] }));
         entry = { plane, outline };
@@ -206,6 +219,15 @@ export class View3D {
     this.renderer.render(this.scene, this.camera);
     this.canvas.toBlob(callback);
   }
+}
+
+function styleSlice(material, opacity) {
+  const blend = opacity < 1;
+  material.transparent = blend;
+  material.opacity = opacity;
+  material.depthWrite = !blend;
+  material.alphaTest = blend ? opacity / 2 : 0.5;
+  material.needsUpdate = true;
 }
 
 function textSprite(text, height, color) {

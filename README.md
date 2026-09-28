@@ -1,6 +1,8 @@
 # NeXus slice viewer
 
-A static web page for browsing reciprocal-space slices of 3-D neutron histograms, such as Mantid `MDHistoWorkspace` files written by `SaveMD`. Open or drop a `.nxs` file and the page shows three orthogonal slices (HK, HL, KL) with adjustable slab center and thickness, a 3-D view with a transparent isosurface and the current slices, symmetry averaging with any Laue class or your own operations, and masking of detector-edge artifacts before averaging. The interface follows the nebula3d console design, in a light theme.
+**Live site: [drthyang.github.io/neutron-nexus-viewer](https://drthyang.github.io/neutron-nexus-viewer/)**
+
+A static web page for browsing reciprocal-space slices of 3-D neutron histograms, such as Mantid `MDHistoWorkspace` files written by `SaveMD`. Open or drop a `.nxs` file and the page shows three orthogonal slices (HK, HL, KL) with adjustable slab center and thickness, a 3-D view with a transparent isosurface and the current slices, symmetry averaging with any Laue class or your own operations, and masking of detector-edge artifacts before averaging. The interface follows the nebula3d console design, in a light theme, on a single page.
 
 The file is read in your browser by [h5wasm](https://github.com/usnistgov/h5wasm) (HDF5 compiled to WebAssembly) and is never uploaded. The page is static, so it can be hosted on GitHub Pages.
 
@@ -8,11 +10,13 @@ The file is read in your browser by [h5wasm](https://github.com/usnistgov/h5wasm
 
 - **Open a file** with the button or drag it onto the page. The histogram is loaded into memory as float32: a 401³ volume needs about 260 MB and takes 1–2 s to read.
 - **Slices**: each panel has a center and full-thickness control for its integrated axis. Bins whose centers lie within thickness/2 of the center are averaged, exactly as in the original Python viewer. Slices update live while you drag.
+- **Layout**: by default one slice is enlarged over two columns with the other two stacked beside it; the corner button on each panel enlarges it, and on the enlarged panel returns to three slices side by side. Below 1180 px wide the slices stack in one column.
+- **Zoom**: drag a box on a slice to zoom into it (with oblique axes the zoom window is the H–K range enclosing the box, previewed while dragging). Double-click or *Reset zoom* returns to the full view.
 - **Click a plot** to move the other two slices through that point. Dashed guides show where they cut.
 - **Color**: colormap, asinh, linear or log scale, vmin/vmax, and asinh softening. *Auto range* sets vmax to the 97th percentile and softening to the median of the positive values in the current slices.
 - **Symmetry**: pick a Laue class or type generators (see below). Slices and the 3-D view pool every voxel with its symmetry equivalents. The default is no symmetry, so the data are shown as measured.
 - **Mask**: removes spurious voxels from the unsymmetrized data before averaging (see below). *Show removed* averages only the removed voxels, so you can check what the mask takes out. *Download* saves the mask as a gzipped NumPy `.npy`.
-- **3-D view**: a transparent isosurface of the binned volume with the three current slices as planes, drawn in the lattice geometry and clipped to the view range. Set the level (typed or on a log slider), opacity, and grid (about 64, 100 or 150 blocks per axis); drag to rotate, scroll to zoom, right-drag to pan.
+- **3-D view**: a transparent isosurface of the binned volume with the three current slices as planes, drawn in the lattice geometry and clipped to the view range. Set the level (typed or on a log slider), the surface and slice opacity (lower slice opacity makes the planes see-through), and the grid (about 64, 100 or 150 blocks per axis); drag to rotate, scroll to zoom, right-drag to pan.
 - **Cell angles**: axes are drawn with the reciprocal metric from the UB matrix in the file (or its stored unit cell when there is no UB). *Nominal* snaps direct-cell angles within 1° of 60°, 90° or 120° (for example, 90/90/120 for a hexagonal cell). *Measured* uses them as derived.
 - **Save PNG** exports a panel at 3× resolution with its colorbar, without guides.
 - **Remote files**: `?url=https://…/file.nxs` downloads and opens a file. The host must allow cross-origin requests.
@@ -84,7 +88,7 @@ h5wasm and three.js are loaded from jsDelivr at pinned versions (`js/worker.js` 
 
 ## Publishing on GitHub Pages
 
-In the repository settings, go to **Pages** and choose **Deploy from a branch**, then select `main` and `/ (root)`. The site will be at `https://<user>.github.io/neutron-nexus-viewer/`.
+The site is published by GitHub Pages from the root of `main` (**Deploy from a branch**, `main`, `/ (root)`) at [drthyang.github.io/neutron-nexus-viewer](https://drthyang.github.io/neutron-nexus-viewer/). Every push to `main` redeploys it, usually within a minute. A fork can publish its own copy the same way, at `https://<user>.github.io/neutron-nexus-viewer/`.
 
 ## Credits
 
