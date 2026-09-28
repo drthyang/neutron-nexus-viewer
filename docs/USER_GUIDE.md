@@ -91,6 +91,6 @@ A transparent isosurface of the binned, symmetrized and masked volume, with the 
 
 ## Layouts and export
 
-- **Layouts**: *Quad* (2×2), *Focus* (one large view with the other three beside it) and *Single*. Each view's header can focus or maximize it, and double-clicking a header maximizes it. Esc returns.
+- **Layouts**: *Quad* (2×2), *Focus* (one large view with the other three beside it) and *Single*. In *Focus*, the small views are thumbnails: hovering one highlights it, and clicking it (or Enter) shows it large. Each view's header can focus or maximize it, and double-clicking a header maximizes it. Esc returns.
 - **Save PNG** exports a view at 3× resolution. Slice exports include a title and their own colorbar, without guides. When comparing, they keep the split and the dataset tags.
 - **Remembered settings**: the colormap, scale, click mode, layout, panel state and folded sections are remembered per browser.

@@ -463,6 +463,15 @@ function viewShell(key, badge, title) {
   focusBtn.onclick = () => setLayout(layout === 'focus' && primary === key ? 'quad' : 'focus', key);
   maxBtn.onclick = () => setLayout(layout === 'single' && primary === key ? lastMulti : 'single', key);
   section.querySelector('.view-head').ondblclick = (e) => { if (!e.target.closest('button')) maxBtn.click(); };
+  // In the focus layout the small views are thumbnails: a click (outside their buttons) shows one large.
+  const enlarge = () => layout === 'focus' && primary !== key && !compactLayout.matches;
+  section.addEventListener('click', (e) => { if (enlarge() && !e.target.closest('button, input, select, a')) setLayout('focus', key); });
+  section.addEventListener('keydown', (e) => {
+    if (e.target === section && (e.key === 'Enter' || e.key === ' ') && enlarge()) {
+      e.preventDefault();
+      setLayout('focus', key);
+    }
+  });
   views[key] = { section, focusBtn, maxBtn };
   return { section, actions, focusBtn, maxBtn, q: (sel) => section.querySelector(sel) };
 }
@@ -568,6 +577,9 @@ function setupViewer() {
 
 // ---- Layout ------------------------------------------------------------------------
 
+// Below this size the views stack in one column and the layouts do not apply.
+const compactLayout = matchMedia('(max-width: 1000px), (max-height: 640px)');
+
 function setLayout(mode, key = primary) {
   if (!views[key]) key = 'hk';
   if (mode !== 'single') lastMulti = mode;
@@ -580,6 +592,9 @@ function setLayout(mode, key = primary) {
   for (const [k, v] of Object.entries(views)) {
     const isPrimary = k === key;
     v.section.classList.toggle('primary', isPrimary);
+    // Small views in the focus layout can be reached with Tab and opened with Enter.
+    if (mode === 'focus' && !isPrimary) v.section.tabIndex = 0;
+    else v.section.removeAttribute('tabindex');
     const back = mode === 'focus' && isPrimary;
     v.focusBtn.innerHTML = back ? ICONS.quad : ICONS.focus;
     v.focusBtn.title = back ? 'Back to four views' : 'Show this view large';

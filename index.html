@@ -239,6 +239,19 @@ body.panel-collapsed .panel { visibility: hidden; }
 .workspace.focus > .view.primary { grid-column: 1; grid-row: 1 / 4; }
 .workspace.focus > .view:not(.primary) { grid-column: 2; }
 .workspace.focus > .view:not(.primary) .view-foot { display: none; }
+/* Focus layout: the small views are thumbnails. Hovering one highlights it, and a click shows it large. */
+@media (min-width: 1001px) and (min-height: 641px) {
+  .workspace.focus > .view:not(.primary) { transition: border-color 120ms ease, box-shadow 120ms ease; }
+  .workspace.focus > .view:not(.primary) .view-head { cursor: pointer; }
+  .workspace.focus > .view:not(.primary) .view-body::before { content: ""; position: absolute; inset: 0; z-index: 2; cursor: pointer; transition: background 120ms ease; }
+  .workspace.focus > .view:not(.primary) .view-body::after {
+    content: "Click to enlarge"; position: absolute; left: 50%; top: 50%; z-index: 3; transform: translate(-50%, -50%); padding: 5px 12px; border-radius: 999px;
+    background: var(--accent); color: #fff; font-size: 12px; font-weight: 600; white-space: nowrap; box-shadow: var(--shadow-2); opacity: 0; pointer-events: none; transition: opacity 120ms ease;
+  }
+  .workspace.focus > .view:not(.primary):is(:hover, :focus-visible) { outline: none; border-color: var(--accent); box-shadow: 0 0 0 3px var(--accent-soft), var(--shadow-1); }
+  .workspace.focus > .view:not(.primary):is(:hover, :focus-visible) .view-body::before { background: rgba(47, 116, 230, 0.06); }
+  .workspace.focus > .view:not(.primary):is(:hover, :focus-visible) .view-body::after { opacity: 1; }
+}
 .workspace.single { grid-template: minmax(0, 1fr) / minmax(0, 1fr); }
 .workspace.single > .view:not(.primary) { display: none; }
 .view { min-width: 0; min-height: 0; display: flex; flex-direction: column; background: var(--surface); border: 1px solid var(--border); border-radius: var(--radius); box-shadow: var(--shadow-1); overflow: hidden; }
