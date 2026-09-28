@@ -1,0 +1,12 @@
+{
+  "name": "neutron-nexus-viewer",
+  "private": true,
+  "type": "module",
+  "description": "Static browser viewer for reciprocal-space slices of 3-D neutron NeXus histograms",
+  "scripts": {
+    "test": "node --test"
+  },
+  "devDependencies": {
+    "h5wasm": "0.10.3"
+  }
+}

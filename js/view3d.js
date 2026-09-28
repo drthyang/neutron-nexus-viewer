@@ -1,0 +1,222 @@
+// 3-D view: transparent isosurface of the binned volume plus the three current
+// slices as textured planes, all in the lattice geometry. Geometry is built in
+// display coordinates (r.l.u. along each axis) inside a group whose matrix maps
+// them to Cartesian reciprocal space, so the isosurface and slices are sheared
+// exactly like the 2-D plots. Rendering happens on demand.
+
+import * as THREE from 'three';
+import { OrbitControls } from 'three/addons/controls/OrbitControls.js';
+
+const PLANE_COLORS = [0xc2410c, 0x15803d, 0x1d4ed8];
+
+export class View3D {
+  constructor(canvas) {
+    this.canvas = canvas;
+    this.renderer = new THREE.WebGLRenderer({ canvas, antialias: true, preserveDrawingBuffer: true });
+    this.renderer.setPixelRatio(devicePixelRatio || 1);
+    this.renderer.setClearColor(0xffffff, 1);
+    this.renderer.localClippingEnabled = true;
+    this.scene = new THREE.Scene();
+    this.camera = new THREE.PerspectiveCamera(35, 1, 0.01, 100);
+    this.camera.up.set(0, 0, 1);
+    this.scene.add(this.camera);
+    this.scene.add(new THREE.AmbientLight(0xffffff, 1.2));
+    const light = new THREE.DirectionalLight(0xffffff, 2.2);
+    light.position.set(1, 1.5, 2);
+    this.camera.add(light);
+    this.world = new THREE.Group();
+    this.world.matrixAutoUpdate = false;
+    this.scene.add(this.world);
+    this.labels = new THREE.Group();
+    this.scene.add(this.labels);
+    this.controls = new OrbitControls(this.camera, canvas);
+    this.controls.addEventListener('change', () => this.render());
+    this.slices = new Map();
+    this.mesh = null;
+    this.frame = null;
+    new ResizeObserver(() => this.resize()).observe(canvas);
+  }
+
+  /**
+   * Display->Cartesian matrix T (row-major 3x3), the view box in display
+   * coordinates [[lo, hi] x 3] and axis labels. Re-frames the camera when the
+   * box or basis changes.
+   */
+  setFrame(T, box, labels) {
+    const key = JSON.stringify([T, box, labels]);
+    if (key === this.frameKey) return;
+    // Re-frame the camera only when the box changes, not for small basis changes.
+    const reframe = JSON.stringify(box) !== this.boxKey;
+    this.frameKey = key;
+    this.boxKey = JSON.stringify(box);
+    this.T = T;
+    this.box = box;
+    this.world.matrix.set(T[0], T[1], T[2], 0, T[3], T[4], T[5], 0, T[6], T[7], T[8], 0, 0, 0, 0, 1);
+    this.world.matrixWorldNeedsUpdate = true;
+
+    if (this.frame) { this.world.remove(this.frame); this.frame.geometry.dispose(); }
+    const corner = (i) => box.map((r, d) => r[(i >> d) & 1]);
+    const points = [];
+    for (let i = 0; i < 8; i++) {
+      for (const bit of [1, 2, 4]) if (!(i & bit)) points.push(...corner(i), ...corner(i | bit));
+    }
+    const geometry = new THREE.BufferGeometry();
+    geometry.setAttribute('position', new THREE.Float32BufferAttribute(points, 3));
+    this.frame = new THREE.LineSegments(geometry, new THREE.LineBasicMaterial({ color: 0x9aa6b2 }));
+    this.world.add(this.frame);
+
+    // Clip the isosurface to the view box: x_d = g_d . P with g_d the rows of T^-1.
+    const inv = new THREE.Matrix3().set(...T).invert().elements; // column-major
+    this.clipping = box.flatMap(([lo, hi], d) => {
+      const g = new THREE.Vector3(inv[d], inv[d + 3], inv[d + 6]), len = g.length();
+      return [new THREE.Plane(g.clone().divideScalar(len), -lo / len), new THREE.Plane(g.clone().divideScalar(-len), hi / len)];
+    });
+    if (this.mesh) this.mesh.material.clippingPlanes = this.clipping;
+
+    const center = this.toCartesian(box.map(([lo, hi]) => (lo + hi) / 2));
+    this.radius = Math.max(...Array.from({ length: 8 }, (_, i) => this.toCartesian(corner(i)).distanceTo(center)));
+    for (const sprite of [...this.labels.children]) { sprite.material.map.dispose(); sprite.material.dispose(); }
+    this.labels.clear();
+    labels.forEach((text, d) => {
+      const at = box.map((r) => r[0]);
+      at[d] = box[d][1] + 0.08 * (box[d][1] - box[d][0]);
+      const sprite = textSprite(text, this.radius * 0.07);
+      sprite.position.copy(this.toCartesian(at));
+      this.labels.add(sprite);
+    });
+    if (reframe) this.resetView();
+    else this.render();
+  }
+
+  toCartesian(p) {
+    const T = this.T;
+    return new THREE.Vector3(
+      T[0] * p[0] + T[1] * p[1] + T[2] * p[2],
+      T[3] * p[0] + T[4] * p[1] + T[5] * p[2],
+      T[6] * p[0] + T[7] * p[1] + T[8] * p[2]);
+  }
+
+  resetView() {
+    if (!this.box) return;
+    const center = this.toCartesian(this.box.map(([lo, hi]) => (lo + hi) / 2));
+    const distance = this.radius / Math.sin((this.camera.fov / 2) * Math.PI / 180) * 0.8;
+    this.controls.target.copy(center);
+    this.camera.position.copy(center).add(new THREE.Vector3(1.1, -1.6, 0.9).normalize().multiplyScalar(distance));
+    this.camera.near = distance / 100;
+    this.camera.far = distance * 10;
+    this.camera.updateProjectionMatrix();
+    this.controls.update();
+    this.render();
+  }
+
+  /** Isosurface in display coordinates; null clears it. */
+  setMesh(positions, indices, opacity) {
+    if (this.mesh) { this.world.remove(this.mesh); this.mesh.geometry.dispose(); this.mesh.material.dispose(); this.mesh = null; }
+    if (positions?.length) {
+      const geometry = new THREE.BufferGeometry();
+      geometry.setAttribute('position', new THREE.BufferAttribute(positions, 3));
+      geometry.setIndex(new THREE.BufferAttribute(indices, 1));
+      geometry.computeVertexNormals();
+      const material = new THREE.MeshPhongMaterial({
+        color: 0x2f6fd0, specular: 0x444444, shininess: 50, side: THREE.DoubleSide,
+        transparent: true, opacity, depthWrite: false, clippingPlanes: this.clipping ?? [],
+      });
+      this.mesh = new THREE.Mesh(geometry, material);
+      this.world.add(this.mesh);
+    }
+    this.render();
+  }
+
+  setOpacity(opacity) {
+    if (this.mesh) this.mesh.material.opacity = opacity;
+    this.render();
+  }
+
+  /**
+   * Slice planes: {fixed, x, y, center, image, key, u: [lo, hi], v: [lo, hi],
+   * ex: [first, last edge], ey: [...]}. Pixels with zero alpha (no data) are cut out.
+   */
+  setSlices(list, visible) {
+    const keep = new Set();
+    for (const s of list) {
+      keep.add(s.fixed);
+      let entry = this.slices.get(s.fixed);
+      if (!entry) {
+        const material = new THREE.MeshBasicMaterial({ side: THREE.DoubleSide, alphaTest: 0.5 });
+        const plane = new THREE.Mesh(new THREE.BufferGeometry(), material);
+        const outline = new THREE.LineLoop(new THREE.BufferGeometry(), new THREE.LineBasicMaterial({ color: PLANE_COLORS[s.fixed] }));
+        entry = { plane, outline };
+        this.world.add(plane, outline);
+        this.slices.set(s.fixed, entry);
+      }
+      if (entry.key !== s.key) {
+        entry.key = s.key;
+        entry.plane.material.map?.dispose();
+        const texture = new THREE.CanvasTexture(s.image);
+        texture.flipY = false;
+        texture.magFilter = THREE.NearestFilter;
+        texture.minFilter = THREE.LinearFilter;
+        texture.generateMipmaps = false;
+        texture.colorSpace = THREE.SRGBColorSpace;
+        entry.plane.material.map = texture;
+        entry.plane.material.needsUpdate = true;
+      }
+      const at = (u, v) => { const p = [0, 0, 0]; p[s.x] = u; p[s.y] = v; p[s.fixed] = s.center; return p; };
+      const corners = [[s.u[0], s.v[0]], [s.u[1], s.v[0]], [s.u[1], s.v[1]], [s.u[0], s.v[1]]];
+      const positions = corners.flatMap(([u, v]) => at(u, v));
+      const uv = corners.flatMap(([u, v]) => [(u - s.ex[0]) / (s.ex[1] - s.ex[0]), (v - s.ey[0]) / (s.ey[1] - s.ey[0])]);
+      entry.plane.geometry.dispose();
+      entry.plane.geometry = new THREE.BufferGeometry();
+      entry.plane.geometry.setAttribute('position', new THREE.Float32BufferAttribute(positions, 3));
+      entry.plane.geometry.setAttribute('uv', new THREE.Float32BufferAttribute(uv, 2));
+      entry.plane.geometry.setIndex([0, 1, 2, 0, 2, 3]);
+      entry.outline.geometry.dispose();
+      entry.outline.geometry = new THREE.BufferGeometry();
+      entry.outline.geometry.setAttribute('position', new THREE.Float32BufferAttribute(positions, 3));
+      entry.plane.visible = entry.outline.visible = visible;
+    }
+    for (const [fixed, entry] of this.slices) {
+      if (!keep.has(fixed)) entry.plane.visible = entry.outline.visible = false;
+    }
+    this.render();
+  }
+
+  resize() {
+    const w = this.canvas.clientWidth, h = this.canvas.clientHeight;
+    if (!w || !h) return;
+    this.renderer.setSize(w, h, false);
+    this.camera.aspect = w / h;
+    this.camera.updateProjectionMatrix();
+    this.render();
+  }
+
+  render() {
+    if (this.pending) return;
+    this.pending = requestAnimationFrame(() => {
+      this.pending = null;
+      this.renderer.render(this.scene, this.camera);
+    });
+  }
+
+  snapshot(callback) {
+    this.renderer.render(this.scene, this.camera);
+    this.canvas.toBlob(callback);
+  }
+}
+
+function textSprite(text, height) {
+  const canvas = document.createElement('canvas');
+  const ctx = canvas.getContext('2d');
+  ctx.font = '600 44px system-ui, sans-serif';
+  canvas.width = Math.ceil(ctx.measureText(text).width) + 16;
+  canvas.height = 60;
+  ctx.font = '600 44px system-ui, sans-serif';
+  ctx.fillStyle = '#202c39';
+  ctx.textBaseline = 'middle';
+  ctx.fillText(text, 8, 32);
+  const texture = new THREE.CanvasTexture(canvas);
+  texture.colorSpace = THREE.SRGBColorSpace;
+  const sprite = new THREE.Sprite(new THREE.SpriteMaterial({ map: texture, depthTest: false }));
+  sprite.scale.set(height * canvas.width / canvas.height, height, 1);
+  return sprite;
+}
