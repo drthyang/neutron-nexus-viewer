@@ -33,8 +33,11 @@ export function coarseGrid(dims, maxBins) {
   return { factor, shape: axes.map((a) => a.count), block: axes.map((a) => a.block), dims: axes.map((a) => a.dim) };
 }
 
-/** Sum and count valid (non-NaN) voxels per coarse block. Coarse arrays use display order (dim 0 fastest). */
-export function binVolume(volume, shape, grid) {
+/**
+ * Sum and count valid (non-NaN, unmasked) voxels per coarse block. Coarse
+ * arrays use display order (dim 0 fastest).
+ */
+export function binVolume(volume, shape, grid, mask = null) {
   const [n0, n1, n2] = [shape[2], shape[1], shape[0]];
   const [c0, c1] = grid.shape, total = grid.shape[0] * grid.shape[1] * grid.shape[2];
   const [b0, b1, b2] = grid.block;
@@ -44,7 +47,7 @@ export function binVolume(volume, shape, grid) {
       const base = (b2[i2] * c1 + b1[i1]) * c0;
       for (let i0 = 0; i0 < n0; i0++, f++) {
         const v = volume[f];
-        if (v === v) { const k = base + b0[i0]; sums[k] += v; counts[k]++; }
+        if (v === v && (mask === null || !mask[f])) { const k = base + b0[i0]; sums[k] += v; counts[k]++; }
       }
     }
   }

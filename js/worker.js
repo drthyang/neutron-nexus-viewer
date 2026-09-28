@@ -4,11 +4,12 @@
 
 import h5wasm from 'https://cdn.jsdelivr.net/npm/h5wasm@0.10.3/dist/esm/hdf5_hl.js';
 import { binVolume, coarseGrid, orbitMean, surfaceNets } from './iso.js';
+import { edgeMask, maskStats, outlierMask } from './mask.js';
 import { describeFile, loadVolume } from './nexus.js';
 import { averageSlab, selectBins } from './slab.js';
 import { indexMaps } from './symmetry.js';
 
-let info = null, volume = null;
+let info = null, volume = null, mask = null;
 const coarse = new Map(), means = new Map();
 
 self.onmessage = async ({ data }) => {
@@ -16,8 +17,11 @@ self.onmessage = async ({ data }) => {
     if (data.type === 'open') await open(data.file);
     else if (data.type === 'slice') slice(data);
     else if (data.type === 'iso') iso(data);
+    else if (data.type === 'mask') buildMask(data);
+    else if (data.type === 'mask-download') await downloadMask(data);
   } catch (err) {
-    self.postMessage({ type: data.type === 'iso' ? 'iso-error' : 'error', id: data.id, fixed: data.fixed, message: err?.message ?? String(err) });
+    const type = { iso: 'iso-error', mask: 'mask-error', 'mask-download': 'mask-error' }[data.type] ?? 'error';
+    self.postMessage({ type, id: data.id, fixed: data.fixed, message: err?.message ?? String(err) });
   }
 };
 
@@ -67,7 +71,7 @@ function iso({ id, maxBins, level, ops, symmetry }) {
   if (!volume) throw new Error('No histogram loaded.');
   if (!coarse.has(maxBins)) {
     const grid = coarseGrid(info.dims, maxBins);
-    coarse.set(maxBins, { grid, binned: binVolume(volume, info.shape, grid) });
+    coarse.set(maxBins, { grid, binned: binVolume(volume, info.shape, grid, mask) });
   }
   const { grid, binned } = coarse.get(maxBins);
   const key = `${maxBins}|${ops.map((m) => m.join()).join(';')}`;
@@ -103,14 +107,51 @@ function iso({ id, maxBins, level, ops, symmetry }) {
 
 // `maps` are the index maps of the full symmetry group (identity included);
 // `symmetry` is its display name, echoed back with the result.
-function slice({ id, fixed, center, thickness, maps, symmetry }) {
+// With `removed`, only voxels removed by the user mask are averaged.
+function slice({ id, fixed, center, thickness, maps, symmetry, removed }) {
   if (!volume) throw new Error('No histogram loaded.');
   const edges = info.dims[fixed].edges;
   const ids = selectBins(edges, center, thickness);
   if (!ids.length) throw new Error('No bins selected: increase the thickness or move the center.');
-  const result = averageSlab(volume, info.shape, fixed, ids, maps);
+  const result = averageSlab(volume, info.shape, fixed, ids, maps, mask, !!(removed && mask));
   self.postMessage({
-    type: 'slice', id, fixed, center, thickness, symmetry, order: maps.length, ...result,
+    type: 'slice', id, fixed, center, thickness, symmetry, order: maps.length, removed: !!(removed && mask), ...result,
     bins: ids.length, slab: [edges[ids[0]], edges[ids.at(-1) + 1]],
   }, [result.values.buffer, result.counts.buffer]);
+}
+
+// User mask on the unsymmetrized volume: coverage-edge erosion by `radius`
+// voxels, then rejection of voxels more than k robust sigmas above the median
+// of their symmetry equivalents (`maps`, fine grid). Zero disables either.
+function buildMask({ id, radius, k, maps, symmetry }) {
+  if (!volume) throw new Error('No histogram loaded.');
+  const t0 = performance.now();
+  let next = null;
+  if (radius > 0 || k > 0) {
+    self.postMessage({ type: 'progress-mask', label: 'Eroding coverage edges', fraction: 0 });
+    next = edgeMask(volume, info.shape, radius);
+    if (k > 0) {
+      if (maps.length < 3) throw new Error('Outlier rejection needs a symmetry group with at least 3 operations.');
+      outlierMask(volume, info.shape, maps, k, next, 3,
+        (fraction) => self.postMessage({ type: 'progress-mask', label: `Comparing ${symmetry} equivalents`, fraction }));
+    }
+  }
+  mask = next;
+  coarse.clear();
+  means.clear();
+  const stats = mask ? maskStats(volume, mask) : null;
+  self.postMessage({ type: 'mask', id, stats, radius, k, symmetry, seconds: (performance.now() - t0) / 1000 });
+}
+
+// The mask as a gzipped NumPy .npy (uint8, storage order like the signal
+// dataset; 1 = coverage edge, 2 = symmetry outlier).
+async function downloadMask() {
+  if (!mask) throw new Error('No mask to download.');
+  const dict = `{'descr': '|u1', 'fortran_order': False, 'shape': (${info.shape.join(', ')}), }`;
+  const padded = dict + ' '.repeat(63 - ((10 + dict.length) % 64)) + '\n';
+  const header = new Uint8Array(10 + padded.length);
+  header.set([0x93, ...new TextEncoder().encode('NUMPY'), 1, 0, padded.length & 255, padded.length >> 8]);
+  header.set(new TextEncoder().encode(padded), 10);
+  const stream = new Blob([header, mask]).stream().pipeThrough(new CompressionStream('gzip'));
+  self.postMessage({ type: 'mask-file', blob: await new Response(stream).blob() });
 }

@@ -1,6 +1,6 @@
 # NeXus slice viewer
 
-A static web page for browsing reciprocal-space slices of 3-D neutron histograms, such as Mantid `MDHistoWorkspace` files written by `SaveMD`. Open or drop a `.nxs` file and the page shows three orthogonal slices (HK, HL, KL) with adjustable slab center and thickness, a 3-D view with a transparent isosurface and the current slices, and symmetry averaging with any Laue class or your own operations.
+A static web page for browsing reciprocal-space slices of 3-D neutron histograms, such as Mantid `MDHistoWorkspace` files written by `SaveMD`. Open or drop a `.nxs` file and the page shows three orthogonal slices (HK, HL, KL) with adjustable slab center and thickness, a 3-D view with a transparent isosurface and the current slices, symmetry averaging with any Laue class or your own operations, and masking of detector-edge artifacts before averaging. The interface follows the nebula3d console design, in a light theme.
 
 The file is read in your browser by [h5wasm](https://github.com/usnistgov/h5wasm) (HDF5 compiled to WebAssembly) and is never uploaded. The page is static, so it can be hosted on GitHub Pages.
 
@@ -11,6 +11,7 @@ The file is read in your browser by [h5wasm](https://github.com/usnistgov/h5wasm
 - **Click a plot** to move the other two slices through that point. Dashed guides show where they cut.
 - **Color**: colormap, asinh, linear or log scale, vmin/vmax, and asinh softening. *Auto range* sets vmax to the 97th percentile and softening to the median of the positive values in the current slices.
 - **Symmetry**: pick a Laue class or type generators (see below). Slices and the 3-D view pool every voxel with its symmetry equivalents. The default is no symmetry, so the data are shown as measured.
+- **Mask**: removes spurious voxels from the unsymmetrized data before averaging (see below). *Show removed* averages only the removed voxels, so you can check what the mask takes out. *Download* saves the mask as a gzipped NumPy `.npy`.
 - **3-D view**: a transparent isosurface of the binned volume with the three current slices as planes, drawn in the lattice geometry and clipped to the view range. Set the level (typed or on a log slider), opacity, and grid (about 64, 100 or 150 blocks per axis); drag to rotate, scroll to zoom, right-drag to pan.
 - **Cell angles**: axes are drawn with the reciprocal metric from the UB matrix in the file (or its stored unit cell when there is no UB). *Nominal* snaps direct-cell angles within 1° of 60°, 90° or 120° (for example, 90/90/120 for a hexagonal cell). *Measured* uses them as derived.
 - **Save PNG** exports a panel at 3× resolution with its colorbar, without guides.
@@ -32,6 +33,17 @@ Two checks guard against mistakes:
 
 - **Grid**: each operation must send bin centers onto bin centers, so equivalent voxels are found exactly, without interpolation. Coupled axes need equal bin widths, and rotations other than inversion need a bin centered at the origin. Operations use the HKL basis of each axis (for example `[H,H,0]`), so they also work on projected grids.
 - **Metric**: the viewer reports how much the operations change the reciprocal metric of the cell. It warns above 2%, which usually means the operations belong to a different setting. Fe₃Ge₂ is pseudo-hexagonal, and 6/mmm changes its measured metric by 0.8%.
+
+## Masking detector-edge artifacts
+
+Detector edges, and the weak normalization there, leave spuriously high values along the boundaries of the measured region in reciprocal space. The reduced file no longer knows which detector pixel a voxel came from. Two masks act on the unsymmetrized volume instead, and symmetry averaging then uses only the voxels that remain:
+
+- **Edge erosion (voxels)**: removes measured voxels within *r* voxels (box distance) of an unmeasured voxel. In the Fe₃Ge₂ 90 K volume, the 99th percentile of the voxels within one voxel of an edge is 4266, against 36.5 for interior voxels. *r* = 1 removes 15.8% of the measured voxels and *r* = 2 removes 30.6%.
+- **Outlier cut (k·σ)**: for each symmetry orbit with at least 3 valid voxels, removes voxels more than *k* robust standard deviations (1.4826 × MAD) above the orbit median. This needs a Laue class to be selected. With 6/mmm and *k* = 5 it removes about 1% of voxels.
+
+With *r* = 2 and *k* = 5, the 6/mmm-averaged HK plane at L = 0 has 120 pixels above 1000 instead of 1476, and its coverage only drops from 73.9% to 71.7%, because symmetry fills most gaps. The 99.5th percentile of the 3-D block means falls from 4340 to 88: most of the brightest blocks were edge artifacts.
+
+The downloaded mask is `uint8` in the signal dataset's storage order (1 = edge, 2 = outlier), so `signal[mask > 0] = np.nan` applies it in Python. The cleaner fix is upstream: mask detector-edge pixels (for example with Mantid's `MaskBTP`) before converting to MD and normalizing.
 
 ## How slices are computed
 
@@ -60,6 +72,7 @@ npm install && npm test
 - `js/slab.js`: slab selection and symmetry-pooled averaging (pure functions).
 - `js/symmetry.js`: parsing operations, group closure, metric check, and index maps on the bin grid.
 - `js/iso.js`: coarse binning, orbit means, and surface nets for the 3-D view.
+- `js/mask.js`: coverage-edge erosion and symmetry-outlier masks.
 - `js/nexus.js`: finds the histogram, reads it with h5wasm, and handles UB and lattice geometry.
 - `js/worker.js`: module worker that holds the volume and answers slice and isosurface requests.
 - `js/view3d.js`: three.js scene, loaded when the 3-D panel opens.

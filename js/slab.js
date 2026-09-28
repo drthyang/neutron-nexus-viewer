@@ -26,6 +26,8 @@ export function selectBins(edges, center, thickness) {
  * Average the slab `ids` along display dimension `fixed`, pooling each slab
  * voxel's symmetry orbit. Returns row-major values (rows follow the larger
  * remaining dimension), per-pixel unique voxel counts, and the filled fraction.
+ * An optional user `mask` (nonzero = removed, storage order) excludes voxels;
+ * with `invert` only the removed voxels are averaged instead.
  *
  * Orbits are either identical or disjoint, so the pooled set is the disjoint
  * union of the distinct orbits met in the slab column; an orbit is identified
@@ -33,7 +35,7 @@ export function selectBins(edges, center, thickness) {
  * appears |stabilizer| times among the group images, so sums over all images
  * are divided by the stabilizer order.
  */
-export function averageSlab(volume, shape, fixed, ids, maps = [IDENTITY_MAP]) {
+export function averageSlab(volume, shape, fixed, ids, maps = [IDENTITY_MAP], mask = null, invert = false) {
   const n = [shape[2], shape[1], shape[0]], strides = [1, n[0], n[0] * n[1]];
   const [x, y] = [0, 1, 2].filter((d) => d !== fixed);
   const R = n[y], C = n[x], S = ids.length;
@@ -66,7 +68,7 @@ export function averageSlab(volume, shape, fixed, ids, maps = [IDENTITY_MAP]) {
         for (let col = lo; col < hi; col++, f += df) {
           if (f < rep[col]) rep[col] = f;
           const v = volume[f];
-          if (v === v) { sum[col] += v; valid[col]++; }
+          if (v === v && (mask === null || (mask[f] !== 0) === invert)) { sum[col] += v; valid[col]++; }
         }
       }
       for (let col = 0; col < C; col++) {

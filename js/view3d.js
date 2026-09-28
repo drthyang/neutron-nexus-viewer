@@ -7,7 +7,8 @@
 import * as THREE from 'three';
 import { OrbitControls } from 'three/addons/controls/OrbitControls.js';
 
-const PLANE_COLORS = [0xc2410c, 0x15803d, 0x1d4ed8];
+// Outline colors follow the page's axis hues: H amber, K blue, L green.
+const PLANE_COLORS = [0xd98a0b, 0x2f74e6, 0x13a36b];
 
 export class View3D {
   constructor(canvas) {
@@ -77,11 +78,14 @@ export class View3D {
     this.radius = Math.max(...Array.from({ length: 8 }, (_, i) => this.toCartesian(corner(i)).distanceTo(center)));
     for (const sprite of [...this.labels.children]) { sprite.material.map.dispose(); sprite.material.dispose(); }
     this.labels.clear();
+    // Label each axis at the middle of its box edge through the low corner,
+    // pushed outward from the box center (like matplotlib's 3-D axes).
     labels.forEach((text, d) => {
       const at = box.map((r) => r[0]);
-      at[d] = box[d][1] + 0.08 * (box[d][1] - box[d][0]);
-      const sprite = textSprite(text, this.radius * 0.07);
-      sprite.position.copy(this.toCartesian(at));
+      at[d] = (box[d][0] + box[d][1]) / 2;
+      const edge = this.toCartesian(at);
+      const sprite = textSprite(text, this.radius * 0.045, PLANE_COLORS[d]);
+      sprite.position.copy(edge).add(edge.clone().sub(center).normalize().multiplyScalar(this.radius * 0.1));
       this.labels.add(sprite);
     });
     if (reframe) this.resetView();
@@ -204,14 +208,14 @@ export class View3D {
   }
 }
 
-function textSprite(text, height) {
+function textSprite(text, height, color) {
   const canvas = document.createElement('canvas');
   const ctx = canvas.getContext('2d');
   ctx.font = '600 44px system-ui, sans-serif';
   canvas.width = Math.ceil(ctx.measureText(text).width) + 16;
   canvas.height = 60;
   ctx.font = '600 44px system-ui, sans-serif';
-  ctx.fillStyle = '#202c39';
+  ctx.fillStyle = `#${color.toString(16).padStart(6, '0')}`;
   ctx.textBaseline = 'middle';
   ctx.fillText(text, 8, 32);
   const texture = new THREE.CanvasTexture(canvas);
