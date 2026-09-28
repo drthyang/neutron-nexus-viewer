@@ -34,6 +34,10 @@ The cleaner fix is upstream: mask detector-edge pixels (for example with Mantid'
 
 The volume is binned by an odd factor chosen so no axis has more than about 64, 100 or 150 blocks. Blocks are aligned to the origin: a block is centered on an origin bin, or has an edge on an origin edge. The same operations therefore map blocks onto blocks. Block sums and counts are pooled over each orbit, and the isosurface of the block means is drawn with surface nets. The default level is the 99.5th percentile of the positive block means.
 
+## Comparing two datasets
+
+A second dataset (B) is read by its own worker and processed independently with the same settings: the symmetry operations are converted to index maps on B's grid, and the mask is built from B's own data with the same erosion radius and outlier cut. Nothing is interpolated between the two grids. Each view draws both slices on A's axes and lattice geometry, clipped to the two triangles on either side of the view's diagonal, from (u₀, v₁) to (u₁, v₀). A point is in B's half when (u − u₀)/(u₁ − u₀) + (v − v₀)/(v₁ − v₀) > 1.
+
 ## Geometry
 
 The reciprocal metric is G\* = (UB)ᵀ·UB, with no 2π, taken from the file's UB matrix, or computed from `unit_cell_*` when there is no UB. The length of each axis per r.l.u. and the angle between two axes follow from G\* and the axes' HKL basis vectors (parsed from names such as `[H,H,0]`). Drawing is an affine map of the pixel grid, so bins keep their exact shape.

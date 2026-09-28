@@ -23,8 +23,8 @@ CI runs the same tests on every push (`.github/workflows/test.yml`).
 | File | Role |
 | --- | --- |
 | `index.html` | Markup and styles (light variant of the nebula3d design tokens) |
-| `js/app.js` | UI: control panel, views, layouts, interaction and canvas drawing |
-| `js/worker.js` | Module worker: opens the file with h5wasm, holds the volume, answers slice, mask and isosurface requests |
+| `js/app.js` | UI: control panel, views, layouts, interaction, canvas drawing and the second (comparison) dataset |
+| `js/worker.js` | Module worker (one per open dataset): opens the file with h5wasm, holds the volume, answers slice, mask and isosurface requests |
 | `js/nexus.js` | Finds the histogram in the file, reads it, and handles the UB matrix and lattice geometry |
 | `js/slab.js` | Slab selection and symmetry-pooled slab averaging (pure functions) |
 | `js/symmetry.js` | Parsing operations, group closure, metric check and integer index maps |
@@ -38,7 +38,7 @@ CI runs the same tests on every push (`.github/workflows/test.yml`).
 These scripts need numpy and h5py, and matplotlib for the colormaps:
 
 - `tools/make_fixtures.py` writes `tests/fixtures/` and their expected slices, computed by a verbatim copy of the reference `average_slab()`.
-- `tools/make_example.py` writes `examples/demo_hexagonal.nxs`, a 101³ synthetic hexagonal dataset (1.3 MB) with coverage wedges and bright edge voxels.
+- `tools/make_example.py` writes `examples/demo_hexagonal.nxs`, a 101³ synthetic hexagonal dataset (1.3 MB) with coverage wedges and bright edge voxels, and `examples/demo_hexagonal_lowT.nxs`, the same with superlattice peaks at the M points and weaker diffuse rods, for the comparison demo.
 - `tools/make_colormaps.py` writes `js/colormaps.js` from matplotlib.
 
 `docs/screenshot.png` is a capture of the example data with 6/mmm averaging and a mask (edge 1, 5σ).

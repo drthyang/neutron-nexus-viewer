@@ -7,7 +7,7 @@
 
 **Reciprocal-space slices of 3-D neutron histograms, with symmetry averaging, artifact masking and a 3-D view — all in your browser.**
 
-**▶ Try it: [drthyang.github.io/neutron-nexus-viewer](https://drthyang.github.io/neutron-nexus-viewer/)** — open a Mantid `.nxs` file or the [example data](https://drthyang.github.io/neutron-nexus-viewer/?url=examples/demo_hexagonal.nxs). Nothing to install, and your file never leaves your machine.
+**▶ Try it: [drthyang.github.io/neutron-nexus-viewer](https://drthyang.github.io/neutron-nexus-viewer/)** — open a Mantid `.nxs` file, the [example data](https://drthyang.github.io/neutron-nexus-viewer/?url=examples/demo_hexagonal.nxs), or [two examples side by side](https://drthyang.github.io/neutron-nexus-viewer/?url=examples/demo_hexagonal.nxs&compare=examples/demo_hexagonal_lowT.nxs). Nothing to install, and your file never leaves your machine.
 
 <p align="center"><img src="docs/screenshot.png" alt="NeXus Viewer with a hexagonal example dataset: the control panel shows the processing pipeline with 6/mmm symmetry averaging and a mask that removed 19% of voxels; the workspace shows the HK, HL and KL slices and a 3-D isosurface with the three slice planes." width="100%"/></p>
 
@@ -16,6 +16,7 @@
 - **Orthogonal slices** — HK, HL and KL cuts with live slab center and thickness, drawn in the true lattice geometry from the UB matrix. Click to move the other two slices through a point, drag a box to zoom, or drag to pan.
 - **Symmetry averaging** — any Laue class or your own operations, closed into a group and applied exactly on the bin grid, with no interpolation. A warning appears when the operations do not fit the cell.
 - **Artifact masking** — removes detector-edge voxels and symmetry outliers before averaging. Preview what is removed, and export the mask as a NumPy array.
+- **Two-dataset comparison** — open a second file, for example another temperature, and every slice is split along its diagonal: one dataset below, the other above, with the same positions, processing and color scale. Hover reads both values.
 - **3-D view** — a transparent isosurface of the processed volume, with the current slices as planes.
 - **Private and fast** — the file is read locally with [h5wasm](https://github.com/usnistgov/h5wasm). A 401³ volume loads in about 2 s, and slices update in tens of milliseconds.
 

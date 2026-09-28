@@ -1,17 +1,21 @@
-"""Write examples/demo_hexagonal.nxs, a small synthetic dataset for the demo.
+"""Write the synthetic example datasets in examples/.
 
-A hexagonal crystal (a = 4.2, c = 6.8 Angstrom) in the Mantid MDHistoWorkspace
-layout: Bragg peaks with a two-site structure factor, diffuse rods along L,
-partial coverage in wedges (so symmetry averaging has gaps to fill) and
-spuriously bright voxels along the coverage edges (for the mask to remove).
-Requires numpy and h5py.
+demo_hexagonal.nxs: a hexagonal crystal (a = 4.2, c = 6.8 Angstrom) in the
+Mantid MDHistoWorkspace layout, with Bragg peaks from a two-site structure
+factor, diffuse rods along L, partial coverage in wedges (so symmetry
+averaging has gaps to fill) and spuriously bright voxels along the coverage
+edges (for the mask to remove).
+
+demo_hexagonal_lowT.nxs: the same crystal "at low temperature", with weak
+superlattice peaks at the M points and weaker diffuse rods, for comparing two
+datasets side by side. Requires numpy and h5py.
 """
 from pathlib import Path
 
 import h5py
 import numpy as np
 
-OUT = Path(__file__).resolve().parents[1] / 'examples' / 'demo_hexagonal.nxs'
+EXAMPLES = Path(__file__).resolve().parents[1] / 'examples'
 N, HALF = 101, 5.05                      # 101 bins of 0.1 r.l.u. per axis
 A, C = 4.2, 6.8
 
@@ -22,7 +26,7 @@ def reciprocal_basis():
     return np.linalg.cholesky(np.linalg.inv(g)).T
 
 
-def main():
+def write(out, low_t=False):
     rng = np.random.default_rng(7)
     edges = np.linspace(-HALF, HALF, N + 1)
     c = (edges[1:] + edges[:-1]) / 2
@@ -47,7 +51,18 @@ def main():
         for dh in range(-5, 6):
             for dk in range(-5, 6):
                 d2 = (H - kh - dh) ** 2 + (K - kk - dk) ** 2 - (H - kh - dh) * (K - kk - dk)
-                signal += 12 * np.exp(-d2 / (2 * 0.05 ** 2)) * (1 + np.cos(np.pi * L) ** 2) / 2
+                signal += (5 if low_t else 12) * np.exp(-d2 / (2 * 0.05 ** 2)) * (1 + np.cos(np.pi * L) ** 2) / 2
+    if low_t:
+        # Superlattice peaks at the M points (1/2, 0), (0, 1/2), (-1/2, 1/2) and their negatives.
+        for mh, mk in [(0.5, 0), (0, 0.5), (-0.5, 0.5)]:
+            for h, k, l in hkl:
+                for sign in (1, -1):
+                    ch, ck = h + sign * mh, k + sign * mk
+                    if abs(ch) > HALF or abs(ck) > HALF:
+                        continue
+                    d2 = (H - ch) ** 2 + (K - ck) ** 2 + (L - l) ** 2
+                    near = d2 < 0.2 ** 2
+                    signal[near] += 60 * np.exp(-d2[near] / (2 * 0.06 ** 2))
     signal *= np.exp(-0.25 * q2)
     signal += 3 * np.exp(-0.8 * q2)                        # smooth background
     signal = rng.normal(signal, np.sqrt(signal + 0.5) * 0.35)
@@ -70,8 +85,8 @@ def main():
     signal[~covered] = np.nan
     signal = np.round(signal, 1).astype(np.float32)        # rounding helps compression
 
-    OUT.parent.mkdir(exist_ok=True)
-    with h5py.File(OUT, 'w') as f:
+    out.parent.mkdir(exist_ok=True)
+    with h5py.File(out, 'w') as f:
         entry = f.create_group('MDHistoWorkspace')
         entry.attrs['NX_class'] = 'NXentry'
         data = entry.create_group('data')
@@ -89,7 +104,12 @@ def main():
         for k, v in dict(a=A, b=A, c=C, alpha=90.0, beta=90.0, gamma=120.0).items():
             lattice.create_dataset(f'unit_cell_{k}', data=[v])
         lattice.create_dataset('orientation_matrix', data=B)
-    print(f'wrote {OUT} ({OUT.stat().st_size / 1e6:.1f} MB), {covered.mean():.1%} covered, {edge.sum()} edge voxels')
+    print(f'wrote {out} ({out.stat().st_size / 1e6:.1f} MB), {covered.mean():.1%} covered, {edge.sum()} edge voxels')
+
+
+def main():
+    write(EXAMPLES / 'demo_hexagonal.nxs')
+    write(EXAMPLES / 'demo_hexagonal_lowT.nxs', low_t=True)
 
 
 if __name__ == '__main__':

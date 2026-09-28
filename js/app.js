@@ -36,6 +36,13 @@ const views = {};
 let clickMode = 'navigate';
 // 3-D view state: the lazily loaded View3D, its elements and the isosurface request queue.
 let view3d = null, iso = null;
+// Second dataset (B) for comparison, with its own worker, index maps and mask.
+// `compareView` is what the slices show: 'split' (A below the diagonal, B above), 'a' or 'b'.
+let compare = null, compareView = 'split', pendingCompare = null;
+// True while the color range is the automatic one (not edited by hand).
+let rangeIsAuto = false;
+const newLayer = () => ({ data: null, version: 0, busy: false, wanted: null, image: null, imageKey: null, error: '' });
+const compareShown = () => (compare?.ready ? compareView : null);
 
 // ---- Formatting -------------------------------------------------------------
 
@@ -155,6 +162,9 @@ function fail(message) {
 
 function openFile(file) {
   worker?.terminate();
+  compare?.worker?.terminate();
+  compare = null;
+  showCompare();
   closePopovers();
   meta = null;
   panels = [];
@@ -181,25 +191,31 @@ function openFile(file) {
   worker.postMessage({ type: 'open', file });
 }
 
+/** Download `url` into a File, reporting (bytes so far, total or 0). */
+async function fetchFile(url, onProgress) {
+  const res = await fetch(url);
+  if (!res.ok) throw new Error(`HTTP ${res.status}`);
+  const total = Number(res.headers.get('content-length')) || 0;
+  const reader = res.body.getReader(), parts = [];
+  for (let got = 0; ;) {
+    const { done, value } = await reader.read();
+    if (done) break;
+    parts.push(value);
+    got += value.length;
+    onProgress(got, total);
+  }
+  return new File(parts, decodeURIComponent(new URL(url, location.href).pathname.split('/').pop()) || 'remote.nxs');
+}
+
+const downloaded = (got, total) => `${mb(got)}${total ? ` of ${mb(total)}` : ''}`;
+
 async function openURL(url) {
   show('loading');
   status('busy', 'downloading');
   $('loading-title').textContent = 'Downloading';
   progress(url, 0);
   try {
-    const res = await fetch(url);
-    if (!res.ok) throw new Error(`HTTP ${res.status}`);
-    const total = Number(res.headers.get('content-length')) || 0;
-    const reader = res.body.getReader(), parts = [];
-    for (let got = 0; ;) {
-      const { done, value } = await reader.read();
-      if (done) break;
-      parts.push(value);
-      got += value.length;
-      progress(`${mb(got)}${total ? ` of ${mb(total)}` : ''}`, total ? got / total : 0);
-    }
-    const name = decodeURIComponent(new URL(url, location.href).pathname.split('/').pop()) || 'remote.nxs';
-    openFile(new File(parts, name));
+    openFile(await fetchFile(url, (got, total) => progress(downloaded(got, total), total ? got / total : 0)));
   } catch (err) {
     fail(`Could not download ${url}: ${err.message}. The server must allow cross-origin requests.`);
   }
@@ -217,6 +233,8 @@ const handlers = {
     redraw();
     panels.forEach(request);
     setup3D();
+    if (pendingCompare) openCompareURL(pendingCompare);
+    pendingCompare = null;
   },
   slice: (msg) => {
     const p = panels.find((q) => q.fixed === msg.fixed);
@@ -224,11 +242,7 @@ const handlers = {
     p.busy = false;
     p.data = msg;
     p.version++;
-    const F = meta.dims[p.fixed];
-    p.pos.textContent = `${F.label} = ${fmt(msg.center)}`;
-    p.caption.textContent = `${msg.bins} bin${msg.bins === 1 ? '' : 's'} · ${pct(msg.coverage)}${msg.order > 1 ? ` · ${msg.symmetry}` : ''}${msg.removed ? ' · removed only' : ''}`;
-    p.caption.title = `${F.label} ∈ [${fmt(msg.slab[0])}, ${fmt(msg.slab[1])}], ${msg.bins} bins, ${pct(msg.coverage)} of the plane measured`
-      + `${msg.order > 1 ? `, averaged over ${msg.symmetry} (${msg.order} operations)` : ''}${msg.removed ? ', removed voxels only' : ''}`;
+    showCaption(p);
     if (p.wanted) send(p);
     if (!autoscaled && panels.every((q) => q.data)) {
       autoscaled = true;
@@ -273,7 +287,7 @@ const handlers = {
     $('mask-clear').disabled = $('mask-download').disabled = $('mask-removed').disabled = !mask;
     if (!mask) $('mask-removed').checked = false;
     showMask(seconds);
-    panels.forEach(request);
+    panels.forEach((p) => request(p, 'a'));
     requestIso();
     describe();
   },
@@ -287,14 +301,21 @@ const handlers = {
   'mask-file': ({ blob }) => download(blob, `${stem()}_mask.npy.gz`),
 };
 
-function request(p) {
+/** Ask for the panel's slice of dataset 'a', 'b' or 'both' (B only when it is loaded). */
+function request(p, which = 'both') {
   const center = Number(p.center.value), thickness = Number(p.width.value);
   if (!Number.isFinite(center) || !Number.isFinite(thickness) || thickness <= 0) {
     p.caption.textContent = 'Enter a finite center and a positive thickness.';
     return;
   }
-  p.wanted = { center, thickness };
-  if (!p.busy) send(p);
+  if (which !== 'b') {
+    p.wanted = { center, thickness };
+    if (!p.busy) send(p);
+  }
+  if (which !== 'a' && compare?.ready) {
+    p.b.wanted = { center, thickness };
+    if (!p.b.busy) sendB(p);
+  }
 }
 
 // One request in flight per panel; slider drags coalesce to the latest value.
@@ -308,8 +329,37 @@ function send(p) {
   });
 }
 
+function sendB(p) {
+  const b = p.b, q = b.wanted;
+  b.wanted = null;
+  b.busy = true;
+  compare.worker.postMessage({
+    type: 'slice', id: ++requestId, fixed: p.fixed, ...q,
+    maps: compare.maps, symmetry: compare.maps.length > 1 ? symmetry.name : '1', removed: $('mask-removed').checked,
+  });
+}
+
+/** View header: position, bins and coverage, and B's coverage when comparing. */
+function showCaption(p) {
+  const F = meta.dims[p.fixed], d = p.data;
+  if (!d) return;
+  p.pos.textContent = `${F.label} = ${fmt(d.center)}`;
+  const slab = (x) => `${F.label} ∈ [${fmt(x.slab[0])}, ${fmt(x.slab[1])}], ${x.bins} bin${x.bins === 1 ? '' : 's'}, ${pct(x.coverage)} of the plane measured`
+    + `${x.order > 1 ? `, averaged over ${x.symmetry} (${x.order} operations)` : ''}${x.removed ? ', removed voxels only' : ''}`;
+  let text = `${d.bins} bin${d.bins === 1 ? '' : 's'} · ${pct(d.coverage)}${d.order > 1 ? ` · ${d.symmetry}` : ''}${d.removed ? ' · removed only' : ''}`;
+  let title = slab(d);
+  if (compare?.ready) {
+    const b = p.b.data;
+    text = `A ${text} | B ${b ? pct(b.coverage) : p.b.error ? 'no data' : '…'}`;
+    title = `A: ${title}\nB: ${b ? slab(b) : p.b.error || 'loading'}`;
+  }
+  p.caption.textContent = text;
+  p.caption.title = title;
+}
+
 const symmetryNote = (data) => (data.order > 1 ? ` · ${data.symmetry} (${data.order} ops)` : '');
-const stem = () => sourceName.replace(/\.[^.]+$/, '');
+const stemOf = (name) => name.replace(/\.[^.]+$/, '');
+const stem = () => stemOf(sourceName);
 
 // ---- Viewer setup -------------------------------------------------------------
 
@@ -336,7 +386,8 @@ function describe() {
     : '—';
   $('data-grid').textContent = `${bins.join(' × ')}, Δ ${widths.join(' ')}`;
   $('data-measured').textContent = `${pct(stats.fraction)} of voxels`;
-  $('sum-dataset').textContent = lattice ? `${a.toFixed(3)} ${b.toFixed(3)} ${c.toFixed(3)} Å · ${gamma.toFixed(1)}°` : `${bins.join('×')}`;
+  $('sum-dataset').textContent = (lattice ? `${a.toFixed(3)} ${b.toFixed(3)} ${c.toFixed(3)} Å · ${gamma.toFixed(1)}°` : `${bins.join('×')}`)
+    + (compare?.ready ? ' · vs B' : '');
   $('pipe-measured').textContent = `${(stats.valid / 1e6).toFixed(1)} M · ${pct(stats.fraction)} of the grid`;
 
   // Full details in the info popover.
@@ -355,6 +406,12 @@ function describe() {
   }
   items.push(['Symmetry', symmetry.ops.length > 1 ? `${symmetry.name} (${symmetry.ops.length} operations)` : 'none']);
   items.push(['Mask', mask ? `${pct((mask.edge + mask.outlier) / mask.measured)} of voxels removed` : 'none']);
+  if (compare?.ready) {
+    const B = compare.meta, l = B.lattice;
+    items.push(['Compare (B)', `${compare.name} (${mb(compare.size)})\n${[0, 1, 2].map((d) => B.shape[2 - d]).join(' × ')} bins, ${pct(B.stats.fraction)} measured`
+      + (l ? `\na ${l.a.toFixed(4)}, b ${l.b.toFixed(4)}, c ${l.c.toFixed(4)} Å, γ ${l.gamma.toFixed(3)}°` : '')
+      + (compare.mask ? `\nmask: ${pct((compare.mask.edge + compare.mask.outlier) / compare.mask.measured)} removed` : '')]);
+  }
   $('info-meta').innerHTML = items.map(([k, v]) => `<dt>${escapeHTML(k)}</dt><dd>${escapeHTML(v).replace(/\n/g, '<br>')}</dd>`).join('');
   updateStates();
 }
@@ -379,6 +436,7 @@ function updateStates() {
     ? `${removed} removed${mask.radius ? ` · edge ${mask.radius}` : ''}${mask.k ? ` · ${mask.k}σ outliers` : ''}${$('mask-removed').checked ? ' · showing removed' : ''}`
     : 'off — all measured voxels';
   // One-line summaries shown on collapsed panel sections.
+  $('pipe-views').textContent = compare?.ready ? '3 slices, A | B split + 3-D (A)' : '3 slices + 3-D';
   $('sum-processing').textContent = `${mask ? `mask ${removed}` : 'no mask'} · ${sym ? symmetry.name : 'no symmetry'}`;
   $('sum-display').textContent = `${$('cmap').value} · ${$('vmin').value}–${$('vmax').value} · ${$('scale').dataset.value}`;
   $('legend-min').textContent = fmtValue(Number($('vmin').value) || 0);
@@ -452,7 +510,7 @@ function setupViewer() {
     shell.section.append(foot);
     const q = shell.q;
     const p = {
-      fixed, x, y, step, lo, hi, version: 0, key, section: shell.section, zoom: null, drag: null,
+      fixed, x, y, step, lo, hi, version: 0, key, section: shell.section, zoom: null, drag: null, b: newLayer(),
       zoomReset: q('.zoom-reset'), slider: q('.slider'), center: q('.center'), wslider: q('.wslider'), width: q('.width'),
       caption: q('.view-caption'), pos: q('.view-pos'), angle: q('.view-angle'), canvas: q('canvas'), hover: q('.overlay-chip'),
     };
@@ -681,7 +739,9 @@ function scaler(s) {
 
 function autoRange() {
   const positive = [];
-  for (const p of panels) for (const v of p.data?.values ?? []) if (v > 0) positive.push(v);
+  for (const p of panels) {
+    for (const layer of compare?.ready ? [p, p.b] : [p]) for (const v of layer.data?.values ?? []) if (v > 0) positive.push(v);
+  }
   positive.sort((a, b) => a - b);
   const quantile = (q) => positive[Math.min(positive.length - 1, Math.floor(q * positive.length))];
   // Bragg peaks dominate the top percentiles, so a 97th-percentile ceiling
@@ -690,6 +750,7 @@ function autoRange() {
   $('vmin').value = $('scale').dataset.value === 'log' ? sig(vmax / 1000) : 0;
   $('vmax').value = vmax;
   $('soft').value = positive.length ? sig(quantile(0.5), 1) : sig(vmax / 20);
+  rangeIsAuto = true;
   redraw();
 }
 
@@ -726,7 +787,8 @@ function viewRange(dim, limit) {
   return lo < hi ? [lo, hi] : [e[0], e[e.length - 1]];
 }
 
-function panelImage(p, s) {
+/** The colored image of one dataset's slice (a panel, or its B layer `p.b`), cached. */
+function layerImage(p, s) {
   const key = `${p.version}|${s.cmap}|${s.scale}|${s.min}|${s.max}|${s.soft}`;
   if (p.imageKey === key) return p.image;
   const { values, rows, cols } = p.data;
@@ -788,22 +850,33 @@ function draw(p, canvas, w, h, dpr, exporting = false) {
     };
   }
 
-  // Intensity image, clipped to the view parallelogram.
+  // Intensity images, clipped to the view parallelogram. When comparing, the
+  // diagonal from its top-left to its bottom-right corner splits it: A below, B above.
   const corners = box.map(([u, v]) => project(u, v));
-  const { rows, cols } = p.data, ex = X.edges, ey = Y.edges;
-  const dx = (ex[ex.length - 1] - ex[0]) / cols, dy = (ey[ey.length - 1] - ey[0]) / rows;
-  c.save();
-  c.beginPath();
-  corners.forEach(([a, b], i) => (i ? c.lineTo(a, b) : c.moveTo(a, b)));
-  c.closePath();
+  const path = (pts) => {
+    c.beginPath();
+    pts.forEach(([a, b], i) => (i ? c.lineTo(a, b) : c.moveTo(a, b)));
+    c.closePath();
+  };
+  path(corners);
   c.fillStyle = MISSING;
   c.fill();
-  c.clip();
-  const [x0, y0] = project(ex[0], ey[0]);
-  c.transform(sx * g.lx * dx, 0, sx * g.ly * g.cos * dy, -sy * g.ly * sin * dy, x0, y0);
-  c.imageSmoothingEnabled = false;
-  c.drawImage(panelImage(p, s), 0, 0);
-  c.restore();
+  const shown = compareShown();
+  const layers = shown === 'split' ? [[p, meta.dims, [corners[0], corners[1], corners[3]]], [p.b, compare.meta.dims, corners.slice(1)]]
+    : shown === 'b' ? [[p.b, compare.meta.dims, corners]] : [[p, meta.dims, corners]];
+  for (const [layer, dims, clip] of layers) {
+    if (!layer.data) continue;
+    const { rows, cols } = layer.data, ex = dims[p.x].edges, ey = dims[p.y].edges;
+    const dx = (ex[ex.length - 1] - ex[0]) / cols, dy = (ey[ey.length - 1] - ey[0]) / rows;
+    c.save();
+    path(clip);
+    c.clip();
+    const [x0, y0] = project(ex[0], ey[0]);
+    c.transform(sx * g.lx * dx, 0, sx * g.ly * g.cos * dy, -sy * g.ly * sin * dy, x0, y0);
+    c.imageSmoothingEnabled = false;
+    c.drawImage(layerImage(layer, s), 0, 0);
+    c.restore();
+  }
 
   // Dashed lines where the other two slices cut this plane.
   if (s.guides && !exporting) {
@@ -822,6 +895,23 @@ function draw(p, canvas, w, h, dpr, exporting = false) {
       }
     }
     c.restore();
+  }
+
+  // The dividing diagonal and dataset tags when comparing.
+  if (shown === 'split') {
+    c.save();
+    c.lineCap = 'round';
+    for (const [color, width] of [['rgba(18, 24, 33, 0.5)', 3.5], ['#ffffff', 1.5]]) {
+      c.strokeStyle = color;
+      c.lineWidth = width;
+      c.beginPath(); c.moveTo(...corners[3]); c.lineTo(...corners[1]); c.stroke();
+    }
+    c.restore();
+  }
+  if (shown) {
+    const room = 0.45 * Math.hypot(corners[1][0] - corners[0][0], corners[1][1] - corners[0][1]);
+    if (shown !== 'b') datasetTag(c, 'A', sourceName, corners[0], corners[1], corners[3], room, false);
+    if (shown !== 'a') datasetTag(c, 'B', compare.name, corners[2], corners[3], corners[1], room, true);
   }
 
   // Axes, ticks and labels.
@@ -865,13 +955,14 @@ function draw(p, canvas, w, h, dpr, exporting = false) {
   c.textAlign = 'left';
   c.textBaseline = 'alphabetic';
   c.font = `650 14px ${SANS}`;
-  const title = `${F.label} = ${fmt(p.data.center)}`;
+  const d = shown === 'b' && p.b.data ? p.b.data : p.data;
+  const title = `${F.label} = ${fmt(d.center)}`;
   c.fillText(title, 10, 24);
   const titleWidth = c.measureText(title).width;
   c.font = `11px ${MONO}`;
   c.fillStyle = INK2;
-  const extras = `${symmetryNote(p.data)}${mask ? ` · mask ${pct((mask.edge + mask.outlier) / mask.measured)}` : ''}${p.data.removed ? ' · removed only' : ''}`;
-  c.fillText(`slab ${fmt(p.data.slab[0])} to ${fmt(p.data.slab[1])}${extras}`, 20 + titleWidth, 24);
+  const extras = `${symmetryNote(d)}${mask ? ` · mask ${pct((mask.edge + mask.outlier) / mask.measured)}` : ''}${d.removed ? ' · removed only' : ''}`;
+  c.fillText(`slab ${fmt(d.slab[0])} to ${fmt(d.slab[1])}${extras}`, 20 + titleWidth, 24);
 
   // Colorbar (exports only).
   const lut = LUTS[s.cmap], cx = w - pad.r + 22, cw = 10, top = pad.t + 4, bottom = h - pad.b, span = bottom - top;
@@ -893,6 +984,46 @@ function draw(p, canvas, w, h, dpr, exporting = false) {
     c.beginPath(); c.moveTo(cx + cw, y); c.lineTo(cx + cw + 3, y); c.stroke();
     c.fillText(fmtValue(v), cx + cw + 6, y);
   }
+}
+
+/**
+ * A dataset tag (letter and file name) inside the view corner `at`, offset
+ * toward its neighbouring corners `along` (same row) and `side` (same column).
+ * The tag grows up and right from a bottom corner, or down and left when `flip`.
+ */
+function datasetTag(c, letter, name, at, along, side, room, flip) {
+  const unit = ([x, y]) => {
+    const n = Math.hypot(x - at[0], y - at[1]) || 1;
+    return [(x - at[0]) / n, (y - at[1]) / n];
+  };
+  const [ax, ay] = unit(along), [bx, by] = unit(side);
+  const x = at[0] + 12 * ax + 8 * bx, y = at[1] + 12 * ay + 8 * by;
+  c.save();
+  c.font = `600 11px ${SANS}`;
+  const h = 20, badge = 16, maxText = room - badge - 16;
+  let text = name;
+  if (c.measureText(text).width > maxText) {
+    while (text.length > 1 && c.measureText(`${text}…`).width > maxText) text = text.slice(0, -1);
+    text += '…';
+  }
+  const tw = maxText > 24 ? c.measureText(text).width : 0;
+  const w = 2 + badge + (tw ? 6 + tw + 8 : 2), left = flip ? x - w : x, top = flip ? y : y - h;
+  c.fillStyle = 'rgba(255, 255, 255, 0.9)';
+  c.strokeStyle = 'rgba(18, 24, 33, 0.18)';
+  c.lineWidth = 1;
+  c.beginPath(); c.roundRect(left, top, w, h, 5); c.fill(); c.stroke();
+  c.fillStyle = INK;
+  c.beginPath(); c.roundRect(left + 2, top + 2, badge, badge, 4); c.fill();
+  c.fillStyle = '#ffffff';
+  c.textAlign = 'center';
+  c.textBaseline = 'middle';
+  c.fillText(letter, left + 2 + badge / 2, top + h / 2 + 0.5);
+  if (tw) {
+    c.fillStyle = INK2;
+    c.textAlign = 'left';
+    c.fillText(text, left + badge + 8, top + h / 2 + 0.5);
+  }
+  c.restore();
 }
 
 /** Redraw one panel, with the zoom box being dragged (as its u-v parallelogram). */
@@ -952,14 +1083,31 @@ function pointAt(p, e) {
 
 function hover(p, e) {
   const pt = pointAt(p, e);
-  const X = meta.dims[p.x], Y = meta.dims[p.y], ex = X.edges, ey = Y.edges;
-  const { values, counts, rows, cols } = p.data ?? {};
-  const col = pt ? Math.floor((pt[0] - ex[0]) / (ex[ex.length - 1] - ex[0]) * cols) : -1;
-  const row = pt ? Math.floor((pt[1] - ey[0]) / (ey[ey.length - 1] - ey[0]) * rows) : -1;
-  if (col < 0 || row < 0 || col >= cols || row >= rows) { p.hover.hidden = true; return; }
-  const i = row * cols + col, val = values[i], n = counts[i];
-  p.hover.textContent = `${X.label} ${fmt(pt[0])}  ${Y.label} ${fmt(pt[1])}  →  `
-    + (Number.isFinite(val) ? `${fmtValue(val)} (${n} vox)` : 'no data');
+  if (!pt) { p.hover.hidden = true; return; }
+  // The value under the cursor in one dataset; null outside its grid.
+  const read = (layer, dims) => {
+    if (!layer.data) return null;
+    const ex = dims[p.x].edges, ey = dims[p.y].edges, { values, counts, rows, cols } = layer.data;
+    const col = Math.floor((pt[0] - ex[0]) / (ex[ex.length - 1] - ex[0]) * cols);
+    const row = Math.floor((pt[1] - ey[0]) / (ey[ey.length - 1] - ey[0]) * rows);
+    if (col < 0 || row < 0 || col >= cols || row >= rows) return null;
+    const i = row * cols + col;
+    return Number.isFinite(values[i]) ? `${fmtValue(values[i])} (${counts[i]} vox)` : 'no data';
+  };
+  const shown = compareShown();
+  let text;
+  if (!shown) {
+    text = read(p, meta.dims);
+    if (text === null) { p.hover.hidden = true; return; }
+  } else {
+    // Both datasets, the one under the cursor first.
+    const a = `A ${read(p, meta.dims) ?? 'no data'}`, b = `B ${read(p.b, compare.meta.dims) ?? 'no data'}`;
+    const [u0, u1, v0, v1] = p.view;
+    const inB = shown === 'b' || (shown === 'split' && (pt[0] - u0) / (u1 - u0) + (pt[1] - v0) / (v1 - v0) > 1);
+    text = inB ? `${b} · ${a}` : `${a} · ${b}`;
+  }
+  const X = meta.dims[p.x], Y = meta.dims[p.y];
+  p.hover.textContent = `${X.label} ${fmt(pt[0])}  ${Y.label} ${fmt(pt[1])}  →  ${text}`;
   p.hover.hidden = false;
 }
 
@@ -980,7 +1128,8 @@ function savePNG(p) {
   const out = document.createElement('canvas');
   draw(p, out, Math.max(p.canvas.clientWidth, 480), Math.max(p.canvas.clientHeight, 360) + 24, 3, true);
   const X = meta.dims[p.x], Y = meta.dims[p.y], F = meta.dims[p.fixed];
-  out.toBlob((blob) => download(blob, `${stem()}_${X.label}${Y.label}_${F.label}=${p.data.center}.png`));
+  const names = { a: stem(), b: stemOf(compare?.name ?? ''), split: `${stem()}_vs_${stemOf(compare?.name ?? '')}` };
+  out.toBlob((blob) => download(blob, `${names[compareShown() ?? 'a']}_${X.label}${Y.label}_${F.label}=${p.data.center}.png`));
 }
 
 function download(blob, name) {
@@ -1010,6 +1159,10 @@ function applySymmetry() {
   const preset = PRESETS.find(([, gens]) => groupKey(closeGroup(parseOps(gens))) === key);
   $('sym-preset').value = preset ? preset[0] : 'custom';
   symmetry = { name: preset ? preset[0] : 'custom', ops, maps };
+  if (compare?.ready) {
+    Object.assign(compare, compareMaps());
+    showCompare();
+  }
   showSymmetry();
   describe();
   panels.forEach(request);
@@ -1066,6 +1219,7 @@ function applyMask(clear = false) {
   $('mask-status').className = 'note';
   $('mask-status').textContent = radius || k ? 'Building mask…' : 'Clearing mask…';
   worker.postMessage({ type: 'mask', id: ++requestId, radius, k, maps: symmetry.maps, symmetry: symmetry.name });
+  if (compare?.ready) sendCompareMask(radius, k);
 }
 
 function showMask(seconds) {
@@ -1148,14 +1302,230 @@ function update3D() {
   const { T } = cartesianBasis(meta.dims, cell);
   view3d.setFrame(T, meta.dims.map((d) => viewRange(d, settings.limit)), meta.dims.map((d) => d.label));
   const slices = panels.filter((p) => p.data).map((p) => {
-    const X = meta.dims[p.x], Y = meta.dims[p.y];
+    const X = meta.dims[p.x], Y = meta.dims[p.y], u = viewRange(X, settings.limit), v = viewRange(Y, settings.limit);
     return {
-      fixed: p.fixed, x: p.x, y: p.y, center: p.data.center, image: panelImage(p, settings), key: p.imageKey,
-      u: viewRange(X, settings.limit), v: viewRange(Y, settings.limit),
+      fixed: p.fixed, x: p.x, y: p.y, center: p.data.center, ...sliceTexture(p, settings, u, v), u, v,
       ex: [X.edges[0], X.edges[X.edges.length - 1]], ey: [Y.edges[0], Y.edges[Y.edges.length - 1]],
     };
   });
   view3d.setSlices(slices, $('iso-slices').checked);
+}
+
+/**
+ * The texture of a slice plane in the 3-D view, on A's pixel grid. When
+ * comparing, it matches the 2-D view: split along the diagonal of the visible
+ * range (u, v), or B alone.
+ */
+function sliceTexture(p, s, u, v) {
+  const shown = compareShown(), a = layerImage(p, s);
+  if (!shown || shown === 'a') return { image: a, key: p.imageKey };
+  const b = p.b.data ? layerImage(p.b, s) : null;
+  const key = `${p.imageKey}|${b ? p.b.imageKey : '-'}|${shown}|${u}|${v}`;
+  if (p.textureKey === key) return { image: p.texture, key };
+  const { rows, cols } = p.data, ex = meta.dims[p.x].edges, ey = meta.dims[p.y].edges;
+  const dx = (ex[ex.length - 1] - ex[0]) / cols, dy = (ey[ey.length - 1] - ey[0]) / rows;
+  const px = (uu, vv) => [(uu - ex[0]) / dx, (vv - ey[0]) / dy];
+  const canvas = p.texture ?? document.createElement('canvas');
+  canvas.width = cols;
+  canvas.height = rows;
+  const c = canvas.getContext('2d');
+  const clip = (pts) => {
+    c.beginPath();
+    pts.forEach(([x, y], i) => (i ? c.lineTo(x, y) : c.moveTo(x, y)));
+    c.closePath();
+    c.clip();
+  };
+  c.imageSmoothingEnabled = false;
+  if (shown === 'split') {
+    c.save();
+    clip([px(u[0], v[0]), px(u[1], v[0]), px(u[0], v[1])]);
+    c.drawImage(a, 0, 0);
+    c.restore();
+  }
+  if (b) {
+    const bx = compare.meta.dims[p.x].edges, by = compare.meta.dims[p.y].edges, { rows: rb, cols: cb } = p.b.data;
+    c.save();
+    if (shown === 'split') clip([px(u[1], v[0]), px(u[1], v[1]), px(u[0], v[1])]);
+    c.transform((bx[bx.length - 1] - bx[0]) / cb / dx, 0, 0, (by[by.length - 1] - by[0]) / rb / dy, (bx[0] - ex[0]) / dx, (by[0] - ey[0]) / dy);
+    c.imageSmoothingEnabled = false;
+    c.drawImage(b, 0, 0);
+    c.restore();
+  }
+  p.texture = canvas;
+  p.textureKey = key;
+  return { image: canvas, key };
+}
+
+// ---- Comparing two datasets ---------------------------------------------------------------
+
+/** Open a second file (B) in its own worker; its slices follow A's positions and processing. */
+function openCompare(file) {
+  if (!panels.length) return; // viewer not ready yet
+  closeCompare();
+  const w = new Worker(new URL('./worker.js', import.meta.url), { type: 'module' });
+  const current = compare = {
+    worker: w, name: file.name, size: file.size, meta: null, ready: false, autoscaled: false,
+    maps: [IDENTITY_MAP], mapsNote: '', mask: null, maskNote: '', maskBusy: false,
+  };
+  w.onmessage = ({ data }) => { if (compare === current) compareHandlers[data.type]?.(data); };
+  w.onerror = (e) => {
+    e.preventDefault();
+    if (compare !== current) return;
+    closeCompare();
+    error(`Dataset B: ${e.message || 'the HDF5 reader could not start.'}`);
+  };
+  w.postMessage({ type: 'open', file });
+  showCompare('opening…');
+}
+
+async function openCompareURL(url) {
+  if (!panels.length) return;
+  closeCompare();
+  const current = compare = { worker: null, name: decodeURIComponent(url.split('/').pop()), ready: false };
+  showCompare('downloading…');
+  try {
+    const file = await fetchFile(url, (got, total) => { if (compare === current) showCompare(`downloading ${downloaded(got, total)}`); });
+    if (compare === current) openCompare(file);
+  } catch (err) {
+    if (compare !== current) return;
+    closeCompare();
+    error(`Could not download ${url}: ${err.message}. The server must allow cross-origin requests.`);
+  }
+}
+
+function closeCompare() {
+  compare?.worker?.terminate();
+  compare = null;
+  for (const p of panels) {
+    p.b = newLayer();
+    showCaption(p);
+  }
+  showCompare();
+  if (meta && panels.length) {
+    describe();
+    redraw();
+  }
+}
+
+/** The symmetry's index maps on B's grid, or the identity (with a note) when they do not fit it. */
+function compareMaps() {
+  if (symmetry.ops.length === 1) return { maps: [IDENTITY_MAP], mapsNote: '' };
+  try {
+    return { maps: indexMaps(symmetry.ops, compare.meta.dims), mapsNote: '' };
+  } catch (err) {
+    return { maps: [IDENTITY_MAP], mapsNote: `Symmetry not applied to B: ${err.message}` };
+  }
+}
+
+function sendCompareMask(radius, k) {
+  const kb = compare.maps.length >= 3 ? k : 0;
+  compare.maskNote = k && !kb ? 'Outlier cut not applied to B: it needs a symmetry of at least 3 operations that fits B\'s grid.' : '';
+  compare.maskBusy = true;
+  compare.worker.postMessage({ type: 'mask', id: ++requestId, radius, k: kb, maps: compare.maps, symmetry: symmetry.name });
+  showCompare('building mask…');
+}
+
+const compareHandlers = {
+  progress: ({ label, fraction }) => showCompare(`${label.toLowerCase()} · ${Math.round(100 * fraction)}%`),
+  meta: ({ info }) => { compare.meta = info; },
+  ready: ({ stats, seconds }) => {
+    Object.assign(compare.meta, { stats, seconds });
+    compare.ready = true;
+    Object.assign(compare, compareMaps());
+    for (const p of panels) p.b = newLayer();
+    // B gets A's mask before its first slices.
+    if (mask) sendCompareMask(mask.radius, mask.k);
+    else panels.forEach((p) => request(p, 'b'));
+    showCompare(compare.maskBusy ? 'building mask…' : '');
+    describe();
+    redraw();
+  },
+  slice: (msg) => {
+    const p = panels.find((q) => q.fixed === msg.fixed);
+    if (!p) return;
+    Object.assign(p.b, { busy: false, data: msg, error: '', version: p.b.version + 1 });
+    showCaption(p);
+    if (p.b.wanted) sendB(p);
+    // Once B's first slices are in, the automatic range covers both datasets.
+    if (!compare.autoscaled && panels.every((q) => q.b.data || q.b.error)) {
+      compare.autoscaled = true;
+      if (rangeIsAuto) autoRange();
+    }
+    redraw();
+  },
+  error: ({ fixed, message }) => {
+    const p = panels.find((q) => q.fixed === fixed);
+    if (!p) {
+      closeCompare();
+      error(`Dataset B: ${message}`);
+      return;
+    }
+    Object.assign(p.b, { busy: false, data: null, error: message, version: p.b.version + 1 });
+    showCaption(p);
+    if (p.b.wanted) sendB(p);
+    redraw();
+  },
+  'progress-mask': ({ label, fraction }) => showCompare(`${label.toLowerCase()}… ${Math.round(100 * fraction)}%`),
+  mask: ({ stats, radius, k }) => {
+    compare.maskBusy = false;
+    compare.mask = stats ? { ...stats, radius, k } : null;
+    showCompare();
+    describe();
+    panels.forEach((p) => request(p, 'b'));
+  },
+  'mask-error': ({ message }) => {
+    compare.maskBusy = false;
+    compare.maskNote = `Mask for B failed: ${message}`;
+    showCompare();
+    panels.forEach((p) => request(p, 'b'));
+  },
+};
+
+/** The Compare card, the B button in the top bar and the A / Split / B control. */
+function showCompare(progressText = '') {
+  const ready = !!compare?.ready;
+  document.body.classList.toggle('comparing', ready);
+  $('compare-open').hidden = !!compare;
+  $('compare-actions').hidden = !compare;
+  $('compare-info').hidden = !ready;
+  $('compare-view').hidden = $('compare-button').hidden = $('dataset-tag').hidden = !ready;
+  $('compare').classList.toggle('active', ready);
+  $('compare-state').textContent = ready ? { split: 'split', a: 'A only', b: 'B only' }[compareView] : compare ? 'loading' : 'off';
+  $('compare-state').className = `state${ready ? ' on' : compare ? ' busy' : ''}`;
+  const title3d = views['3d']?.section.querySelector('.view-title');
+  if (title3d) title3d.textContent = ready ? 'Isosurface · A' : 'Isosurface';
+  const statusEl = $('compare-status');
+  statusEl.className = 'note';
+  if (!compare) {
+    statusEl.textContent = 'Open a second file to split every slice along its diagonal: this dataset (A) below, the second (B) above.';
+    return;
+  }
+  if (!ready) {
+    statusEl.textContent = `${compare.name}: ${progressText || 'opening…'}`;
+    return;
+  }
+  const B = compare.meta, l = B.lattice, bins = [0, 1, 2].map((d) => B.shape[2 - d]);
+  $('compare-button-name').textContent = compare.name;
+  $('compare-button').title = `Dataset B: ${compare.name} (click to replace)`;
+  $('compare-name').textContent = `${compare.name} (${mb(compare.size)})`;
+  $('compare-cell').innerHTML = l
+    ? `${l.a.toFixed(3)} ${l.b.toFixed(3)} ${l.c.toFixed(3)} Å<br>${l.alpha.toFixed(2)}° ${l.beta.toFixed(2)}° ${l.gamma.toFixed(2)}°`
+    : 'not in file';
+  $('compare-grid').textContent = bins.join(' × ');
+  $('compare-measured').textContent = `${pct(B.stats.fraction)} of voxels`
+    + (compare.mask ? ` · mask ${pct((compare.mask.edge + compare.mask.outlier) / compare.mask.measured)}` : '');
+  const labels = (dims) => dims.map((d) => d.label).join(' ');
+  const warnings = [];
+  if (labels(B.dims) !== labels(meta.dims)) warnings.push(`B's axes (${labels(B.dims)}) differ from A's (${labels(meta.dims)}); B is drawn on A's axes.`);
+  if (compare.mapsNote) warnings.push(compare.mapsNote);
+  if (compare.maskNote) warnings.push(compare.maskNote);
+  if (progressText) statusEl.textContent = `B: ${progressText}`;
+  else if (warnings.length) {
+    statusEl.className = 'note warn';
+    statusEl.textContent = warnings.join(' ');
+  } else {
+    statusEl.textContent = 'Slice positions, symmetry, mask and color scale apply to both. Hover shows both values.';
+  }
 }
 
 // ---- Startup -------------------------------------------------------------------------
@@ -1188,11 +1558,21 @@ restore();
 show('intro');
 status('', 'no file');
 $('open').onclick = $('open-intro').onclick = () => $('file').click();
-$('open-example').onclick = () => openURL('examples/demo_hexagonal.nxs');
-$('file').onchange = () => { if ($('file').files[0]) openFile($('file').files[0]); $('file').value = ''; };
+$('open-example').onclick = () => { pendingCompare = null; openURL('examples/demo_hexagonal.nxs'); };
+$('open-compare-example').onclick = () => { pendingCompare = 'examples/demo_hexagonal_lowT.nxs'; openURL('examples/demo_hexagonal.nxs'); };
+$('file').onchange = () => { if ($('file').files[0]) { pendingCompare = null; openFile($('file').files[0]); } $('file').value = ''; };
+$('compare-open').onclick = $('compare-replace').onclick = $('compare-button').onclick = () => $('file-b').click();
+$('file-b').onchange = () => { if ($('file-b').files[0]) openCompare($('file-b').files[0]); $('file-b').value = ''; };
+$('compare-close').onclick = closeCompare;
+segmented($('compare-view'), (value) => {
+  compareView = value;
+  showCompare();
+  redraw();
+});
 $('error-close').onclick = () => error('');
 for (const id of ['cmap', 'vmin', 'vmax', 'soft', 'limit', 'angles', 'guides']) $(id).addEventListener('input', redraw);
 for (const id of ['cmap', 'angles', 'guides']) $(id).addEventListener('change', persist);
+for (const id of ['vmin', 'vmax', 'soft']) $(id).addEventListener('input', () => { rangeIsAuto = false; });
 $('angles').addEventListener('change', () => { if (meta) describe(); });
 $('cmap').addEventListener('input', paintColorbar);
 segmented($('click-mode'), (mode) => { setClickMode(mode); persist(); });
@@ -1255,14 +1635,27 @@ for (const id of ['mask-erode', 'mask-k']) $(id).onkeydown = (e) => { if (e.key 
 $('mask-removed').onchange = () => { updateStates(); panels.forEach(request); };
 $('mask-download').onclick = () => worker.postMessage({ type: 'mask-download' });
 
-document.addEventListener('dragover', (e) => { e.preventDefault(); document.body.classList.add('dragging'); });
-document.addEventListener('dragleave', (e) => { if (!e.relatedTarget) document.body.classList.remove('dragging'); });
+// Dropping a file opens it, or opens it as dataset B over the Compare card or the B button.
+const dropsOnB = (e) => panels.length > 0 && !!e.target.closest?.('#compare, #compare-button');
+document.addEventListener('dragover', (e) => {
+  e.preventDefault();
+  document.body.classList.add('dragging');
+  document.body.classList.toggle('drop-b', dropsOnB(e));
+});
+document.addEventListener('dragleave', (e) => { if (!e.relatedTarget) document.body.classList.remove('dragging', 'drop-b'); });
 document.addEventListener('drop', (e) => {
   e.preventDefault();
-  document.body.classList.remove('dragging');
+  document.body.classList.remove('dragging', 'drop-b');
   const file = e.dataTransfer?.files?.[0];
-  if (file) openFile(file);
+  if (!file) return;
+  if (dropsOnB(e)) openCompare(file);
+  else {
+    pendingCompare = null;
+    openFile(file);
+  }
 });
 
-const remote = new URLSearchParams(location.search).get('url');
+// ?url= opens a remote file, and ?compare= a second one as dataset B.
+const params = new URLSearchParams(location.search), remote = params.get('url');
+pendingCompare = params.get('compare');
 if (remote) openURL(remote);

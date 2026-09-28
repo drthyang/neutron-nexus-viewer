@@ -6,7 +6,8 @@
 
 - **Local file**: click the dataset button or drop a `.nxs` file anywhere on the page. The file is read in the browser and never uploaded.
 - **Example**: *Try example data* on the start page opens a small synthetic hexagonal dataset (`examples/demo_hexagonal.nxs`). It has coverage gaps, which symmetry averaging fills, and bright detector-edge voxels, which the mask removes.
-- **Remote file**: `?url=https://…/file.nxs` downloads and opens a file. The host must allow cross-origin requests.
+- **Remote file**: `?url=https://…/file.nxs` downloads and opens a file, and `&compare=https://…/other.nxs` adds a second file to compare. The host must allow cross-origin requests.
+- **Comparison example**: *compare two example datasets* on the start page opens the example with a low-temperature variant (`examples/demo_hexagonal_lowT.nxs`) that has superlattice peaks at the M points.
 
 The histogram is held in memory as float32. A 401³ volume needs about 260 MB and takes 1–2 s to read.
 
@@ -21,7 +22,7 @@ The histogram is held in memory as float32. A 401³ volume needs about 260 MB an
 
 - **Top bar**: the dataset, its axes and grid, the engine status, and ⓘ for dataset details and a summary of the method.
 - **Control panel** (left, collapsible; each section folds to a one-line summary):
-  - **Dataset**: unit cell (from UB), reciprocal lattice, grid and measured fraction.
+  - **Dataset**: unit cell (from UB), reciprocal lattice, grid and measured fraction, and the Compare card for a second dataset.
   - **Processing**: the pipeline *Measured voxels → Mask → Symmetry average → Views*, followed by the Symmetry and Mask controls. Active stages are highlighted.
   - **Display**: colormap, color range, scale, view range, guides and cell angles.
 - **Workspace**: a header row with the click mode, the shared color legend and the layout, then four views (HK, HL, KL and 3-D).
@@ -75,8 +76,20 @@ In every mode, double-click (or *Reset zoom*) returns to the full view.
 
 A transparent isosurface of the binned, symmetrized and masked volume, with the current slices as planes, clipped to the view range. The footer sets the isosurface level (log slider or typed; empty returns to the automatic level) and the surface and slice opacity. The options button sets the grid (about 64, 100 or 150 blocks per axis) and hides the slices. Drag to rotate, scroll to zoom, right-drag to pan, and use ↺ to reset the camera.
 
+## Comparing two datasets
+
+*Open second file (B)* in the Compare card, or drop a file on the card, opens a second dataset next to the first (A). Every slice is then cut along its diagonal, from the top-left to the bottom-right corner of the view: A fills the lower-left half and B the upper-right half. Tags in the corners name the files, and the top bar shows both.
+
+- **Shared**: slice positions and thickness, zoom and pan, symmetry, mask settings and the color scale apply to both datasets, so the two halves are directly comparable. *Auto range* pools both.
+- **A / Split / B** in the workspace header shows one dataset over the whole view, or the split.
+- **Hover** reads both datasets at the cursor, the one under it first. View headers show the coverage of each.
+- **Processing**: B has its own worker and mask, built with the same parameters on its own data. Symmetry operations are mapped onto B's grid; if they do not fit it, B is used as measured and the card says so.
+- **Axes**: B is drawn on A's axes and lattice geometry. Files should share the same axes (for example both `[H,0,0]`, `[0,K,0]`, `[0,0,L]`); the grids may differ. The card warns when the axis names differ.
+- **3-D view**: the isosurface is A's; the slice planes show the same split as the views.
+- **Replace B…** swaps in another file, and *Remove B* returns to a single dataset. Opening a new file as A also removes B.
+
 ## Layouts and export
 
 - **Layouts**: *Quad* (2×2), *Focus* (one large view with the other three beside it) and *Single*. Each view's header can focus or maximize it, and double-clicking a header maximizes it. Esc returns.
-- **Save PNG** exports a view at 3× resolution. Slice exports include a title and their own colorbar, without guides.
+- **Save PNG** exports a view at 3× resolution. Slice exports include a title and their own colorbar, without guides. When comparing, they keep the split and the dataset tags.
 - **Remembered settings**: the colormap, scale, click mode, layout, panel state and folded sections are remembered per browser.
