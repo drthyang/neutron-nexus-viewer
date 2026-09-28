@@ -41,7 +41,7 @@ These scripts need numpy and h5py, and matplotlib for the colormaps:
 - `tools/make_example.py` writes `examples/demo_hexagonal.nxs`, a 101³ synthetic hexagonal dataset (1.3 MB) with coverage wedges and bright edge voxels, and `examples/demo_hexagonal_lowT.nxs`, the same with superlattice peaks at the M points and weaker diffuse rods, for the comparison demo.
 - `tools/make_colormaps.py` writes `js/colormaps.js` from matplotlib.
 
-`docs/screenshot.png` is a capture of the example data with 6/mmm averaging and a mask (edge 1, 5σ).
+`docs/screenshot.png` is a capture of the two examples compared (`?url=examples/demo_hexagonal.nxs&compare=examples/demo_hexagonal_lowT.nxs`) with 6/mmm averaging, a mask (edge 1, 5σ) and *Auto range*, at 1440×900 and 1.5× pixel ratio.
 
 ## Dependencies
 

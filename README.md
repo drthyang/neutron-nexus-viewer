@@ -9,7 +9,7 @@
 
 **▶ Try it: [drthyang.github.io/neutron-nexus-viewer](https://drthyang.github.io/neutron-nexus-viewer/)** — open a Mantid `.nxs` file, the [example data](https://drthyang.github.io/neutron-nexus-viewer/?url=examples/demo_hexagonal.nxs), or [two examples side by side](https://drthyang.github.io/neutron-nexus-viewer/?url=examples/demo_hexagonal.nxs&compare=examples/demo_hexagonal_lowT.nxs). Nothing to install, and your file never leaves your machine.
 
-<p align="center"><img src="docs/screenshot.png" alt="NeXus Viewer with a hexagonal example dataset: the control panel shows the processing pipeline with 6/mmm symmetry averaging and a mask that removed 19% of voxels; the workspace shows the HK, HL and KL slices and a 3-D isosurface with the three slice planes." width="100%"/></p>
+<p align="center"><img src="docs/screenshot.png" alt="NeXus Viewer comparing two hexagonal example datasets: each of the HK, HL and KL slices is cut along its diagonal, with the first dataset in the lower-left half and a low-temperature variant with superlattice peaks in the upper-right half. The control panel shows the Compare card and the processing pipeline with 6/mmm symmetry averaging and a mask; the 3-D view shows the isosurface with the split slice planes." width="100%"/></p>
 
 ## Features
 
