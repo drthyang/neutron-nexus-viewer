@@ -6,22 +6,34 @@ import { closeGroup, formatOp, indexMaps, metricChange, parseOps, PRESETS } from
 const $ = (id) => document.getElementById(id);
 // [fixed, x, y] display dimensions: HK, HL and KL planes for Mantid HKL data.
 const LAYOUT = [[2, 0, 1], [1, 0, 2], [0, 1, 2]];
+const VIEW_KEY = { 2: 'hk', 1: 'hl', 0: 'kl' };
 const LUTS = Object.fromEntries(Object.entries(COLORMAPS).map(([name, hex]) =>
   [name, Uint8Array.from(hex.match(/../g), (h) => parseInt(h, 16))]));
-const SAVED = ['cmap', 'scale', 'angles', 'guides'];
-const ICON_ENLARGE = '<svg width="13" height="13" viewBox="0 0 14 14" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M8.5 1.5h4v4M5.5 12.5h-4v-4M12.5 1.5 8 6M1.5 12.5 6 8"/></svg>';
-const ICON_RESTORE = '<svg width="13" height="13" viewBox="0 0 14 14" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M12.5 5.5h-4v-4M1.5 8.5h4v4M8.5 5.5 13 1M5.5 8.5 1 13"/></svg>';
 const NO_SYMMETRY = { name: '1', ops: [[1, 0, 0, 0, 1, 0, 0, 0, 1]], maps: [IDENTITY_MAP] };
 // Canvas colors, matching the page tokens.
-const INK = '#141a22', INK2 = '#4a5566', AXIS = '#9aa5b3', MISSING = '#e7ebf0';
+const INK = '#121821', INK2 = '#475467', AXIS = '#9aa5b3', MISSING = '#e8ecf1';
 const MONO = 'ui-monospace, "SF Mono", Menlo, Consolas, monospace';
 const SANS = '-apple-system, BlinkMacSystemFont, "Inter", "Segoe UI", Roboto, sans-serif';
 
+const svg = (body, size = 15, extra = '') => `<svg width="${size}" height="${size}" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true" ${extra}>${body}</svg>`;
+const ICONS = {
+  save: svg('<path d="M2.5 5.5h2l1.2-2h4.6l1.2 2h2a1 1 0 0 1 1 1v6a1 1 0 0 1-1 1h-11a1 1 0 0 1-1-1v-6a1 1 0 0 1 1-1Z"/><circle cx="8" cy="9.2" r="2.3"/>'),
+  focus: svg('<rect x="1.75" y="1.75" width="8" height="12.5" rx="1"/><path d="M11.75 2.5h2.5M11.75 8h2.5M11.75 13.5h2.5"/>'),
+  quad: svg('<rect x="1.75" y="1.75" width="5.5" height="5.5" rx="1"/><rect x="8.75" y="1.75" width="5.5" height="5.5" rx="1"/><rect x="1.75" y="8.75" width="5.5" height="5.5" rx="1"/><rect x="8.75" y="8.75" width="5.5" height="5.5" rx="1"/>'),
+  max: svg('<path d="M9.5 2.5h4v4M6.5 13.5h-4v-4M13.5 2.5 9 7M2.5 13.5 7 9"/>'),
+  restore: svg('<path d="M13.5 6.5h-4v-4M2.5 9.5h4v4M9.5 6.5 14 2M6.5 9.5 2 14"/>'),
+  reset: svg('<path d="M2.8 8a5.2 5.2 0 1 0 1.6-3.8"/><path d="M2.5 2.5v3h3"/>'),
+  gear: svg('<path d="M2.5 4.5h11M2.5 8h11M2.5 11.5h11"/><circle cx="5.5" cy="4.5" r="1.5" fill="#fff"/><circle cx="10.5" cy="8" r="1.5" fill="#fff"/><circle cx="7" cy="11.5" r="1.5" fill="#fff"/>'),
+};
+
 let worker = null, meta = null, panels = [], settings = null, sourceName = '', sourceSize = 0, autoscaled = false;
 let requestId = 0, symmetry = NO_SYMMETRY, mask = null;
-// Slice layout: the fixed dimension of the enlarged plane, or null for three across.
-let focus = 2;
-// 3-D view state: the lazily loaded View3D, its panel elements and the isosurface request queue.
+// Workspace layout: 'quad', 'focus' or 'single', around the primary view ('hk', 'hl', 'kl' or '3d').
+let layout = 'quad', primary = 'hk', lastMulti = 'quad';
+const views = {};
+// What clicking a slice does: 'navigate' moves the other two slices, 'zoom' zooms in.
+let clickMode = 'navigate';
+// 3-D view state: the lazily loaded View3D, its elements and the isosurface request queue.
 let view3d = null, iso = null;
 
 // ---- Formatting -------------------------------------------------------------
@@ -76,15 +88,50 @@ function setSegmented(el, value) {
   for (const b of el.querySelectorAll('button')) b.classList.toggle('on', b.dataset.value === value);
 }
 
-function engine(state, text) {
-  $('engine-dot').className = `engine-dot ${state}`;
-  $('engine-text').textContent = text;
+function status(state, text) {
+  $('status-dot').className = `status-dot ${state}`;
+  $('status-text').textContent = text;
 }
+
+// Popovers: one open at a time, placed under the button that opened it.
+function closePopovers() {
+  for (const pop of document.querySelectorAll('.popover')) pop.hidden = true;
+  for (const b of document.querySelectorAll('[data-pop]')) b.setAttribute('aria-expanded', 'false');
+}
+
+function togglePopover(button) {
+  const pop = $(button.dataset.pop), open = pop.hidden;
+  closePopovers();
+  if (!open) return;
+  pop.hidden = false;
+  button.setAttribute('aria-expanded', 'true');
+  const r = button.getBoundingClientRect(), w = pop.offsetWidth;
+  const left = r.left + r.width / 2 < innerWidth / 2 ? r.left : r.right - w;
+  pop.style.left = `${clamp(left, 12, innerWidth - w - 12)}px`;
+  pop.style.top = `${r.bottom + 8}px`;
+}
+
+document.addEventListener('click', (e) => {
+  const button = e.target.closest('[data-pop]');
+  if (button) togglePopover(button);
+  else if (!e.target.closest('.popover')) closePopovers();
+});
+addEventListener('resize', closePopovers);
+addEventListener('keydown', (e) => {
+  if (e.key !== 'Escape') return;
+  if (document.querySelector('.popover:not([hidden])')) closePopovers();
+  else if (layout === 'single') setLayout(lastMulti, primary);
+});
 
 // ---- Files and the worker ---------------------------------------------------
 
 function show(stage) {
-  for (const id of ['intro', 'loading', 'viewer']) $(id).hidden = id !== stage;
+  $('intro').hidden = stage !== 'intro';
+  $('loading').hidden = stage !== 'loading';
+  $('workspace').hidden = stage !== 'workspace';
+  $('toolbar').hidden = stage !== 'workspace';
+  for (const el of document.querySelectorAll('[data-loaded]')) el.hidden = stage !== 'workspace';
+  $('ident').hidden = $('ident-grid').hidden = stage !== 'workspace';
 }
 
 function progress(label, fraction) {
@@ -93,18 +140,19 @@ function progress(label, fraction) {
 }
 
 function error(message) {
-  $('error').textContent = message;
+  $('error-text').textContent = message;
   $('error').hidden = !message;
 }
 
 function fail(message) {
   error(message);
-  engine(meta ? 'ok' : '', meta ? 'in-browser engine' : 'no file open');
-  if (!meta || $('viewer').hidden) show('intro');
+  status(meta ? 'ok' : '', meta ? 'ready' : 'no file');
+  if (!panels.length) show('intro');
 }
 
 function openFile(file) {
   worker?.terminate();
+  closePopovers();
   meta = null;
   panels = [];
   autoscaled = false;
@@ -113,13 +161,13 @@ function openFile(file) {
   iso = null;
   sourceName = file.name;
   sourceSize = file.size;
-  $('slices').replaceChildren();
-  $('view3d').replaceChildren();
+  $('workspace').replaceChildren();
   error('');
   show('loading');
-  engine('busy', 'reading file');
+  status('busy', 'reading');
   $('dataset-name').textContent = file.name;
-  progress(`Opening ${file.name} (${mb(file.size)})`, 0);
+  $('loading-title').textContent = `Opening ${file.name}`;
+  progress(`${mb(file.size)}`, 0);
   document.title = `${file.name} · NeXus Slice Viewer`;
   worker = new Worker(new URL('./worker.js', import.meta.url), { type: 'module' });
   worker.onmessage = ({ data }) => handlers[data.type]?.(data);
@@ -132,8 +180,9 @@ function openFile(file) {
 
 async function openURL(url) {
   show('loading');
-  engine('busy', 'downloading');
-  progress(`Downloading ${url}`, 0);
+  status('busy', 'downloading');
+  $('loading-title').textContent = 'Downloading';
+  progress(url, 0);
   try {
     const res = await fetch(url);
     if (!res.ok) throw new Error(`HTTP ${res.status}`);
@@ -144,7 +193,7 @@ async function openURL(url) {
       if (done) break;
       parts.push(value);
       got += value.length;
-      progress(`Downloading ${mb(got)}${total ? ` of ${mb(total)}` : ''}`, total ? got / total : 0);
+      progress(`${mb(got)}${total ? ` of ${mb(total)}` : ''}`, total ? got / total : 0);
     }
     const name = decodeURIComponent(new URL(url, location.href).pathname.split('/').pop()) || 'remote.nxs';
     openFile(new File(parts, name));
@@ -154,14 +203,14 @@ async function openURL(url) {
 }
 
 const handlers = {
-  progress: ({ label, fraction }) => progress(`${label}… ${Math.round(100 * fraction)}%`, fraction),
+  progress: ({ label, fraction }) => progress(`${label} · ${Math.round(100 * fraction)}%`, fraction),
   meta: ({ info }) => { meta = info; },
   ready: ({ stats, seconds }) => {
     meta.stats = stats;
     meta.seconds = seconds;
-    engine('ok', 'in-browser engine');
+    status('ok', 'ready');
     setupViewer();
-    show('viewer');
+    show('workspace');
     redraw();
     panels.forEach(request);
     setup3D();
@@ -172,9 +221,11 @@ const handlers = {
     p.busy = false;
     p.data = msg;
     p.version++;
-    p.caption.textContent = `${meta.dims[p.fixed].label} ∈ [${fmt(msg.slab[0])}, ${fmt(msg.slab[1])}] · ${msg.bins} bin${msg.bins === 1 ? '' : 's'}`
-      + ` · ${pct(msg.coverage)} measured${symmetryNote(msg)}${msg.removed ? ' · removed voxels only' : ''}`;
-    p.tag.textContent = `${meta.dims[p.fixed].label} = ${fmt(msg.center)}`;
+    const F = meta.dims[p.fixed];
+    p.pos.textContent = `${F.label} = ${fmt(msg.center)}`;
+    p.caption.textContent = `${msg.bins} bin${msg.bins === 1 ? '' : 's'} · ${pct(msg.coverage)}${msg.order > 1 ? ` · ${msg.symmetry}` : ''}${msg.removed ? ' · removed only' : ''}`;
+    p.caption.title = `${F.label} ∈ [${fmt(msg.slab[0])}, ${fmt(msg.slab[1])}], ${msg.bins} bins, ${pct(msg.coverage)} of the plane measured`
+      + `${msg.order > 1 ? `, averaged over ${msg.symmetry} (${msg.order} operations)` : ''}${msg.removed ? ', removed voxels only' : ''}`;
     if (p.wanted) send(p);
     if (!autoscaled && panels.every((q) => q.data)) {
       autoscaled = true;
@@ -187,6 +238,7 @@ const handlers = {
     if (!p) return fail(message);
     p.busy = false;
     p.caption.textContent = message;
+    p.caption.title = message;
     if (p.wanted) send(p);
   },
   iso: (msg) => {
@@ -197,8 +249,8 @@ const handlers = {
     iso.slider.value = levelToSlider(msg.level);
     paint(iso.slider);
     const triangles = msg.indices.length / 3;
-    iso.caption.textContent = `${msg.shape.join(' × ')} grid (${msg.factor}× binned) · level ${fmtValue(msg.level)} · `
-      + `${triangles.toLocaleString()} triangles${msg.symmetry !== '1' ? ` · ${msg.symmetry}` : ''}${mask ? ' · masked' : ''}${msg.note ? ` · ${msg.note}` : ''}`;
+    iso.caption.textContent = `${msg.shape[0]}³ grid · ${triangles.toLocaleString()} tri${msg.symmetry !== '1' ? ` · ${msg.symmetry}` : ''}${mask ? ' · masked' : ''}`;
+    iso.caption.title = `${msg.shape.join(' × ')} blocks (${msg.factor}× binned), level ${fmtValue(msg.level)}, ${triangles.toLocaleString()} triangles${msg.note ? `. ${msg.note}` : ''}`;
     view3d.setMesh(msg.positions, msg.indices, Number(iso.opacity.value));
     if (iso.wanted) sendIso();
   },
@@ -212,7 +264,7 @@ const handlers = {
     $('mask-status').textContent = `${label}… ${Math.round(100 * fraction)}%`;
   },
   mask: ({ stats, radius, k, symmetry: group, seconds }) => {
-    engine('ok', 'in-browser engine');
+    status('ok', 'ready');
     $('mask-apply').disabled = false;
     mask = stats ? { ...stats, radius, k, group } : null;
     $('mask-clear').disabled = $('mask-download').disabled = $('mask-removed').disabled = !mask;
@@ -223,10 +275,11 @@ const handlers = {
     describe();
   },
   'mask-error': ({ message }) => {
-    engine('ok', 'in-browser engine');
+    status('ok', 'ready');
     $('mask-apply').disabled = false;
     $('mask-status').className = 'note error';
     $('mask-status').textContent = message;
+    updateChips();
   },
   'mask-file': ({ blob }) => download(blob, `${stem()}_mask.npy.gz`),
 };
@@ -261,20 +314,55 @@ function describe() {
   const { dims, shape, lattice, stats } = meta;
   const bins = [0, 1, 2].map((d) => shape[2 - d]);
   $('ident').innerHTML = dims.map((d, i) => `<span class="hue-${i}">${escapeHTML(d.label)}</span>`).join('<span class="dot">·</span>');
-  $('ident-eyebrow').textContent = `${bins.join(' × ')} bins`;
-  $('ident-desc').textContent = `${sourceName} · ${mb(sourceSize)} · ${pct(stats.fraction)} of voxels measured · read in ${meta.seconds.toFixed(1)} s`;
+  $('ident-grid').textContent = bins.every((b) => b === bins[0]) ? `${bins[0]}³` : bins.join('×');
   const items = [
-    ['Source', meta.signal],
-    ['Axes', dims.map((d) => `${d.longName} ${fmt(d.edges[0], 2)}…${fmt(d.edges[d.edges.length - 1], 2)}`).join('  ')],
-    ['Grid', `${bins.join(' × ')} · Δ ${dims.map((d) => fmt((d.edges[d.edges.length - 1] - d.edges[0]) / (d.edges.length - 1), 4)).join(', ')}`],
+    ['File', `${sourceName} (${mb(sourceSize)})`],
+    ['Signal', meta.signal],
+    ['Axes', dims.map((d) => `${d.longName} ${fmt(d.edges[0], 2)} … ${fmt(d.edges[d.edges.length - 1], 2)}`).join('\n')],
+    ['Grid', `${bins.join(' × ')} bins, Δ = ${dims.map((d) => fmt((d.edges[d.edges.length - 1] - d.edges[0]) / (d.edges.length - 1), 4)).join(', ')}`],
+    ['Measured', `${pct(stats.fraction)} of voxels · read in ${meta.seconds.toFixed(1)} s`],
   ];
   if (lattice) {
     const { a, b, c, alpha, beta, gamma } = lattice;
-    items.push([`Lattice (${lattice.source})`, `${a.toFixed(4)} ${b.toFixed(4)} ${c.toFixed(4)} Å · ${alpha.toFixed(2)} ${beta.toFixed(2)} ${gamma.toFixed(2)}°`]);
+    items.push([`Cell (${lattice.source})`, `${a.toFixed(4)}, ${b.toFixed(4)}, ${c.toFixed(4)} Å\n${alpha.toFixed(2)}°, ${beta.toFixed(2)}°, ${gamma.toFixed(2)}°`]);
   }
-  items.push(['Symmetry', symmetry.ops.length > 1 ? `${symmetry.name} · ${symmetry.ops.length} ops` : 'none']);
-  items.push(['Mask', mask ? `${pct((mask.edge + mask.outlier) / mask.measured)} removed` : 'none']);
-  $('meta').innerHTML = items.map(([k, v]) => `<div class="meta-item"><span class="meta-key">${escapeHTML(k)}</span><span class="meta-val" title="${escapeHTML(v)}">${escapeHTML(v)}</span></div>`).join('');
+  items.push(['Symmetry', symmetry.ops.length > 1 ? `${symmetry.name} (${symmetry.ops.length} operations)` : 'none']);
+  items.push(['Mask', mask ? `${pct((mask.edge + mask.outlier) / mask.measured)} of voxels removed` : 'none']);
+  $('info-meta').innerHTML = items.map(([k, v]) => `<dt>${escapeHTML(k)}</dt><dd>${escapeHTML(v).replace(/\n/g, '<br>')}</dd>`).join('');
+  updateChips();
+}
+
+function updateChips() {
+  const sym = symmetry.ops.length > 1;
+  $('sym-chip-value').textContent = sym ? symmetry.name : 'none';
+  $('sym-chip').classList.toggle('active', sym);
+  $('mask-chip-value').textContent = mask ? pct((mask.edge + mask.outlier) / mask.measured) : 'off';
+  $('mask-chip').classList.toggle('active', !!mask);
+  const limit = $('limit').value.trim();
+  $('view-chip-value').textContent = limit ? `±${limit}` : 'full';
+}
+
+function viewShell(key, badge, title) {
+  const section = document.createElement('section');
+  section.className = 'view';
+  section.dataset.key = key;
+  section.innerHTML = `
+    <header class="view-head">
+      ${badge}<span class="view-title">${title}</span><span class="view-pos"></span>
+      <span class="view-caption"></span>
+      <span class="view-actions"></span>
+    </header>
+    <div class="view-body"></div>`;
+  $('workspace').append(section);
+  const actions = section.querySelector('.view-actions');
+  const focusBtn = document.createElement('button'), maxBtn = document.createElement('button');
+  focusBtn.className = maxBtn.className = 'icon-btn';
+  focusBtn.type = maxBtn.type = 'button';
+  focusBtn.onclick = () => setLayout(layout === 'focus' && primary === key ? 'quad' : 'focus', key);
+  maxBtn.onclick = () => setLayout(layout === 'single' && primary === key ? lastMulti : 'single', key);
+  section.querySelector('.view-head').ondblclick = (e) => { if (!e.target.closest('button')) maxBtn.click(); };
+  views[key] = { section, focusBtn, maxBtn };
+  return { section, actions, focusBtn, maxBtn, q: (sel) => section.querySelector(sel) };
 }
 
 function setupViewer() {
@@ -297,45 +385,38 @@ function setupViewer() {
     const lo = (e[0] + e[1]) / 2, hi = (e[n - 1] + e[n]) / 2;
     const center = lo <= 0 && hi >= 0 ? 0 : roundTo((lo + hi) / 2, step);
     const maxWidth = Math.min(e[n] - e[0], 41 * step);
-    const units = F.units ? ` ${escapeHTML(F.units)}` : '';
-    const section = document.createElement('section');
-    section.className = 'card';
-    section.innerHTML = `
-      <div class="card-head">
-        <span class="card-titlegroup"><span class="badge hue-${fixed}">${escapeHTML(F.label)}</span>
-          <span class="panel-title">${escapeHTML(X.label)} – ${escapeHTML(Y.label)}</span><span class="card-sub"></span></span>
-        <span class="head-actions">
-          <button type="button" class="btn btn-ghost btn-xs zoom-reset" hidden title="Back to the full view (or double-click the plot)">Reset zoom</button>
-          <button type="button" class="btn btn-ghost btn-xs save-btn">Save PNG</button>
-          <button type="button" class="icon-btn focus-btn"></button>
-        </span>
-      </div>
-      <canvas class="plot" role="img"></canvas>
-      <div class="cut cut--${fixed}">
-        <div class="field">
-          <div class="field-row"><span class="field-label">Center</span>
-            <span class="readout-edit">${escapeHTML(F.label)} =<input class="center" type="number" step="any">${units}</span></div>
-          <input class="slider" type="range">
-        </div>
-        <div class="field">
-          <div class="field-row"><span class="field-label" title="Full slab thickness">Thickness</span>
-            <span class="readout-edit"><input class="width" type="number" min="0" step="any">${units}</span></div>
-          <input class="wslider" type="range">
-        </div>
-      </div>
-      <div class="card-foot caption-foot"><span class="caption" aria-live="polite"></span><span class="hover">&nbsp;</span></div>`;
-    $('slices').append(section);
-    const q = (sel) => section.querySelector(sel);
+    const key = VIEW_KEY[fixed];
+    const shell = viewShell(key, `<span class="badge hue-${fixed}">${escapeHTML(F.label)}</span>`, `${escapeHTML(X.label)} – ${escapeHTML(Y.label)}`);
+    shell.actions.innerHTML = `
+      <button type="button" class="btn btn-ghost btn-xs zoom-reset" hidden title="Back to the full view (or double-click the plot)">Reset zoom</button>
+      <button type="button" class="icon-btn save" title="Save PNG">${ICONS.save}</button>`;
+    shell.actions.append(shell.focusBtn, shell.maxBtn);
+    shell.q('.view-body').innerHTML = `<canvas class="plot" role="img"></canvas><span class="overlay-chip" hidden></span>`;
+    const units = F.units ? escapeHTML(F.units) : '';
+    const foot = document.createElement('footer');
+    foot.className = `view-foot cut--${fixed}`;
+    foot.innerHTML = `
+      <span class="foot-label" title="Slab center">${escapeHTML(F.label)}</span>
+      <input class="slider foot-grow" type="range" aria-label="${escapeHTML(F.label)} center">
+      <input class="center num" type="number" step="any" aria-label="${escapeHTML(F.label)} center">
+      <span class="unit">${units}</span>
+      <span class="foot-sep"></span>
+      <span class="foot-label" title="Full slab thickness">Δ${escapeHTML(F.label)}</span>
+      <input class="wslider foot-fixed" type="range" aria-label="Slab thickness">
+      <input class="width num" type="number" min="0" step="any" aria-label="Slab thickness">`;
+    shell.section.append(foot);
+    const q = shell.q;
     const p = {
-      fixed, x, y, step, lo, hi, version: 0, section, zoom: null, drag: null, zoomReset: q('.zoom-reset'), focusBtn: q('.focus-btn'),
-      slider: q('.slider'), center: q('.center'), wslider: q('.wslider'), width: q('.width'),
-      caption: q('.caption'), tag: q('.card-sub'), canvas: q('canvas'), hover: q('.hover'),
+      fixed, x, y, step, lo, hi, version: 0, key, section: shell.section, zoom: null, drag: null,
+      zoomReset: q('.zoom-reset'), slider: q('.slider'), center: q('.center'), wslider: q('.wslider'), width: q('.width'),
+      caption: q('.view-caption'), pos: q('.view-pos'), canvas: q('canvas'), hover: q('.overlay-chip'),
     };
     p.canvas.setAttribute('aria-label', `${X.label}–${Y.label} intensity slice`);
     Object.assign(p.slider, { min: roundTo(lo, step), max: roundTo(hi, step), step, value: center });
     Object.assign(p.wslider, { min: step, max: roundTo(maxWidth, step), step, value: 3 * step });
     p.center.value = center;
     p.width.value = roundTo(3 * step, step);
+    p.pos.textContent = `${F.label} = ${fmt(center)}`;
     p.slider.oninput = () => { p.center.value = p.slider.value; request(p); };
     p.center.oninput = () => { p.slider.value = p.center.value; paint(p.slider); request(p); };
     p.wslider.oninput = () => { p.width.value = p.wslider.value; request(p); };
@@ -344,31 +425,77 @@ function setupViewer() {
     p.canvas.onpointermove = (ev) => { hover(p, ev); moveBox(p, ev); };
     p.canvas.onpointerup = (ev) => endBox(p, ev);
     p.canvas.onpointercancel = () => { p.drag = null; redraw(); };
-    p.canvas.onpointerleave = () => { p.hover.textContent = '\u00a0'; };
+    p.canvas.onpointerleave = () => { p.hover.hidden = true; };
     p.canvas.ondblclick = () => { clearTimeout(p.clickTimer); setZoom(p, null); };
     p.zoomReset.onclick = () => setZoom(p, null);
-    p.focusBtn.onclick = () => setFocus(focus === fixed ? null : fixed);
-    q('.save-btn').onclick = () => savePNG(p);
+    q('.save').onclick = () => savePNG(p);
+    resized.observe(p.canvas);
     panels.push(p);
   }
+
+  const shell = viewShell('3d', '<span class="badge">3D</span>', 'Isosurface');
+  shell.actions.innerHTML = `
+    <button type="button" class="icon-btn reset3d" title="Reset camera">${ICONS.reset}</button>
+    <button type="button" class="icon-btn" title="3-D options" aria-haspopup="dialog" aria-expanded="false" data-pop="pop-3d">${ICONS.gear}</button>
+    <button type="button" class="icon-btn save" title="Save PNG">${ICONS.save}</button>`;
+  shell.actions.append(shell.focusBtn, shell.maxBtn);
+  shell.q('.view-body').innerHTML = '<canvas class="scene" role="img" aria-label="3-D isosurface with the three slices"></canvas>';
+  const foot = document.createElement('footer');
+  foot.className = 'view-foot';
+  foot.innerHTML = `
+    <span class="label">Level</span>
+    <input class="iso-slider foot-grow" type="range" min="0" max="1000" aria-label="Isosurface level (log scale)">
+    <input class="iso-level num" type="number" step="any" style="width: 76px" aria-label="Isosurface level">
+    <span class="foot-sep"></span>
+    <span class="label">Surface</span><input class="iso-opacity foot-fixed short" type="range" min="0.05" max="1" step="0.05" value="0.6" aria-label="Surface opacity">
+    <span class="label">Slices</span><input class="slice-opacity foot-fixed short" type="range" min="0.05" max="1" step="0.05" value="1" aria-label="Slice opacity">`;
+  shell.section.append(foot);
+  iso = {
+    levelInput: shell.q('.iso-level'), slider: shell.q('.iso-slider'), opacity: shell.q('.iso-opacity'),
+    sliceOpacity: shell.q('.slice-opacity'), caption: shell.q('.view-caption'), canvas: shell.q('canvas'),
+    reset: shell.q('.reset3d'), save: shell.q('.save'), userLevel: false, range: null,
+  };
+  iso.caption.textContent = 'loading 3-D view…';
+  setSegmented($('iso-grid'), '100');
+  $('iso-slices').checked = true;
+
+  setLayout(layout, primary);
   paintAll();
-  setFocus(focus);
 }
 
-// ---- Layout and box zoom ---------------------------------------------------------
+// ---- Layout ------------------------------------------------------------------------
 
-function setFocus(fixed) {
-  focus = fixed;
-  $('slices').classList.toggle('focus', fixed !== null);
-  for (const p of panels) {
-    const big = p.fixed === fixed;
-    p.section.classList.toggle('is-focus', big);
-    p.focusBtn.innerHTML = big ? ICON_RESTORE : ICON_ENLARGE;
-    p.focusBtn.title = big ? 'Show the three slices side by side' : 'Enlarge this slice';
+function setLayout(mode, key = primary) {
+  if (!views[key]) key = 'hk';
+  if (mode !== 'single') lastMulti = mode;
+  layout = mode;
+  primary = key;
+  const ws = $('workspace');
+  ws.classList.remove('quad', 'focus', 'single');
+  ws.classList.add(mode);
+  setSegmented($('layout'), mode);
+  for (const [k, v] of Object.entries(views)) {
+    const isPrimary = k === key;
+    v.section.classList.toggle('primary', isPrimary);
+    const back = mode === 'focus' && isPrimary;
+    v.focusBtn.innerHTML = back ? ICONS.quad : ICONS.focus;
+    v.focusBtn.title = back ? 'Back to four views' : 'Show this view large';
+    const restore = mode === 'single' && isPrimary;
+    v.maxBtn.innerHTML = restore ? ICONS.restore : ICONS.max;
+    v.maxBtn.title = restore ? 'Restore the layout (Esc)' : 'Maximize this view (double-click the header)';
   }
-  try { localStorage.setItem('nxv-focus', JSON.stringify(fixed)); } catch { /* storage unavailable */ }
-  redraw();
+  try { localStorage.setItem('nxv-layout', JSON.stringify({ mode: lastMulti, key })); } catch { /* storage unavailable */ }
 }
+
+// Redraw a plot whenever its canvas changes size (layout switches, window resizes).
+let resizeQueued = false;
+const resized = new ResizeObserver(() => {
+  if (resizeQueued) return;
+  resizeQueued = true;
+  requestAnimationFrame(() => { resizeQueued = false; redraw(); });
+});
+
+// ---- Box zoom and clicks -------------------------------------------------------------
 
 function localPoint(p, e) {
   const box = p.canvas.getBoundingClientRect();
@@ -382,27 +509,56 @@ function startBox(p, e) {
   try { p.canvas.setPointerCapture(e.pointerId); } catch { /* synthetic or already released pointer */ }
 }
 
+function setClickMode(mode) {
+  clickMode = mode;
+  setSegmented($('click-mode'), mode);
+  $('workspace').dataset.click = mode;
+}
+
+// Navigate mode: dragging keeps moving the other slices. Zoom mode: dragging
+// draws the zoom box.
 function moveBox(p, e) {
   if (!p.drag) return;
   [p.drag.x1, p.drag.y1] = localPoint(p, e);
   p.drag.moved ||= Math.hypot(p.drag.x1 - p.drag.x0, p.drag.y1 - p.drag.y0) > 5;
-  if (p.drag.moved) drawPanel(p);
+  if (!p.drag.moved) return;
+  if (clickMode === 'zoom') drawPanel(p);
+  else navigate(p, e);
 }
 
 function endBox(p, e) {
   const d = p.drag;
   p.drag = null;
   if (!d) return;
-  if (!d.moved) {
-    // Wait briefly so a double-click (reset zoom) does not also move the other slices.
-    const { clientX, clientY } = e;
-    clearTimeout(p.clickTimer);
-    p.clickTimer = setTimeout(() => navigate(p, { clientX, clientY }), 250);
+  if (d.moved) {
+    if (clickMode === 'navigate') { navigate(p, e); return; }
+    const box = boxWindow(p, d);
+    if (box) setZoom(p, box);
+    else drawPanel(p);
     return;
   }
-  const box = boxWindow(p, d);
-  if (box) setZoom(p, box);
-  else drawPanel(p);
+  // A click: wait briefly so a double-click (full view) does not also act on it.
+  const { clientX, clientY } = e;
+  clearTimeout(p.clickTimer);
+  p.clickTimer = setTimeout(() => (clickMode === 'zoom' ? zoomAt : navigate)(p, { clientX, clientY }), 250);
+}
+
+/** Zoom in by `factor` around the clicked point, keeping the window inside the data. */
+function zoomAt(p, e, factor = 2) {
+  const pt = pointAt(p, e);
+  if (!pt) return;
+  const [u0, u1, v0, v1] = p.view, X = meta.dims[p.x], Y = meta.dims[p.y];
+  const fit = (c, half, edges) => {
+    const lo = edges[0], hi = edges[edges.length - 1];
+    if (2 * half >= hi - lo) return [lo, hi];
+    const start = clamp(c - half, lo, hi - 2 * half);
+    return [start, start + 2 * half];
+  };
+  const u = fit(pt[0], (u1 - u0) / (2 * factor), X.edges), v = fit(pt[1], (v1 - v0) / (2 * factor), Y.edges);
+  // Stop at two bins across.
+  const wx = 2 * (X.edges[X.edges.length - 1] - X.edges[0]) / (X.edges.length - 1);
+  const wy = 2 * (Y.edges[Y.edges.length - 1] - Y.edges[0]) / (Y.edges.length - 1);
+  if (u[1] - u[0] >= wx && v[1] - v[0] >= wy) setZoom(p, { u, v });
 }
 
 /** The (u, v) window enclosing a dragged screen rectangle, clipped to the data. */
@@ -520,7 +676,10 @@ function panelImage(p, s) {
   return image;
 }
 
-/** Draw a panel into `canvas` (w x h CSS px). Exports add a title and skip guides. */
+/**
+ * Draw a panel into `canvas` (w x h CSS px). On screen the shared colorbar
+ * lives in the toolbar; exports add a title and their own colorbar, without guides.
+ */
 function draw(p, canvas, w, h, dpr, exporting = false) {
   canvas.width = Math.round(w * dpr);
   canvas.height = Math.round(h * dpr);
@@ -528,7 +687,7 @@ function draw(p, canvas, w, h, dpr, exporting = false) {
   c.setTransform(dpr, 0, 0, dpr, 0, 0);
   c.fillStyle = '#ffffff';
   c.fillRect(0, 0, w, h);
-  if (!p.data || !settings) return;
+  if (!p.data || !settings || w < 40 || h < 40) return;
 
   const s = settings, X = meta.dims[p.x], Y = meta.dims[p.y], F = meta.dims[p.fixed];
   const g = geometry(p), sin = Math.sqrt(Math.max(0, 1 - g.cos * g.cos));
@@ -537,7 +696,7 @@ function draw(p, canvas, w, h, dpr, exporting = false) {
   const box = [[u0, v0], [u1, v0], [u1, v1], [u0, v1]];
   const xs = box.map(([u, v]) => wx(u, v)), ys = box.map(([, v]) => wy(v));
   const xmin = Math.min(...xs), xmax = Math.max(...xs), ymin = Math.min(...ys), ymax = Math.max(...ys);
-  const pad = { l: 62, r: 76, t: exporting ? 40 : 16, b: 52 };
+  const pad = { l: 58, r: exporting ? 76 : 20, t: exporting ? 40 : 14, b: 46 };
   const aw = Math.max(10, w - pad.l - pad.r), ah = Math.max(10, h - pad.t - pad.b);
   let sx = aw / (xmax - xmin), sy = ah / (ymax - ymin);
   if (g.equal) sx = sy = Math.min(sx, sy);
@@ -580,7 +739,7 @@ function draw(p, canvas, w, h, dpr, exporting = false) {
     c.lineWidth = 1;
     c.setLineDash([4, 4]);
     for (const [[a, b], [e, f]] of lines) {
-      for (const [color, offset] of [['rgba(255,255,255,.9)', 0], ['rgba(20,26,34,.55)', 4]]) {
+      for (const [color, offset] of [['rgba(255,255,255,.9)', 0], ['rgba(18,24,33,.55)', 4]]) {
         c.strokeStyle = color;
         c.lineDashOffset = offset;
         c.beginPath(); c.moveTo(a, b); c.lineTo(e, f); c.stroke();
@@ -612,32 +771,31 @@ function draw(p, canvas, w, h, dpr, exporting = false) {
     c.fillText(fmt(t), a - 7, b);
   }
   c.fillStyle = INK;
-  c.font = `600 12px ${SANS}`;
+  c.font = `600 11.5px ${SANS}`;
   c.textAlign = 'center';
   const [bx, by] = project((u0 + u1) / 2, v0);
-  c.fillText(withUnits(X), bx, by + 34);
+  c.fillText(withUnits(X), bx, by + 31);
   const [ax0, ay0] = project(u0, v0), [ax1, ay1] = project(u0, v1);
   const len = Math.hypot(ax1 - ax0, ay1 - ay0), nx = (ay1 - ay0) / len, ny = -(ax1 - ax0) / len;
   c.save();
-  c.translate((ax0 + ax1) / 2 + 46 * nx, (ay0 + ay1) / 2 + 46 * ny);
+  c.translate((ax0 + ax1) / 2 + 44 * nx, (ay0 + ay1) / 2 + 44 * ny);
   c.rotate(Math.atan2(ay1 - ay0, ax1 - ax0));
   c.fillText(withUnits(Y), 0, 0);
   c.restore();
 
-  if (exporting) {
-    c.textAlign = 'left';
-    c.textBaseline = 'alphabetic';
-    c.font = `650 14px ${SANS}`;
-    const title = `${F.label} = ${fmt(p.data.center)}`;
-    c.fillText(title, 10, 24);
-    const titleWidth = c.measureText(title).width;
-    c.font = `11px ${MONO}`;
-    c.fillStyle = INK2;
-    const extras = `${symmetryNote(p.data)}${mask ? ` · mask ${pct((mask.edge + mask.outlier) / mask.measured)}` : ''}${p.data.removed ? ' · removed only' : ''}`;
-    c.fillText(`slab ${fmt(p.data.slab[0])} to ${fmt(p.data.slab[1])}${extras}`, 20 + titleWidth, 24);
-  }
+  if (!exporting) return;
+  c.textAlign = 'left';
+  c.textBaseline = 'alphabetic';
+  c.font = `650 14px ${SANS}`;
+  const title = `${F.label} = ${fmt(p.data.center)}`;
+  c.fillText(title, 10, 24);
+  const titleWidth = c.measureText(title).width;
+  c.font = `11px ${MONO}`;
+  c.fillStyle = INK2;
+  const extras = `${symmetryNote(p.data)}${mask ? ` · mask ${pct((mask.edge + mask.outlier) / mask.measured)}` : ''}${p.data.removed ? ' · removed only' : ''}`;
+  c.fillText(`slab ${fmt(p.data.slab[0])} to ${fmt(p.data.slab[1])}${extras}`, 20 + titleWidth, 24);
 
-  // Colorbar.
+  // Colorbar (exports only).
   const lut = LUTS[s.cmap], cx = w - pad.r + 22, cw = 10, top = pad.t + 4, bottom = h - pad.b, span = bottom - top;
   for (let k = 0; k < 256; k++) {
     c.fillStyle = `rgb(${lut[3 * k]},${lut[3 * k + 1]},${lut[3 * k + 2]})`;
@@ -664,7 +822,7 @@ function drawPanel(p) {
   if (!settings) return;
   draw(p, p.canvas, p.canvas.clientWidth, p.canvas.clientHeight, devicePixelRatio || 1);
   const d = p.drag;
-  if (!d?.moved || !p.project) return;
+  if (!d?.moved || !p.project || clickMode !== 'zoom') return;
   const corners = [[d.x0, d.y0], [d.x1, d.y0], [d.x1, d.y1], [d.x0, d.y1]].map(([x, y]) => p.inverse(x, y));
   const u = [Math.min(...corners.map((c) => c[0])), Math.max(...corners.map((c) => c[0]))];
   const v = [Math.min(...corners.map((c) => c[1])), Math.max(...corners.map((c) => c[1]))];
@@ -694,6 +852,7 @@ function redraw() {
   $('soft-wrap').hidden = settings.scale !== 'asinh';
   for (const p of panels) drawPanel(p);
   paintColorbar();
+  updateChips();
   update3D();
 }
 
@@ -709,15 +868,15 @@ function pointAt(p, e) {
 
 function hover(p, e) {
   const pt = pointAt(p, e);
-  if (!pt) { p.hover.textContent = ''; return; }
-  const [u, v] = pt, X = meta.dims[p.x], Y = meta.dims[p.y], ex = X.edges, ey = Y.edges;
-  const { values, counts, rows, cols } = p.data;
-  const col = Math.floor((u - ex[0]) / (ex[ex.length - 1] - ex[0]) * cols);
-  const row = Math.floor((v - ey[0]) / (ey[ey.length - 1] - ey[0]) * rows);
-  if (col < 0 || row < 0 || col >= cols || row >= rows) { p.hover.textContent = ''; return; }
+  const X = meta.dims[p.x], Y = meta.dims[p.y], ex = X.edges, ey = Y.edges;
+  const { values, counts, rows, cols } = p.data ?? {};
+  const col = pt ? Math.floor((pt[0] - ex[0]) / (ex[ex.length - 1] - ex[0]) * cols) : -1;
+  const row = pt ? Math.floor((pt[1] - ey[0]) / (ey[ey.length - 1] - ey[0]) * rows) : -1;
+  if (col < 0 || row < 0 || col >= cols || row >= rows) { p.hover.hidden = true; return; }
   const i = row * cols + col, val = values[i], n = counts[i];
-  p.hover.textContent = `${X.label} ${fmt(u)} ${Y.label} ${fmt(v)} → `
+  p.hover.textContent = `${X.label} ${fmt(pt[0])}  ${Y.label} ${fmt(pt[1])}  →  `
     + (Number.isFinite(val) ? `${fmtValue(val)} (${n} vox)` : 'no data');
+  p.hover.hidden = false;
 }
 
 function navigate(p, e) {
@@ -735,7 +894,7 @@ function navigate(p, e) {
 function savePNG(p) {
   if (!p.data) return;
   const out = document.createElement('canvas');
-  draw(p, out, p.canvas.clientWidth, p.canvas.clientHeight + 24, 3, true);
+  draw(p, out, Math.max(p.canvas.clientWidth, 480), Math.max(p.canvas.clientHeight, 360) + 24, 3, true);
   const X = meta.dims[p.x], Y = meta.dims[p.y], F = meta.dims[p.fixed];
   out.toBlob((blob) => download(blob, `${stem()}_${X.label}${Y.label}_${F.label}=${p.data.center}.png`));
 }
@@ -774,11 +933,11 @@ function applySymmetry() {
 }
 
 function showSymmetry() {
-  const { ops } = symmetry, status = $('sym-status');
-  status.className = 'note';
+  const { ops } = symmetry, statusEl = $('sym-status');
+  statusEl.className = 'note';
   $('sym-badge').textContent = ops.length > 1 ? `${symmetry.name} · ${ops.length}` : '1';
   if (ops.length === 1) {
-    status.textContent = 'No symmetry averaging: each voxel is used as measured.';
+    statusEl.textContent = 'No symmetry averaging: each voxel is used as measured.';
   } else {
     let text = `${ops.length} operations; equivalent voxels are pooled with equal weight.`;
     const hkl = meta.dims.every((d) => d.basis);
@@ -787,17 +946,18 @@ function showSymmetry() {
       if (change > 0.02) {
         text = `${ops.length} operations, but they change the cell metric by up to ${(100 * change).toFixed(0)}%. `
           + 'They are not symmetries of this lattice; check the setting.';
-        status.className = 'note warn';
+        statusEl.className = 'note warn';
       } else {
         text += ` Cell metric (${meta.lattice.source}) preserved to ${(100 * change).toFixed(2)}%.`;
       }
     } else if (!hkl) {
       text += ' Axes have no HKL basis, so operations act on the display axes directly.';
     }
-    status.textContent = text;
+    statusEl.textContent = text;
   }
   $('sym-list').textContent = ops.map(formatOp).join('   ');
   $('sym-count').textContent = ops.length;
+  updateChips();
 }
 
 // ---- Mask -------------------------------------------------------------------------------
@@ -817,66 +977,32 @@ function applyMask(clear = false) {
     return;
   }
   $('mask-apply').disabled = true;
-  engine('busy', 'building mask');
+  status('busy', 'building mask');
+  $('mask-chip-value').textContent = '…';
   $('mask-status').className = 'note';
   $('mask-status').textContent = radius || k ? 'Building mask…' : 'Clearing mask…';
   worker.postMessage({ type: 'mask', id: ++requestId, radius, k, maps: symmetry.maps, symmetry: symmetry.name });
 }
 
 function showMask(seconds) {
-  const status = $('mask-status');
-  status.className = 'note';
+  const statusEl = $('mask-status');
+  statusEl.className = 'note';
+  updateChips();
   if (!mask) {
-    status.textContent = 'No mask: all measured voxels are used.';
+    statusEl.textContent = 'No mask: all measured voxels are used.';
     return;
   }
   const { measured, edge, outlier, radius, k, group } = mask;
   const parts = [];
   if (radius) parts.push(`${pct(edge / measured)} within ${radius} voxel${radius === 1 ? '' : 's'} of coverage edges`);
   if (k) parts.push(`${pct(outlier / measured)} above ${k}σ of their ${group} equivalents`);
-  status.className = 'note ok';
-  status.textContent = `Removed ${pct((edge + outlier) / measured)} of measured voxels: ${parts.join(', ')}${seconds ? ` (${seconds.toFixed(1)} s)` : ''}.`;
+  statusEl.className = 'note ok';
+  statusEl.textContent = `Removed ${pct((edge + outlier) / measured)} of measured voxels: ${parts.join(', ')}${seconds ? ` (${seconds.toFixed(1)} s)` : ''}.`;
 }
 
 // ---- 3-D view ---------------------------------------------------------------------------
 
 async function setup3D() {
-  const section = document.createElement('section');
-  section.className = 'card';
-  section.innerHTML = `
-    <div class="card-head">
-      <span class="card-titlegroup"><span class="badge">3D</span><span class="panel-title">Isosurface and orthoslices</span>
-        <span class="card-sub">drag to rotate · scroll to zoom · right-drag to pan</span></span>
-      <span class="inline"><button type="button" class="btn btn-ghost btn-xs reset">Reset view</button>
-        <button type="button" class="btn btn-ghost btn-xs save">Save PNG</button></span>
-    </div>
-    <canvas class="plot view3d" role="img" aria-label="3-D isosurface with the three slices"></canvas>
-    <div class="controls3d">
-      <div class="field">
-        <div class="field-row"><span class="field-label">Isosurface level · log scale</span>
-          <span class="readout-edit">level<input class="iso-level" type="number" step="any" style="width: 88px"></span></div>
-        <input class="iso-slider" type="range" min="0" max="1000">
-      </div>
-      <div class="field">
-        <div class="field-row"><span class="field-label">Surface opacity</span></div>
-        <input class="iso-opacity" type="range" min="0.05" max="1" step="0.05" value="0.6">
-      </div>
-      <div class="field">
-        <div class="field-row"><span class="field-label">Slice opacity</span></div>
-        <input class="slice-opacity" type="range" min="0.05" max="1" step="0.05" value="1">
-      </div>
-      <div class="field"><span class="field-label">Grid</span>
-        <div class="segmented iso-grid" data-value="100"><button type="button" data-value="64">Coarse</button><button type="button" data-value="100" class="on">Medium</button><button type="button" data-value="150">Fine</button></div></div>
-      <label class="switch" style="padding-bottom: 6px"><input class="iso-slices" type="checkbox" checked><span class="switch-track"></span><span class="switch-label">Slices</span></label>
-    </div>
-    <div class="card-foot caption-foot"><span class="caption" aria-live="polite">Loading 3-D view…</span></div>`;
-  $('view3d').append(section);
-  const q = (sel) => section.querySelector(sel);
-  iso = {
-    levelInput: q('.iso-level'), slider: q('.iso-slider'), opacity: q('.iso-opacity'), sliceOpacity: q('.slice-opacity'), grid: q('.iso-grid'),
-    slices: q('.iso-slices'), caption: q('.caption'), canvas: q('canvas'), userLevel: false, range: null,
-  };
-  paintAll();
   const current = iso;
   try {
     const { View3D } = await import('./view3d.js');
@@ -900,10 +1026,8 @@ async function setup3D() {
   };
   iso.opacity.oninput = () => view3d.setOpacity(Number(iso.opacity.value));
   iso.sliceOpacity.oninput = () => view3d.setSliceOpacity(Number(iso.sliceOpacity.value));
-  segmented(iso.grid, () => { iso.userLevel = false; requestIso(); });
-  iso.slices.onchange = update3D;
-  q('.reset').onclick = () => view3d.resetView();
-  q('.save').onclick = () => view3d.snapshot((blob) => download(blob, `${stem()}_3d.png`));
+  iso.reset.onclick = () => view3d.resetView();
+  iso.save.onclick = () => view3d.snapshot((blob) => download(blob, `${stem()}_3d.png`));
   update3D();
   requestIso();
 }
@@ -923,7 +1047,7 @@ function requestIso() {
   if (!iso || !view3d) return;
   const level = iso.userLevel ? Number(iso.levelInput.value) : null;
   if (level !== null && !Number.isFinite(level)) return;
-  iso.wanted = { maxBins: Number(iso.grid.dataset.value), level, ops: symmetry.ops, symmetry: symmetry.name };
+  iso.wanted = { maxBins: Number($('iso-grid').dataset.value), level, ops: symmetry.ops, symmetry: symmetry.name };
   if (!iso.busy) sendIso();
 }
 
@@ -947,7 +1071,7 @@ function update3D() {
       ex: [X.edges[0], X.edges[X.edges.length - 1]], ey: [Y.edges[0], Y.edges[Y.edges.length - 1]],
     };
   });
-  view3d.setSlices(slices, iso.slices.checked);
+  view3d.setSlices(slices, $('iso-slices').checked);
 }
 
 // ---- Startup -------------------------------------------------------------------------
@@ -962,32 +1086,38 @@ function restore() {
   if (saved.cmap in LUTS) $('cmap').value = saved.cmap;
   if (typeof saved.angles === 'boolean') $('angles').checked = saved.angles;
   if (typeof saved.guides === 'boolean') $('guides').checked = saved.guides;
+  setClickMode(saved.clickMode === 'zoom' ? 'zoom' : 'navigate');
   try {
-    const raw = localStorage.getItem('nxv-focus');
-    const f = raw === null ? undefined : JSON.parse(raw);
-    if (f === null || [0, 1, 2].includes(f)) focus = f;
-  } catch { /* storage unavailable: keep the default */ }
+    const l = JSON.parse(localStorage.getItem('nxv-layout'));
+    if (['quad', 'focus'].includes(l?.mode)) lastMulti = layout = l.mode;
+    if (['hk', 'hl', 'kl', '3d'].includes(l?.key)) primary = l.key;
+  } catch { /* storage unavailable: keep the defaults */ }
   paintColorbar();
 }
 
 function persist() {
-  const values = { cmap: $('cmap').value, scale: $('scale').dataset.value, angles: $('angles').checked, guides: $('guides').checked };
+  const values = { cmap: $('cmap').value, scale: $('scale').dataset.value, angles: $('angles').checked, guides: $('guides').checked, clickMode };
   try { localStorage.setItem('nxv-settings', JSON.stringify(values)); } catch { /* storage unavailable */ }
 }
 
 restore();
 show('intro');
-engine('', 'no file open');
+status('', 'no file');
 $('open').onclick = $('open-intro').onclick = () => $('file').click();
 $('file').onchange = () => { if ($('file').files[0]) openFile($('file').files[0]); $('file').value = ''; };
+$('error-close').onclick = () => error('');
 for (const id of ['cmap', 'vmin', 'vmax', 'soft', 'limit', 'angles', 'guides']) $(id).addEventListener('input', redraw);
 for (const id of ['cmap', 'angles', 'guides']) $(id).addEventListener('change', persist);
 $('cmap').addEventListener('input', paintColorbar);
+segmented($('click-mode'), (mode) => { setClickMode(mode); persist(); });
+segmented($('layout'), (mode) => setLayout(mode, primary));
 segmented($('scale'), (value) => {
   if (value === 'log' && !(Number($('vmin').value) > 0)) $('vmin').value = sig(Number($('vmax').value) / 1000 || 1);
   persist();
   redraw();
 });
+segmented($('iso-grid'), () => { if (iso) { iso.userLevel = false; requestIso(); } });
+$('iso-slices').onchange = update3D;
 $('auto').onclick = autoRange;
 $('sym-preset').onchange = () => {
   const preset = PRESETS.find(([name]) => name === $('sym-preset').value);
@@ -1002,9 +1132,6 @@ $('mask-clear').onclick = () => applyMask(true);
 for (const id of ['mask-erode', 'mask-k']) $(id).onkeydown = (e) => { if (e.key === 'Enter') applyMask(); };
 $('mask-removed').onchange = () => panels.forEach(request);
 $('mask-download').onclick = () => worker.postMessage({ type: 'mask-download' });
-const resized = new ResizeObserver(() => redraw());
-resized.observe($('slices'));
-new MutationObserver(() => { for (const c of $('slices').querySelectorAll('canvas')) resized.observe(c); }).observe($('slices'), { childList: true });
 
 document.addEventListener('dragover', (e) => { e.preventDefault(); document.body.classList.add('dragging'); });
 document.addEventListener('dragleave', (e) => { if (!e.relatedTarget) document.body.classList.remove('dragging'); });

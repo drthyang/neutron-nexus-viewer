@@ -14,131 +14,73 @@
 } }
 </script>
 <style>
-/* Light variant of the nebula3d console design system. */
+/* Light variant of the nebula3d console design system, as a full-window workspace. */
 :root {
-  --bg: #f5f7fa;
+  --bg: #eef1f5;
   --surface: #ffffff;
-  --surface-2: #f3f5f8;
-  --surface-3: #e7ebf0;
+  --surface-2: #f5f7fa;
+  --surface-3: #e8ecf1;
   --border: #e1e6ec;
-  --border-strong: #cfd6df;
-  --border-subtle: #edf0f4;
-  --text: #141a22;
-  --text-2: #4a5566;
-  --text-3: #7d8796;
+  --border-strong: #cdd5de;
+  --border-subtle: #eef1f4;
+  --text: #121821;
+  --text-2: #475467;
+  --text-3: #7b8595;
   --accent: #2f74e6;
   --accent-hi: #1f5fd1;
   --accent-soft: rgba(47, 116, 230, 0.1);
+  --accent-line: rgba(47, 116, 230, 0.35);
   --green: #13a36b;
   --amber: #c98a1b;
   --red: #d64545;
-  --red-soft: rgba(214, 69, 69, 0.1);
-  /* axis hues: H amber, K blue, L green */
   --hue-0: #d98a0b;
   --hue-1: #2f74e6;
   --hue-2: #13a36b;
   --radius: 10px;
   --radius-sm: 7px;
-  --shadow-1: 0 1px 2px rgba(16, 24, 40, 0.06);
-  --gap: 14px;
-  --pad: 24px;
-  --head-h: 40px;
+  --shadow-1: 0 1px 2px rgba(16, 24, 40, 0.05);
+  --shadow-2: 0 12px 32px rgba(16, 24, 40, 0.14), 0 2px 6px rgba(16, 24, 40, 0.06);
+  --topbar: 52px;
+  --toolbar: 46px;
   --font-mono: ui-monospace, "SF Mono", "JetBrains Mono", Menlo, Consolas, monospace;
   color-scheme: light;
 }
 * { box-sizing: border-box; }
+html, body { height: 100%; }
 body {
-  margin: 0; min-height: 100vh; background: var(--bg); color: var(--text);
-  font: 14px/1.45 -apple-system, BlinkMacSystemFont, "Inter", "Segoe UI", Roboto, sans-serif;
+  margin: 0; background: var(--bg); color: var(--text); overflow: hidden;
+  font: 13px/1.45 -apple-system, BlinkMacSystemFont, "Inter", "Segoe UI", Roboto, sans-serif;
   -webkit-font-smoothing: antialiased; text-rendering: optimizeLegibility;
 }
 ::selection { background: rgba(47, 116, 230, 0.2); }
-button { font: inherit; }
+button { font: inherit; color: inherit; }
 :is(button, select, input, a, summary):focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }
 [hidden] { display: none !important; }
 * { scrollbar-width: thin; scrollbar-color: var(--border-strong) transparent; }
-code { font-family: var(--font-mono); font-size: 0.92em; }
+code, .mono { font-family: var(--font-mono); }
+code { font-size: 0.92em; }
 a { color: var(--accent-hi); }
+svg { flex: none; }
 
-/* ---- top bar -------------------------------------------------------------- */
-.appbar {
-  position: sticky; top: 0; z-index: 20; display: flex; align-items: center; gap: 16px; height: 56px; padding: 0 var(--pad);
-  background: color-mix(in srgb, var(--surface) 90%, transparent); backdrop-filter: blur(10px); -webkit-backdrop-filter: blur(10px);
-  border-bottom: 1px solid var(--border);
-}
-.brand { display: flex; align-items: center; gap: 10px; flex: none; }
-.brand-glyph {
-  display: grid; place-items: center; width: 30px; height: 30px; border-radius: 8px; flex: none;
-  background: linear-gradient(145deg, var(--surface), var(--surface-3)); border: 1px solid var(--border-strong); color: var(--accent);
-}
-.brand b { font-size: 15px; font-weight: 700; text-transform: uppercase; letter-spacing: 0.06em; white-space: nowrap; }
-.bar-divider { width: 1px; height: 24px; background: var(--border); flex: none; }
-.dataset { display: flex; align-items: center; gap: 10px; min-width: 0; flex: 0 1 420px; }
-.dataset-button {
-  position: relative; min-width: 0; flex: 1; text-align: left; background: var(--surface-2); border: 1px solid var(--border-strong); border-radius: 9px;
-  color: var(--text); padding: 7px 30px 7px 12px; font-size: 13px; font-weight: 600; cursor: pointer;
-  overflow: hidden; text-overflow: ellipsis; white-space: nowrap; transition: background 0.12s, border-color 0.12s;
-}
-.dataset-button:hover { background: var(--surface-3); border-color: var(--accent); }
-.dataset-button svg { position: absolute; right: 11px; top: 50%; transform: translateY(-50%); color: var(--text-3); }
-.bar-right { display: flex; align-items: center; gap: 14px; margin-left: auto; font-size: 11.5px; color: var(--text-3); flex: none; }
-.engine-status { display: flex; align-items: center; gap: 7px; white-space: nowrap; }
-.engine-dot { width: 7px; height: 7px; border-radius: 50%; background: var(--text-3); flex: none; }
-.engine-dot.ok { background: var(--green); box-shadow: 0 0 6px rgba(19, 163, 107, 0.5); }
-.engine-dot.busy { background: var(--accent); animation: pulse 1.6s ease-out infinite; }
-@keyframes pulse { 0% { box-shadow: 0 0 0 0 rgba(47, 116, 230, 0.45); } 70% { box-shadow: 0 0 0 6px rgba(47, 116, 230, 0); } 100% { box-shadow: 0 0 0 0 rgba(47, 116, 230, 0); } }
-.ver { display: inline-flex; align-items: center; gap: 6px; padding: 3px 4px 3px 8px; border: 1px solid var(--border); border-radius: 999px; background: var(--surface); }
-.ver-num { font-family: var(--font-mono); font-size: 11px; font-weight: 500; color: var(--text-2); }
-.ver-tag { font-size: 8.5px; font-weight: 700; letter-spacing: 0.09em; text-transform: uppercase; color: var(--accent-hi); background: var(--accent-soft); padding: 2px 6px; border-radius: 999px; }
-.icon-link { display: grid; place-items: center; width: 30px; height: 30px; border-radius: 50%; border: 1px solid var(--border-strong); background: var(--surface-2); color: var(--text-2); }
-.icon-link:hover { color: var(--text); background: var(--surface-3); }
-
-/* ---- page grid -------------------------------------------------------------- */
-.main { max-width: 1760px; margin: 0 auto; padding: 20px var(--pad) 40px; display: flex; flex-direction: column; gap: var(--gap); }
-.grid3 { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: var(--gap); align-items: stretch; }
-.page { display: flex; flex-direction: column; gap: var(--gap); }
-
-/* One card anatomy everywhere: head (fixed height), body, foot pinned to the bottom. */
-.card { min-width: 0; display: flex; flex-direction: column; background: var(--surface); border: 1px solid var(--border); border-radius: var(--radius); box-shadow: var(--shadow-1); overflow: hidden; }
-.card-head { display: flex; align-items: center; justify-content: space-between; gap: 10px; height: var(--head-h); padding: 0 14px; border-bottom: 1px solid var(--border); flex: none; }
-.card-titlegroup { display: flex; align-items: center; gap: 8px; min-width: 0; }
-.card-title { font-size: 10px; font-weight: 650; letter-spacing: 0.07em; text-transform: uppercase; color: var(--text-2); white-space: nowrap; }
-.card-sub { font-family: var(--font-mono); font-size: 11px; color: var(--text-3); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
-.card-body { padding: 14px; display: flex; flex-direction: column; gap: 12px; }
-.card-foot { margin-top: auto; display: flex; align-items: center; gap: 10px; min-height: 50px; padding: 8px 14px; background: var(--surface-2); border-top: 1px solid var(--border); }
-.card-foot .grow { flex: 1; min-width: 0; }
-
-/* ---- controls --------------------------------------------------------------- */
-.field { display: flex; flex-direction: column; gap: 6px; min-width: 0; }
-.field-label { font-size: 10px; font-weight: 600; letter-spacing: 0.07em; text-transform: uppercase; color: var(--text-3); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
-.field-row { display: flex; align-items: baseline; justify-content: space-between; gap: 12px; }
-.fields4 { display: grid; grid-template-columns: repeat(4, minmax(0, 1fr)); gap: 12px; }
-.fields3 { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 12px; align-items: end; }
-.row { display: flex; align-items: center; justify-content: space-between; gap: 12px; flex-wrap: wrap; }
-.inline { display: flex; gap: 8px; align-items: stretch; }
-.inline > input { flex: 1; min-width: 0; }
+/* ---- controls ----------------------------------------------------------------- */
 select {
-  appearance: none; -webkit-appearance: none;
-  background: var(--surface) url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='10' height='6' viewBox='0 0 10 6'%3E%3Cpath d='M1 1l4 4 4-4' fill='none' stroke='%237d8796' stroke-width='1.5' stroke-linecap='round'/%3E%3C/svg%3E") no-repeat right 10px center;
-  color: var(--text); border: 1px solid var(--border-strong); border-radius: var(--radius-sm); padding: 6px 28px 6px 10px;
-  font: inherit; font-size: 13px; cursor: pointer; transition: border-color 120ms ease; min-width: 0;
+  appearance: none; -webkit-appearance: none; height: 30px;
+  background: var(--surface) url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='10' height='6' viewBox='0 0 10 6'%3E%3Cpath d='M1 1l4 4 4-4' fill='none' stroke='%237b8595' stroke-width='1.5' stroke-linecap='round'/%3E%3C/svg%3E") no-repeat right 9px center;
+  color: var(--text); border: 1px solid var(--border-strong); border-radius: var(--radius-sm); padding: 0 26px 0 10px;
+  font: inherit; font-size: 12.5px; cursor: pointer; min-width: 0;
 }
 select:hover { border-color: var(--text-3); }
 input[type=number], input[type=text] {
-  width: 100%; min-width: 0; background: var(--surface-2); color: var(--text); border: 1px solid var(--border-strong); border-radius: var(--radius-sm);
-  padding: 6px 10px; font: inherit; font-size: 13px; font-variant-numeric: tabular-nums; transition: border-color 120ms ease;
+  height: 30px; width: 100%; min-width: 0; background: var(--surface-2); color: var(--text); border: 1px solid var(--border-strong);
+  border-radius: var(--radius-sm); padding: 0 8px; font: inherit; font-size: 12.5px; font-variant-numeric: tabular-nums;
 }
 input[type=number]:hover, input[type=text]:hover { border-color: var(--text-3); }
+input[type=number] { appearance: textfield; -moz-appearance: textfield; }
+input[type=number]::-webkit-inner-spin-button, input[type=number]::-webkit-outer-spin-button { -webkit-appearance: none; margin: 0; }
 input::placeholder { color: var(--text-3); }
-.mono { font-family: var(--font-mono); }
-.readout-edit { display: inline-flex; align-items: baseline; gap: 5px; font-family: var(--font-mono); font-size: 11.5px; color: var(--text-2); white-space: nowrap; }
-.readout-edit input {
-  width: 72px; padding: 2px 6px; font-family: var(--font-mono); font-size: 11.5px; text-align: right; border-radius: 5px;
-  appearance: textfield; -moz-appearance: textfield;
-}
-.readout-edit input::-webkit-inner-spin-button, .readout-edit input::-webkit-outer-spin-button { -webkit-appearance: none; margin: 0; }
+input.num { font-family: var(--font-mono); font-size: 12px; text-align: right; }
 input[type=range] {
-  -webkit-appearance: none; appearance: none; width: 100%; height: 4px; border-radius: 2px; margin: 6px 0; cursor: pointer; padding: 0; border: 0;
+  -webkit-appearance: none; appearance: none; width: 100%; min-width: 0; height: 4px; border-radius: 2px; margin: 0; cursor: pointer; padding: 0; border: 0;
   background: linear-gradient(90deg, var(--accent) var(--p, 50%), var(--surface-3) var(--p, 50%));
 }
 input[type=range]::-webkit-slider-thumb {
@@ -148,22 +90,24 @@ input[type=range]::-webkit-slider-thumb {
 input[type=range]::-webkit-slider-thumb:hover { transform: scale(1.15); }
 input[type=range]::-moz-range-thumb { width: 14px; height: 14px; border-radius: 50%; background: #fff; border: 1px solid var(--border-strong); box-shadow: 0 1px 3px rgba(16, 24, 40, 0.25); }
 input[type=range]::-moz-range-track { background: transparent; }
-.segmented { display: inline-flex; background: var(--surface-2); border: 1px solid var(--border-strong); border-radius: var(--radius-sm); padding: 2px; gap: 2px; }
-.segmented button { border: none; background: transparent; color: var(--text-2); border-radius: 5px; padding: 4px 12px; font-size: 12.5px; font-weight: 550; cursor: pointer; transition: background 120ms ease, color 120ms ease; }
+.segmented { display: inline-flex; flex: none; background: var(--surface-2); border: 1px solid var(--border-strong); border-radius: var(--radius-sm); padding: 2px; gap: 2px; height: 30px; }
+.segmented button { display: inline-flex; align-items: center; gap: 6px; border: none; background: transparent; color: var(--text-2); border-radius: 5px; padding: 0 10px; font-size: 12px; font-weight: 550; cursor: pointer; white-space: nowrap; transition: background 120ms ease, color 120ms ease; }
 .segmented button:hover { color: var(--text); }
-.segmented button.on { background: var(--accent); color: #fff; }
+.segmented button.on { background: var(--surface); color: var(--text); box-shadow: 0 1px 2px rgba(16, 24, 40, 0.12), 0 0 0 1px var(--border); }
+.segmented.accent button.on { background: var(--accent); color: #fff; box-shadow: none; }
+.segmented.icons button { padding: 0 7px; }
 .switch { display: inline-flex; align-items: center; gap: 8px; cursor: pointer; user-select: none; }
 .switch input { position: absolute; opacity: 0; width: 0; height: 0; }
-.switch-track { width: 32px; height: 18px; border-radius: 9px; background: var(--surface-3); border: 1px solid var(--border-strong); position: relative; flex: none; transition: background 140ms ease, border-color 140ms ease; }
-.switch-track::after { content: ""; position: absolute; top: 2px; left: 2px; width: 12px; height: 12px; border-radius: 50%; background: #fff; box-shadow: 0 1px 2px rgba(16, 24, 40, 0.3); transition: transform 140ms ease; }
+.switch-track { width: 30px; height: 17px; border-radius: 9px; background: var(--surface-3); border: 1px solid var(--border-strong); position: relative; flex: none; transition: background 140ms ease, border-color 140ms ease; }
+.switch-track::after { content: ""; position: absolute; top: 2px; left: 2px; width: 11px; height: 11px; border-radius: 50%; background: #fff; box-shadow: 0 1px 2px rgba(16, 24, 40, 0.3); transition: transform 140ms ease; }
 .switch input:checked + .switch-track { background: var(--accent); border-color: var(--accent); }
-.switch input:checked + .switch-track::after { transform: translateX(14px); }
+.switch input:checked + .switch-track::after { transform: translateX(13px); }
 .switch input:focus-visible + .switch-track { outline: 2px solid var(--accent); outline-offset: 2px; }
 .switch input:disabled + .switch-track { opacity: 0.5; }
 .switch-label { font-size: 12.5px; color: var(--text-2); white-space: nowrap; }
 .btn {
-  display: inline-flex; align-items: center; justify-content: center; gap: 7px; border-radius: var(--radius-sm); padding: 7px 16px;
-  font-size: 13px; font-weight: 600; cursor: pointer; border: 1px solid transparent; white-space: nowrap;
+  display: inline-flex; align-items: center; justify-content: center; gap: 7px; height: 30px; border-radius: var(--radius-sm); padding: 0 12px;
+  font-size: 12.5px; font-weight: 600; cursor: pointer; border: 1px solid transparent; white-space: nowrap;
   transition: background 120ms ease, border-color 120ms ease, color 120ms ease;
 }
 .btn:disabled { cursor: default; opacity: 0.45; }
@@ -171,24 +115,15 @@ input[type=range]::-moz-range-track { background: transparent; }
 .btn-primary:not(:disabled):hover { background: var(--accent-hi); }
 .btn-ghost { background: var(--surface); color: var(--text-2); border-color: var(--border-strong); }
 .btn-ghost:not(:disabled):hover { color: var(--text); border-color: var(--text-3); }
-.btn-sm { padding: 5px 11px; font-size: 12px; }
-.btn-xs { padding: 3px 10px; font-size: 11px; border-radius: 6px; }
-
-/* ---- content ------------------------------------------------------------------ */
-.ident { display: flex; align-items: center; gap: 16px; min-width: 0; height: 48px; padding: 0 18px; background: var(--surface); border: 1px solid var(--border); border-radius: var(--radius); box-shadow: var(--shadow-1); }
-.roundtrip { display: flex; align-items: center; gap: 10px; font-family: var(--font-mono); font-size: 15px; font-weight: 600; flex: none; }
-.roundtrip .dot { font-size: 13px; font-weight: 300; color: var(--text-3); }
+.btn-lg { height: 38px; padding: 0 18px; font-size: 13.5px; }
+.btn-xs { height: 24px; padding: 0 8px; font-size: 11px; border-radius: 6px; }
+.icon-btn { display: inline-grid; place-items: center; width: 26px; height: 26px; padding: 0; border-radius: 6px; border: 1px solid transparent; background: transparent; color: var(--text-3); cursor: pointer; flex: none; }
+.icon-btn:hover { color: var(--text); background: var(--surface-3); }
+.icon-btn.on { color: var(--accent-hi); background: var(--accent-soft); }
+.label { font-size: 10px; font-weight: 650; letter-spacing: 0.07em; text-transform: uppercase; color: var(--text-3); white-space: nowrap; }
+.note { margin: 0; font-size: 12px; line-height: 1.5; color: var(--text-3); }
+.note.warn { color: var(--amber); } .note.error { color: var(--red); } .note.ok { color: var(--green); }
 .hue-0 { color: var(--hue-0); } .hue-1 { color: var(--hue-1); } .hue-2 { color: var(--hue-2); }
-.eyebrow { font-size: 9.5px; font-weight: 600; letter-spacing: 0.08em; text-transform: uppercase; color: var(--text-3); white-space: nowrap; flex: none; }
-.ident-desc { font-family: var(--font-mono); font-size: 11.5px; color: var(--text-3); min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
-.cmap-bar { display: block; flex: 1; min-width: 0; height: 8px; border-radius: 3px; border: 1px solid var(--border); }
-.note { margin: 0; font-size: 11.5px; line-height: 1.5; color: var(--text-3); }
-.note.warn { color: var(--amber); }
-.note.error { color: var(--red); }
-.note.ok { color: var(--green); }
-.ops { min-width: 0; font-size: 11px; color: var(--text-3); }
-.ops summary { cursor: pointer; font-size: 10px; font-weight: 600; letter-spacing: 0.07em; text-transform: uppercase; }
-.ops div { margin-top: 6px; font-family: var(--font-mono); line-height: 1.8; word-spacing: 6px; color: var(--text-2); }
 .badge {
   display: inline-flex; align-items: center; justify-content: center; min-width: 20px; height: 20px; padding: 0 6px; border-radius: 5px;
   border: 1px solid var(--border-strong); background: var(--surface-2); font-family: var(--font-mono); font-size: 10.5px; font-weight: 700; color: var(--text-2); flex: none;
@@ -196,203 +131,342 @@ input[type=range]::-moz-range-track { background: transparent; }
 .badge.hue-0 { background: rgba(217, 138, 11, 0.1); border-color: rgba(217, 138, 11, 0.4); }
 .badge.hue-1 { background: rgba(47, 116, 230, 0.1); border-color: rgba(47, 116, 230, 0.4); }
 .badge.hue-2 { background: rgba(19, 163, 107, 0.1); border-color: rgba(19, 163, 107, 0.4); }
-.panel-title { font-size: 12px; font-weight: 650; color: var(--text); white-space: nowrap; }
-canvas.plot { display: block; width: 100%; height: 440px; cursor: crosshair; background: var(--surface); touch-action: none; }
-.icon-btn { display: inline-grid; place-items: center; width: 26px; height: 24px; padding: 0; border-radius: 6px; border: 1px solid var(--border-strong); background: var(--surface); color: var(--text-2); cursor: pointer; }
-.icon-btn:hover { color: var(--text); border-color: var(--text-3); }
-.head-actions { display: flex; align-items: center; gap: 6px; flex: none; }
-/* Focus layout: one slice over two columns and two rows, the others stacked in the
-   third column. Same column tracks as the cards above, so edges still line up. */
-@media (min-width: 1181px) {
-  #slices.focus { --focus-row: clamp(360px, calc((100vh - 110px) / 2), 560px); grid-template-rows: repeat(2, var(--focus-row)); }
-  #slices.focus > .card { grid-column: 3; }
-  #slices.focus > .card.is-focus { grid-column: 1 / 3; grid-row: 1 / 3; }
-  #slices.focus canvas.plot { flex: 1 1 0; height: auto; min-height: 0; }
-}
-canvas.view3d { height: 560px; cursor: grab; }
-.cut { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 16px; padding: 10px 14px 2px; border-top: 1px solid var(--border); }
-.cut .readout-edit input { width: 58px; }
-.cut--0 { --accent: var(--hue-0); } .cut--1 { --accent: var(--hue-1); } .cut--2 { --accent: var(--hue-2); }
-.cut .field-label { color: var(--accent); }
-.caption { font-family: var(--font-mono); font-size: 10px; line-height: 1.5; color: var(--text-3); }
-.hover { font-family: var(--font-mono); font-size: 10px; color: var(--text-2); white-space: nowrap; }
-.card-foot.caption-foot { flex-direction: column; align-items: stretch; justify-content: center; gap: 2px; }
-.controls3d { display: grid; grid-template-columns: minmax(0, 2fr) minmax(0, 1fr) minmax(0, 1fr) auto auto; gap: 16px; align-items: end; padding: 12px 14px; border-top: 1px solid var(--border); }
-.meta-strip { display: flex; flex-wrap: wrap; gap: 8px 28px; padding: 12px 16px; background: var(--surface); border: 1px solid var(--border); border-radius: var(--radius); }
-.meta-item { display: flex; flex-direction: column; gap: 1px; min-width: 0; }
-.meta-key { font-size: 10px; font-weight: 600; letter-spacing: 0.07em; text-transform: uppercase; color: var(--text-3); }
-.meta-val { font-family: var(--font-mono); font-size: 11.5px; color: var(--text-2); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; max-width: 520px; }
-.method { display: grid; grid-template-columns: repeat(4, minmax(0, 1fr)); gap: 0; }
-.method section { padding: 14px; font-size: 12px; line-height: 1.6; color: var(--text-3); border-right: 1px solid var(--border-subtle); }
-.method section:last-child { border-right: 0; }
-.method h3 { margin: 0 0 6px; font-size: 10px; font-weight: 650; letter-spacing: 0.07em; text-transform: uppercase; color: var(--text-2); }
-.method p { margin: 0; }
+.spin { width: 12px; height: 12px; border: 2px solid var(--border-strong); border-top-color: var(--accent); border-radius: 50%; animation: rotate 700ms linear infinite; flex: none; }
+@keyframes rotate { to { transform: rotate(360deg); } }
 
-/* ---- empty / loading ------------------------------------------------------------- */
-.empty { display: flex; flex-direction: column; align-items: center; gap: 10px; padding: 72px 24px; text-align: center; background: var(--surface); border: 1px dashed var(--border-strong); border-radius: var(--radius); }
-.empty-icon { display: grid; place-items: center; width: 44px; height: 44px; border-radius: 50%; background: var(--surface-2); border: 1px solid var(--border-strong); color: var(--text-3); }
-.empty h1 { margin: 4px 0 0; font-size: 17px; font-weight: 650; letter-spacing: -0.01em; }
-.empty-hint { font-size: 12.5px; color: var(--text-3); max-width: 560px; line-height: 1.55; }
-.boot-panel { display: flex; flex-direction: column; gap: 8px; padding: 14px 16px; border-radius: var(--radius); background: var(--accent-soft); border: 1px solid rgba(47, 116, 230, 0.25); }
-.boot-label { font-family: var(--font-mono); font-size: 12px; color: var(--text-2); }
-.boot-bar { height: 3px; border-radius: 2px; background: var(--border-strong); overflow: hidden; }
+/* ---- top bar ------------------------------------------------------------------- */
+.topbar { position: relative; z-index: 30; display: flex; align-items: center; gap: 12px; height: var(--topbar); padding: 0 16px; background: var(--surface); border-bottom: 1px solid var(--border); }
+.brand { display: flex; align-items: center; gap: 10px; flex: none; }
+.brand-glyph { display: grid; place-items: center; width: 30px; height: 30px; border-radius: 8px; background: linear-gradient(145deg, var(--surface), var(--surface-3)); border: 1px solid var(--border-strong); color: var(--accent); }
+.brand b { font-size: 14px; font-weight: 700; text-transform: uppercase; letter-spacing: 0.06em; white-space: nowrap; }
+.vdiv { width: 1px; height: 22px; background: var(--border); flex: none; }
+.dataset-button {
+  display: flex; align-items: center; gap: 8px; min-width: 140px; max-width: 380px; height: 32px; padding: 0 10px; border-radius: 8px;
+  background: var(--surface-2); border: 1px solid var(--border-strong); cursor: pointer; font-size: 12.5px; font-weight: 600;
+}
+.dataset-button:hover { border-color: var(--accent); background: var(--surface-3); }
+.dataset-button span { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.dataset-button svg { color: var(--text-3); }
+.ident { display: flex; align-items: center; gap: 8px; font-family: var(--font-mono); font-size: 13px; font-weight: 600; flex: none; }
+.ident .dot { color: var(--text-3); font-weight: 300; }
+.pill { display: inline-flex; align-items: center; height: 22px; padding: 0 8px; border-radius: 999px; background: var(--surface-2); border: 1px solid var(--border); font-family: var(--font-mono); font-size: 11px; color: var(--text-2); white-space: nowrap; }
+.spacer { flex: 1; min-width: 8px; }
+.chip {
+  display: inline-flex; align-items: center; gap: 7px; height: 30px; padding: 0 10px; border-radius: 8px; border: 1px solid var(--border-strong);
+  background: var(--surface); cursor: pointer; font-size: 12px; color: var(--text-2); white-space: nowrap;
+}
+.chip:hover { border-color: var(--text-3); color: var(--text); }
+.chip b { font-weight: 650; color: var(--text); font-family: var(--font-mono); font-size: 11.5px; }
+.chip.active { background: var(--accent-soft); border-color: var(--accent-line); color: var(--accent-hi); }
+.chip.active b { color: var(--accent-hi); }
+.chip[aria-expanded="true"] { border-color: var(--accent); box-shadow: 0 0 0 3px var(--accent-soft); }
+.status { display: flex; align-items: center; gap: 7px; font-size: 11.5px; color: var(--text-3); white-space: nowrap; }
+.status-dot { width: 7px; height: 7px; border-radius: 50%; background: var(--text-3); flex: none; }
+.status-dot.ok { background: var(--green); box-shadow: 0 0 6px rgba(19, 163, 107, 0.5); }
+.status-dot.busy { background: var(--accent); animation: pulse 1.6s ease-out infinite; }
+@keyframes pulse { 0% { box-shadow: 0 0 0 0 rgba(47, 116, 230, 0.45); } 70% { box-shadow: 0 0 0 6px rgba(47, 116, 230, 0); } 100% { box-shadow: 0 0 0 0 rgba(47, 116, 230, 0); } }
+
+/* ---- toolbar --------------------------------------------------------------------- */
+.toolbar { position: relative; z-index: 20; display: flex; align-items: center; gap: 10px; height: var(--toolbar); padding: 0 16px; background: var(--surface); border-bottom: 1px solid var(--border); overflow-x: auto; }
+.tgroup { display: flex; align-items: center; gap: 8px; flex: none; }
+.cbar { display: flex; align-items: center; gap: 6px; }
+.cbar input { width: 64px; }
+.cbar canvas { width: 130px; height: 10px; border-radius: 3px; border: 1px solid var(--border); }
+#soft-wrap input { width: 56px; }
+
+/* ---- popovers ---------------------------------------------------------------------- */
+.pop-wrap { position: relative; flex: none; display: inline-flex; }
+.popover {
+  position: fixed; z-index: 50; width: 380px; max-width: calc(100vw - 24px); max-height: calc(100vh - 80px); overflow: auto;
+  background: var(--surface); border: 1px solid var(--border); border-radius: 12px; box-shadow: var(--shadow-2);
+}
+.pop-head { display: flex; align-items: center; justify-content: space-between; gap: 10px; padding: 12px 14px; border-bottom: 1px solid var(--border); }
+.pop-title { font-size: 12.5px; font-weight: 650; }
+.pop-body { padding: 14px; display: flex; flex-direction: column; gap: 12px; }
+.pop-foot { display: flex; align-items: center; gap: 10px; padding: 10px 14px; background: var(--surface-2); border-top: 1px solid var(--border); }
+.field { display: flex; flex-direction: column; gap: 6px; min-width: 0; }
+.grid2 { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 12px; }
+.inline { display: flex; gap: 8px; align-items: center; }
+.inline > input { flex: 1; }
+.ops { font-size: 11px; color: var(--text-3); }
+.ops summary { cursor: pointer; font-size: 10px; font-weight: 650; letter-spacing: 0.07em; text-transform: uppercase; }
+.ops div { margin-top: 8px; font-family: var(--font-mono); line-height: 1.8; word-spacing: 6px; color: var(--text-2); }
+.kv { display: grid; grid-template-columns: max-content minmax(0, 1fr); gap: 6px 14px; margin: 0; }
+.kv dt { font-size: 10px; font-weight: 650; letter-spacing: 0.07em; text-transform: uppercase; color: var(--text-3); padding-top: 2px; }
+.kv dd { margin: 0; font-family: var(--font-mono); font-size: 11.5px; color: var(--text-2); word-break: break-word; }
+.method h4 { margin: 0 0 3px; font-size: 10px; font-weight: 650; letter-spacing: 0.07em; text-transform: uppercase; color: var(--text-2); }
+.method p { margin: 0; font-size: 12px; line-height: 1.55; color: var(--text-3); }
+
+/* ---- workspace and views ------------------------------------------------------------ */
+.workspace { height: calc(100vh - var(--topbar) - var(--toolbar)); height: calc(100dvh - var(--topbar) - var(--toolbar)); padding: 10px; display: grid; gap: 10px; }
+.workspace.quad { grid-template-columns: repeat(2, minmax(0, 1fr)); grid-template-rows: repeat(2, minmax(0, 1fr)); }
+.workspace.focus { grid-template-columns: minmax(0, 2.2fr) minmax(0, 1fr); grid-template-rows: repeat(3, minmax(0, 1fr)); }
+.workspace.focus > .view.primary { grid-column: 1; grid-row: 1 / 4; }
+.workspace.focus > .view:not(.primary) { grid-column: 2; }
+.workspace.focus > .view:not(.primary) .view-foot { display: none; }
+.workspace.single { grid-template: minmax(0, 1fr) / minmax(0, 1fr); }
+.workspace.single > .view:not(.primary) { display: none; }
+.view { min-width: 0; min-height: 0; display: flex; flex-direction: column; background: var(--surface); border: 1px solid var(--border); border-radius: var(--radius); box-shadow: var(--shadow-1); overflow: hidden; }
+.view-head { display: flex; align-items: center; gap: 8px; height: 38px; padding: 0 8px 0 12px; border-bottom: 1px solid var(--border-subtle); flex: none; }
+.view-title { font-size: 12.5px; font-weight: 650; white-space: nowrap; }
+.view-pos { font-family: var(--font-mono); font-size: 11.5px; color: var(--text-2); white-space: nowrap; }
+.view-caption { flex: 1; min-width: 0; text-align: right; font-family: var(--font-mono); font-size: 10.5px; color: var(--text-3); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.view-actions { display: flex; align-items: center; gap: 2px; flex: none; }
+.view-body { position: relative; flex: 1; min-height: 0; }
+.view-body canvas { position: absolute; inset: 0; width: 100%; height: 100%; display: block; }
+.view-body canvas.plot { cursor: crosshair; touch-action: none; }
+.workspace[data-click="zoom"] .view-body canvas.plot { cursor: zoom-in; }
+.view-body canvas.scene { cursor: grab; }
+.overlay-chip {
+  position: absolute; left: 10px; bottom: 10px; max-width: calc(100% - 20px); padding: 4px 8px; border-radius: 6px; pointer-events: none;
+  background: rgba(255, 255, 255, 0.92); border: 1px solid var(--border); box-shadow: var(--shadow-1);
+  font-family: var(--font-mono); font-size: 11px; color: var(--text-2); white-space: nowrap; overflow: hidden; text-overflow: ellipsis;
+}
+.view-foot { display: flex; align-items: center; gap: 10px; height: 44px; padding: 0 12px; border-top: 1px solid var(--border-subtle); background: var(--surface-2); flex: none; }
+.view-foot input.num { width: 64px; height: 26px; flex: none; }
+.view-foot .unit { font-family: var(--font-mono); font-size: 10.5px; color: var(--text-3); }
+.foot-label { font-family: var(--font-mono); font-size: 11.5px; font-weight: 700; color: var(--accent); flex: none; }
+.foot-sep { width: 1px; height: 18px; background: var(--border); flex: none; }
+.view-foot input.foot-grow { flex: 1 1 0; width: auto; min-width: 60px; }
+.view-foot input.foot-fixed { flex: none; width: 90px; }
+.view-foot input.foot-fixed.short { width: 64px; }
+.cut--0 { --accent: var(--hue-0); } .cut--1 { --accent: var(--hue-1); } .cut--2 { --accent: var(--hue-2); }
+
+/* ---- start, loading, toast --------------------------------------------------------- */
+.stage { height: calc(100vh - var(--topbar)); height: calc(100dvh - var(--topbar)); display: grid; place-items: center; padding: 24px; overflow: auto; }
+.hero { width: min(680px, 100%); background: var(--surface); border: 1px solid var(--border); border-radius: 16px; box-shadow: var(--shadow-1); padding: 40px 44px; text-align: center; }
+.hero-glyph { display: inline-grid; place-items: center; width: 56px; height: 56px; border-radius: 14px; background: linear-gradient(145deg, var(--surface), var(--surface-3)); border: 1px solid var(--border-strong); color: var(--accent); }
+.hero h1 { margin: 18px 0 8px; font-size: 22px; font-weight: 700; letter-spacing: -0.015em; }
+.hero > p { margin: 0 auto; max-width: 520px; font-size: 13.5px; line-height: 1.6; color: var(--text-2); }
+.hero-actions { display: flex; align-items: center; justify-content: center; gap: 12px; margin: 22px 0 26px; font-size: 12.5px; color: var(--text-3); }
+.features { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 10px; margin: 0; padding: 0; list-style: none; text-align: left; }
+.features li { display: flex; gap: 10px; padding: 12px; border-radius: var(--radius); background: var(--surface-2); border: 1px solid var(--border-subtle); }
+.features li svg { color: var(--accent); margin-top: 1px; }
+.features b { display: block; font-size: 12.5px; font-weight: 650; }
+.features span { font-size: 11.5px; color: var(--text-3); line-height: 1.45; }
+.privacy { margin: 22px 0 0; font-size: 11.5px; color: var(--text-3); }
+.loading-card { width: min(520px, 100%); background: var(--surface); border: 1px solid var(--border); border-radius: 14px; box-shadow: var(--shadow-1); padding: 22px 24px; }
+.loading-card .row { display: flex; align-items: center; gap: 10px; margin-bottom: 14px; font-size: 13px; font-weight: 600; }
+.boot-label { font-family: var(--font-mono); font-size: 11.5px; color: var(--text-3); margin-top: 10px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.boot-bar { height: 4px; border-radius: 2px; background: var(--surface-3); overflow: hidden; }
 .boot-fill { height: 100%; width: 0; border-radius: 2px; background: var(--accent); transition: width 0.2s ease; }
-.error-banner { padding: 10px 14px; border-radius: var(--radius-sm); background: var(--red-soft); border: 1px solid rgba(214, 69, 69, 0.3); color: var(--red); font-size: 12.5px; }
+.toast {
+  position: fixed; left: 50%; bottom: 18px; transform: translateX(-50%); z-index: 60; display: flex; align-items: center; gap: 10px;
+  max-width: min(640px, calc(100vw - 24px)); padding: 8px 8px 8px 14px; border-radius: 10px; background: #fff5f5; border: 1px solid rgba(214, 69, 69, 0.35);
+  box-shadow: var(--shadow-2); color: var(--red); font-size: 12.5px;
+}
 body.dragging::after {
-  content: "Drop to open"; position: fixed; inset: 12px; z-index: 50; border: 2px dashed var(--accent); border-radius: 16px;
-  background: rgba(245, 247, 250, 0.88); display: grid; place-items: center; font-size: 18px; font-weight: 600; color: var(--accent-hi); pointer-events: none;
+  content: "Drop to open"; position: fixed; inset: 12px; z-index: 70; border: 2px dashed var(--accent); border-radius: 16px;
+  background: rgba(238, 241, 245, 0.9); display: grid; place-items: center; font-size: 18px; font-weight: 600; color: var(--accent-hi); pointer-events: none;
 }
 @media (prefers-reduced-motion: reduce) { * { animation: none !important; transition: none !important; } }
 
-/* ---- responsive: one column below 1180px, so edges still line up ------------------ */
-@media (max-width: 1180px) {
-  .grid3 { grid-template-columns: minmax(0, 1fr); }
-  .method { grid-template-columns: repeat(2, minmax(0, 1fr)); }
-  .method section:nth-child(2) { border-right: 0; }
+/* ---- smaller screens: views stack and the page scrolls ------------------------------ */
+@media (max-width: 1280px) {
+  .hide-md { display: none !important; }
 }
-@media (max-width: 720px) {
-  :root { --pad: 14px; }
-  .appbar { height: auto; flex-wrap: wrap; padding-top: 10px; padding-bottom: 10px; gap: 10px 14px; }
-  .dataset { flex: 1 1 100%; order: 3; }
-  .bar-divider, .ver { display: none; }
-  .fields4 { grid-template-columns: repeat(2, minmax(0, 1fr)); }
-  .controls3d { grid-template-columns: minmax(0, 1fr); }
-  .method { grid-template-columns: minmax(0, 1fr); }
-  .method section { border-right: 0; border-bottom: 1px solid var(--border-subtle); }
-  .ident { height: auto; flex-wrap: wrap; padding: 10px 14px; gap: 6px 14px; }
-  canvas.plot { height: 340px; }
-  canvas.view3d { height: 400px; }
+@media (max-width: 1000px), (max-height: 640px) {
+  body { overflow: auto; }
+  .workspace { height: auto; display: flex; flex-direction: column; }
+  .workspace .view, .workspace.focus > .view:not(.primary), .workspace.single > .view:not(.primary) { display: flex; height: 460px; }
+  .workspace .view .view-foot { display: flex !important; }
+  .layout-control, .chip-text { display: none !important; }
+  .toolbar { height: auto; flex-wrap: wrap; padding-top: 8px; padding-bottom: 8px; row-gap: 8px; overflow: visible; }
+  .toolbar .spacer { display: none; }
+  .stage { height: auto; min-height: calc(100vh - var(--topbar)); }
+}
+@media (max-width: 640px) {
+  .topbar { padding: 0 10px; gap: 8px; }
+  .brand b, .ident, .status-text, .hide-sm { display: none !important; }
+  .hero { padding: 28px 20px; }
+  .features { grid-template-columns: minmax(0, 1fr); }
+  .toolbar { padding: 0 10px; }
 }
 </style>
 </head>
 <body>
-<header class="appbar">
+<header class="topbar">
   <span class="brand">
     <span class="brand-glyph" aria-hidden="true">
       <svg width="18" height="18" viewBox="0 0 18 18"><circle cx="9" cy="9" r="2.4" fill="currentColor"/><g fill="currentColor" opacity="0.55"><circle cx="9" cy="2.8" r="1.2"/><circle cx="9" cy="15.2" r="1.2"/><circle cx="2.8" cy="9" r="1.2"/><circle cx="15.2" cy="9" r="1.2"/><circle cx="4.6" cy="4.6" r="0.9"/><circle cx="13.4" cy="4.6" r="0.9"/><circle cx="4.6" cy="13.4" r="0.9"/><circle cx="13.4" cy="13.4" r="0.9"/></g></svg>
     </span>
     <b>NeXus viewer</b>
   </span>
-  <span class="bar-divider"></span>
-  <span class="dataset">
-    <span class="eyebrow">Dataset</span>
-    <button id="open" class="dataset-button" type="button" title="Open a .nxs file"><span id="dataset-name">Open .nxs file…</span>
-      <svg width="12" height="12" viewBox="0 0 12 12" aria-hidden="true"><path d="M2.5 4.5 6 8l3.5-3.5" fill="none" stroke="currentColor" stroke-width="1.4" stroke-linecap="round" stroke-linejoin="round"/></svg></button>
-    <input id="file" type="file" accept=".nxs,.nx5,.h5,.hdf5,.hdf" hidden>
+  <span class="vdiv hide-sm"></span>
+  <button id="open" class="dataset-button" type="button" title="Open a .nxs file">
+    <svg width="15" height="15" viewBox="0 0 18 18" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linejoin="round" aria-hidden="true"><path d="M2 5.5V14a1 1 0 0 0 1 1h12a1 1 0 0 0 1-1V7a1 1 0 0 0-1-1H9L7.5 4H3a1 1 0 0 0-1 1.5Z"/></svg>
+    <span id="dataset-name">Open .nxs file…</span>
+  </button>
+  <input id="file" type="file" accept=".nxs,.nx5,.h5,.hdf5,.hdf" hidden>
+  <span id="ident" class="ident hide-md" hidden></span>
+  <span id="ident-grid" class="pill hide-md" hidden></span>
+
+  <span class="spacer"></span>
+
+  <span class="pop-wrap" data-loaded hidden>
+    <button id="sym-chip" class="chip" type="button" aria-haspopup="dialog" aria-expanded="false" data-pop="pop-symmetry">
+      <svg width="15" height="15" viewBox="0 0 18 18" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linejoin="round" aria-hidden="true"><path d="M9 1.8 15.3 5.4v7.2L9 16.2 2.7 12.6V5.4Z"/><circle cx="9" cy="9" r="2"/></svg>
+      <span class="chip-text">Symmetry</span><b id="sym-chip-value">none</b>
+    </button>
   </span>
-  <span class="bar-right">
-    <span class="engine-status"><span id="engine-dot" class="engine-dot"></span><span id="engine-text">in-browser engine</span></span>
-    <span class="ver"><span class="ver-num">v0.3.0</span><span class="ver-tag">beta</span></span>
-    <a class="icon-link" href="https://github.com/drthyang/neutron-nexus-viewer" title="Source on GitHub" aria-label="Source on GitHub">
-      <svg width="16" height="16" viewBox="0 0 16 16" fill="currentColor" aria-hidden="true"><path d="M8 0C3.58 0 0 3.58 0 8c0 3.54 2.29 6.53 5.47 7.59.4.07.55-.17.55-.38 0-.19-.01-.82-.01-1.49-2.01.37-2.53-.49-2.69-.94-.09-.23-.48-.94-.82-1.13-.28-.15-.68-.52-.01-.53.63-.01 1.08.58 1.23.82.72 1.21 1.87.87 2.33.66.07-.52.28-.87.51-1.07-1.78-.2-3.64-.89-3.64-3.95 0-.87.31-1.59.82-2.15-.08-.2-.36-1.02.08-2.12 0 0 .67-.21 2.2.82.64-.18 1.32-.27 2-.27.68 0 1.36.09 2 .27 1.53-1.04 2.2-.82 2.2-.82.44 1.1.16 1.92.08 2.12.51.56.82 1.27.82 2.15 0 3.07-1.87 3.75-3.65 3.95.29.25.54.73.54 1.48 0 1.07-.01 1.93-.01 2.2 0 .21.15.46.55.38A8.013 8.013 0 0016 8c0-4.42-3.58-8-8-8z"/></svg>
-    </a>
+  <span class="pop-wrap" data-loaded hidden>
+    <button id="mask-chip" class="chip" type="button" aria-haspopup="dialog" aria-expanded="false" data-pop="pop-mask">
+      <svg width="15" height="15" viewBox="0 0 18 18" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M9 2.5 16 6 9 9.5 2 6Z"/><path d="M3.5 9.25 2 10l7 3.5 7-3.5-1.5-.75"/><path d="M3.5 13.25 2 14l7 3.5 7-3.5-1.5-.75" opacity="0.55"/></svg>
+      <span class="chip-text">Mask</span><b id="mask-chip-value">off</b>
+    </button>
   </span>
+  <span class="vdiv layout-control" data-loaded hidden></span>
+  <div id="layout" class="segmented icons layout-control" data-value="quad" role="group" aria-label="Layout" data-loaded hidden>
+    <button type="button" data-value="quad" class="on" title="Four views">
+      <svg width="15" height="15" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.5" aria-hidden="true"><rect x="1.75" y="1.75" width="5.5" height="5.5" rx="1"/><rect x="8.75" y="1.75" width="5.5" height="5.5" rx="1"/><rect x="1.75" y="8.75" width="5.5" height="5.5" rx="1"/><rect x="8.75" y="8.75" width="5.5" height="5.5" rx="1"/></svg></button>
+    <button type="button" data-value="focus" title="One large view with the others beside it">
+      <svg width="15" height="15" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.5" aria-hidden="true"><rect x="1.75" y="1.75" width="8" height="12.5" rx="1"/><rect x="11.25" y="1.75" width="3" height="3.4" rx="0.8"/><rect x="11.25" y="6.3" width="3" height="3.4" rx="0.8"/><rect x="11.25" y="10.85" width="3" height="3.4" rx="0.8"/></svg></button>
+    <button type="button" data-value="single" title="One view (Esc to return)">
+      <svg width="15" height="15" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.5" aria-hidden="true"><rect x="1.75" y="1.75" width="12.5" height="12.5" rx="1"/></svg></button>
+  </div>
+  <span class="vdiv hide-sm"></span>
+  <span class="status" title="Everything runs in this browser tab"><span id="status-dot" class="status-dot"></span><span id="status-text" class="status-text">ready</span></span>
+  <span class="pop-wrap" data-loaded hidden>
+    <button class="icon-btn" type="button" title="Dataset and method" aria-haspopup="dialog" aria-expanded="false" data-pop="pop-info">
+      <svg width="16" height="16" viewBox="0 0 18 18" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" aria-hidden="true"><circle cx="9" cy="9" r="7"/><path d="M9 8.2v4.3"/><circle cx="9" cy="5.6" r="0.6" fill="currentColor"/></svg>
+    </button>
+  </span>
+  <a class="icon-btn" href="https://github.com/drthyang/neutron-nexus-viewer" title="Source on GitHub" aria-label="Source on GitHub">
+    <svg width="16" height="16" viewBox="0 0 16 16" fill="currentColor" aria-hidden="true"><path d="M8 0C3.58 0 0 3.58 0 8c0 3.54 2.29 6.53 5.47 7.59.4.07.55-.17.55-.38 0-.19-.01-.82-.01-1.49-2.01.37-2.53-.49-2.69-.94-.09-.23-.48-.94-.82-1.13-.28-.15-.68-.52-.01-.53.63-.01 1.08.58 1.23.82.72 1.21 1.87.87 2.33.66.07-.52.28-.87.51-1.07-1.78-.2-3.64-.89-3.64-3.95 0-.87.31-1.59.82-2.15-.08-.2-.36-1.02.08-2.12 0 0 .67-.21 2.2.82.64-.18 1.32-.27 2-.27.68 0 1.36.09 2 .27 1.53-1.04 2.2-.82 2.2-.82.44 1.1.16 1.92.08 2.12.51.56.82 1.27.82 2.15 0 3.07-1.87 3.75-3.65 3.95.29.25.54.73.54 1.48 0 1.07-.01 1.93-.01 2.2 0 .21.15.46.55.38A8.013 8.013 0 0016 8c0-4.42-3.58-8-8-8z"/></svg>
+  </a>
 </header>
 
-<main class="main">
-  <div id="error" class="error-banner" role="alert" hidden></div>
-
-  <section id="intro" class="empty">
-    <span class="empty-icon"><svg width="20" height="20" viewBox="0 0 18 18" fill="currentColor" aria-hidden="true"><circle cx="3.5" cy="3.5" r="1.3"/><circle cx="9" cy="3.5" r="1.3"/><circle cx="14.5" cy="3.5" r="1.3"/><circle cx="3.5" cy="9" r="1.3"/><circle cx="9" cy="9" r="2"/><circle cx="14.5" cy="9" r="1.3"/><circle cx="3.5" cy="14.5" r="1.3"/><circle cx="9" cy="14.5" r="1.3"/><circle cx="14.5" cy="14.5" r="1.3"/></svg></span>
-    <h1>Reciprocal slices of neutron histograms</h1>
-    <span class="empty-hint">Drop a Mantid <code>MDHistoWorkspace</code> file written by <code>SaveMD</code>, or any NeXus/HDF5 file whose <code>NXdata</code> group holds a 3-D histogram. Orthogonal slices, symmetry averaging, detector-edge masking and a 3-D isosurface view, computed on your computer: the file is never uploaded.</span>
-    <button id="open-intro" class="btn btn-primary" type="button">Open .nxs file…</button>
-  </section>
-
-  <section id="loading" class="boot-panel" hidden>
-    <span id="progress-label" class="boot-label">Opening…</span>
-    <div class="boot-bar"><div id="progress" class="boot-fill"></div></div>
-  </section>
-
-  <div id="viewer" class="page" hidden>
-    <div class="ident">
-      <span id="ident" class="roundtrip"></span>
-      <span class="bar-divider"></span>
-      <span id="ident-eyebrow" class="eyebrow"></span>
-      <span id="ident-desc" class="ident-desc"></span>
+<div id="toolbar" class="toolbar" hidden>
+  <span class="tgroup">
+    <select id="cmap" aria-label="Colormap" title="Colormap"></select>
+    <span class="cbar" title="Color range: the values at the two ends of the colormap">
+      <input id="vmin" class="num" type="number" step="any" aria-label="vmin">
+      <canvas id="cmap-bar" width="256" height="1" aria-hidden="true"></canvas>
+      <input id="vmax" class="num" type="number" step="any" aria-label="vmax">
+    </span>
+  </span>
+  <span class="tgroup">
+    <div id="scale" class="segmented" data-value="asinh" role="group" aria-label="Color scale"><button type="button" data-value="asinh" class="on">Asinh</button><button type="button" data-value="linear">Linear</button><button type="button" data-value="log">Log</button></div>
+    <label id="soft-wrap" class="tgroup" title="Asinh softening: values below it are shown nearly linearly"><span class="label">Soft</span><input id="soft" class="num" type="number" min="0" step="any"></label>
+    <button id="auto" class="btn btn-ghost" type="button" title="vmin 0, vmax at the 97th percentile and softening at the median of positive values in the current slices">
+      <svg width="14" height="14" viewBox="0 0 18 18" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linejoin="round" aria-hidden="true"><path d="M9 2.2c.4 2.9 1.9 4.4 4.8 4.8-2.9.4-4.4 1.9-4.8 4.8-.4-2.9-1.9-4.4-4.8-4.8C7.1 6.6 8.6 5.1 9 2.2Z"/><path d="M14 11.5c.2 1.3.9 2 2.2 2.2-1.3.2-2 .9-2.2 2.2-.2-1.3-.9-2-2.2-2.2 1.3-.2 2-.9 2.2-2.2Z"/></svg>
+      <span class="hide-md">Auto range</span></button>
+  </span>
+  <span class="vdiv"></span>
+  <span class="pop-wrap">
+    <button class="chip" type="button" aria-haspopup="dialog" aria-expanded="false" data-pop="pop-view">
+      <svg width="15" height="15" viewBox="0 0 18 18" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" aria-hidden="true"><path d="M2.5 5h13M2.5 9h13M2.5 13h13"/><circle cx="6" cy="5" r="1.6" fill="#fff"/><circle cx="12" cy="9" r="1.6" fill="#fff"/><circle cx="8" cy="13" r="1.6" fill="#fff"/></svg>
+      View <b id="view-chip-value">full</b>
+    </button>
+  </span>
+  <span class="spacer"></span>
+  <span class="tgroup">
+    <span class="label hide-md">Click</span>
+    <div id="click-mode" class="segmented accent" data-value="navigate" role="group" aria-label="Clicking a slice">
+      <button type="button" data-value="navigate" class="on" title="Click or drag: move the other two slices through the point">
+        <svg width="14" height="14" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" aria-hidden="true"><circle cx="8" cy="8" r="4.5"/><path d="M8 1v3M8 12v3M1 8h3M12 8h3"/></svg>Navigate</button>
+      <button type="button" data-value="zoom" title="Drag a rectangle to zoom into it; click to zoom in 2×; double-click for the full view">
+        <svg width="14" height="14" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" aria-hidden="true"><circle cx="7" cy="7" r="4.8"/><path d="M10.5 10.5 14.5 14.5M7 4.8v4.4M4.8 7h4.4"/></svg>Zoom</button>
     </div>
+  </span>
+</div>
 
-    <div class="grid3">
-      <section class="card" aria-label="Display">
-        <div class="card-head">
-          <span class="card-title">Display · all slices</span>
-          <button id="auto" class="btn btn-ghost btn-xs" type="button" title="vmin 0, vmax at the 97th percentile and asinh softening at the median of positive values in the current slices">Auto range</button>
-        </div>
-        <div class="card-body">
-          <div class="fields4">
-            <label class="field"><span class="field-label">vmin</span><input id="vmin" class="mono" type="number" step="any"></label>
-            <label class="field"><span class="field-label">vmax</span><input id="vmax" class="mono" type="number" step="any"></label>
-            <label id="soft-wrap" class="field"><span class="field-label">Softening</span><input id="soft" class="mono" type="number" min="0" step="any"></label>
-            <label class="field"><span class="field-label">View ±</span><input id="limit" class="mono" type="number" min="0" step="any" placeholder="full"></label>
-          </div>
-          <div class="row">
-            <div id="scale" class="segmented" data-value="asinh" role="group" aria-label="Scale"><button type="button" data-value="asinh" class="on">Asinh</button><button type="button" data-value="linear">Linear</button><button type="button" data-value="log">Log</button></div>
-            <span class="row" style="gap: 16px">
-              <label class="switch"><input id="guides" type="checkbox" checked><span class="switch-track"></span><span class="switch-label">Guides</span></label>
-              <label id="angles-wrap" class="switch" title="Snap direct-cell angles within 1° of 60°, 90° or 120°"><input id="angles" type="checkbox" checked><span class="switch-track"></span><span class="switch-label">Nominal angles</span></label>
-            </span>
-          </div>
-        </div>
-        <div class="card-foot">
-          <span class="field-label">Colormap</span>
-          <select id="cmap" aria-label="Colormap"></select>
-          <canvas id="cmap-bar" class="cmap-bar" width="256" height="1" aria-hidden="true"></canvas>
-        </div>
-      </section>
-
-      <section id="symmetry" class="card" aria-label="Symmetry">
-        <div class="card-head">
-          <span class="card-title">Symmetry averaging</span>
-          <span id="sym-badge" class="badge">1</span>
-        </div>
-        <div class="card-body">
-          <div class="fields3" style="grid-template-columns: minmax(0, 1fr) minmax(0, 2fr)">
-            <label class="field"><span class="field-label">Laue class</span><select id="sym-preset"></select></label>
-            <div class="field"><label class="field-label" for="sym-ops" title="Operations in h,k,l (or real-space x,y,z), separated by ;">Generators · h,k,l or x,y,z</label>
-              <span class="inline"><input id="sym-ops" class="mono" type="text" spellcheck="false" autocomplete="off" placeholder="-h,-k,-l; h+k,-h,l"><button id="sym-apply" class="btn btn-ghost btn-sm" type="button">Apply</button></span></div>
-          </div>
-          <p id="sym-status" class="note"></p>
-        </div>
-        <div class="card-foot">
-          <details id="sym-details" class="ops grow"><summary>Group operations · <span id="sym-count">1</span></summary><div id="sym-list"></div></details>
-        </div>
-      </section>
-
-      <section id="mask" class="card" aria-label="Mask">
-        <div class="card-head">
-          <span class="card-title">Mask · before symmetry</span>
-          <label class="switch" title="Average only the removed voxels, to check what the mask takes out"><input id="mask-removed" type="checkbox" disabled><span class="switch-track"></span><span class="switch-label">Show removed</span></label>
-        </div>
-        <div class="card-body">
-          <div class="fields3">
-            <label class="field" title="Remove measured voxels within this many voxels of unmeasured ones (detector and coverage edges)"><span class="field-label">Edge erosion</span><input id="mask-erode" class="mono" type="number" min="0" max="10" step="1" value="1"></label>
-            <label class="field" title="Remove voxels more than k robust sigmas above the median of their symmetry equivalents; 0 disables"><span class="field-label">Outlier k·σ</span><input id="mask-k" class="mono" type="number" min="0" step="0.5" value="0"></label>
-            <span class="inline"><button id="mask-apply" class="btn btn-ghost btn-sm" type="button">Apply</button><button id="mask-clear" class="btn btn-ghost btn-sm" type="button" disabled>Clear</button></span>
-          </div>
-          <p id="mask-status" class="note">No mask: all measured voxels are used.</p>
-        </div>
-        <div class="card-foot">
-          <span class="field-label grow">Mask file · .npy.gz · 1 edge, 2 outlier</span>
-          <button id="mask-download" class="btn btn-ghost btn-xs" type="button" disabled>Download</button>
-        </div>
-      </section>
-    </div>
-
-    <div id="slices" class="grid3"></div>
-    <div id="view3d"></div>
-    <div id="meta" class="meta-strip"></div>
-
-    <section id="about" class="card" aria-label="Method">
-      <div class="card-head"><span class="card-title">Method</span></div>
-      <div class="method">
-        <section><h3>Slices</h3><p>Each pixel is the equal-weight mean of the unique finite, unmasked voxels in the slab, pooled with all their symmetry equivalents. No smoothing or interpolation; grey means no measured contribution. Click a plot to move the other two slices through that point.</p></section>
-        <section><h3>Symmetry</h3><p>Generators are closed into a group; every operation must map bin centers onto bin centers. The viewer warns when the operations change the cell metric by more than 2%. Oblique axes use the reciprocal metric from the UB matrix.</p></section>
-        <section><h3>Mask</h3><p>Detector edges leave spuriously high values along coverage boundaries. Edge erosion removes measured voxels near unmeasured ones; the outlier cut removes voxels far above the median of their equivalents (1.4826·MAD). It acts before averaging.</p></section>
-        <section><h3>3D view</h3><p>The volume is binned by an odd factor with blocks aligned to the origin, symmetrized and masked the same way, and drawn as a transparent isosurface with the current slices as planes.</p></section>
+<main>
+  <section id="intro" class="stage">
+    <div class="hero">
+      <span class="hero-glyph"><svg width="28" height="28" viewBox="0 0 18 18" fill="currentColor" aria-hidden="true"><circle cx="3.5" cy="3.5" r="1.3"/><circle cx="9" cy="3.5" r="1.3"/><circle cx="14.5" cy="3.5" r="1.3"/><circle cx="3.5" cy="9" r="1.3"/><circle cx="9" cy="9" r="2"/><circle cx="14.5" cy="9" r="1.3"/><circle cx="3.5" cy="14.5" r="1.3"/><circle cx="9" cy="14.5" r="1.3"/><circle cx="14.5" cy="14.5" r="1.3"/></svg></span>
+      <h1>Explore 3-D neutron histograms</h1>
+      <p>Open a Mantid <code>MDHistoWorkspace</code> written by <code>SaveMD</code>, or any NeXus/HDF5 file whose <code>NXdata</code> group holds a 3-D histogram.</p>
+      <div class="hero-actions">
+        <button id="open-intro" class="btn btn-primary btn-lg" type="button">Open .nxs file…</button>
+        <span>or drop it anywhere</span>
       </div>
-    </section>
-  </div>
+      <ul class="features">
+        <li><svg width="16" height="16" viewBox="0 0 18 18" fill="currentColor" aria-hidden="true"><circle cx="3.5" cy="3.5" r="1.3"/><circle cx="9" cy="3.5" r="1.3"/><circle cx="14.5" cy="3.5" r="1.3"/><circle cx="3.5" cy="9" r="1.3"/><circle cx="9" cy="9" r="2"/><circle cx="14.5" cy="9" r="1.3"/><circle cx="3.5" cy="14.5" r="1.3"/><circle cx="9" cy="14.5" r="1.3"/><circle cx="14.5" cy="14.5" r="1.3"/></svg>
+          <div><b>Orthogonal slices</b><span>HK, HL and KL cuts in the true lattice geometry, linked by clicking.</span></div></li>
+        <li><svg width="16" height="16" viewBox="0 0 18 18" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linejoin="round" aria-hidden="true"><path d="M9 1.8 15.3 5.4v7.2L9 16.2 2.7 12.6V5.4Z"/><circle cx="9" cy="9" r="2"/></svg>
+          <div><b>Symmetry averaging</b><span>Any Laue class or your own operations, pooled exactly on the bin grid.</span></div></li>
+        <li><svg width="16" height="16" viewBox="0 0 18 18" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M9 2.5 16 6 9 9.5 2 6Z"/><path d="M3.5 9.25 2 10l7 3.5 7-3.5-1.5-.75"/></svg>
+          <div><b>Artifact masking</b><span>Remove detector-edge voxels and symmetry outliers before averaging.</span></div></li>
+        <li><svg width="16" height="16" viewBox="0 0 18 18" fill="none" stroke="currentColor" stroke-width="1.6" aria-hidden="true"><circle cx="9" cy="9" r="7"/><circle cx="9" cy="9" r="3.6"/><circle cx="9" cy="9" r="0.8" fill="currentColor" stroke="none"/></svg>
+          <div><b>3-D view</b><span>Transparent isosurface with the current slices as planes.</span></div></li>
+      </ul>
+      <p class="privacy">Runs entirely in your browser. The file is never uploaded.</p>
+    </div>
+  </section>
+
+  <section id="loading" class="stage" hidden>
+    <div class="loading-card">
+      <div class="row"><span class="spin"></span><span id="loading-title">Opening file</span></div>
+      <div class="boot-bar"><div id="progress" class="boot-fill"></div></div>
+      <div id="progress-label" class="boot-label">Starting…</div>
+    </div>
+  </section>
+
+  <section id="workspace" class="workspace quad" hidden></section>
 </main>
+
+<div id="error" class="toast" role="alert" hidden><span id="error-text"></span>
+  <button id="error-close" class="icon-btn" type="button" title="Dismiss" aria-label="Dismiss"><svg width="12" height="12" viewBox="0 0 12 12" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" aria-hidden="true"><path d="M2 2l8 8M10 2l-8 8"/></svg></button></div>
+
+<!-- Popovers, positioned under their trigger buttons by app.js -->
+<div id="pop-view" class="popover" role="dialog" aria-label="View options" hidden>
+  <div class="pop-head"><span class="pop-title">View</span></div>
+  <div class="pop-body">
+    <label class="field"><span class="label">View range ± (r.l.u.)</span><input id="limit" class="num" type="number" min="0" step="any" placeholder="full range"></label>
+    <label class="switch"><input id="guides" type="checkbox" checked><span class="switch-track"></span><span class="switch-label">Dashed guides where the other slices cut</span></label>
+    <label id="angles-wrap" class="switch" title="Snap direct-cell angles within 1° of 60°, 90° or 120°"><input id="angles" type="checkbox" checked><span class="switch-track"></span><span class="switch-label">Nominal cell angles (snap to 60°/90°/120°)</span></label>
+  </div>
+</div>
+
+<div id="pop-symmetry" class="popover" role="dialog" aria-label="Symmetry averaging" hidden style="width: 420px">
+  <div class="pop-head"><span class="pop-title">Symmetry averaging</span><span id="sym-badge" class="badge">1</span></div>
+  <div class="pop-body">
+    <label class="field"><span class="label">Laue class</span><select id="sym-preset"></select></label>
+    <div class="field"><label class="label" for="sym-ops">Generators · h,k,l or x,y,z, separated by ;</label>
+      <span class="inline"><input id="sym-ops" class="mono" type="text" spellcheck="false" autocomplete="off" placeholder="-h,-k,-l; h+k,-h,l"><button id="sym-apply" class="btn btn-ghost" type="button">Apply</button></span></div>
+    <p id="sym-status" class="note"></p>
+  </div>
+  <div class="pop-foot"><details id="sym-details" class="ops" style="flex: 1"><summary>Group operations · <span id="sym-count">1</span></summary><div id="sym-list"></div></details></div>
+</div>
+
+<div id="pop-mask" class="popover" role="dialog" aria-label="Mask" hidden style="width: 420px">
+  <div class="pop-head"><span class="pop-title">Mask · applied before symmetry</span>
+    <label class="switch" title="Average only the removed voxels, to check what the mask takes out"><input id="mask-removed" type="checkbox" disabled><span class="switch-track"></span><span class="switch-label">Show removed</span></label></div>
+  <div class="pop-body">
+    <div class="grid2">
+      <label class="field" title="Remove measured voxels within this many voxels of unmeasured ones (detector and coverage edges)"><span class="label">Edge erosion (voxels)</span><input id="mask-erode" class="num" type="number" min="0" max="10" step="1" value="1"></label>
+      <label class="field" title="Remove voxels more than k robust sigmas above the median of their symmetry equivalents; 0 disables"><span class="label">Outlier cut (k·σ)</span><input id="mask-k" class="num" type="number" min="0" step="0.5" value="0"></label>
+    </div>
+    <span class="inline"><button id="mask-apply" class="btn btn-primary" type="button">Apply mask</button><button id="mask-clear" class="btn btn-ghost" type="button" disabled>Clear</button></span>
+    <p id="mask-status" class="note">No mask: all measured voxels are used.</p>
+  </div>
+  <div class="pop-foot"><span class="note" style="flex: 1">Mask file: gzipped .npy in signal order, 1 = edge, 2 = outlier</span>
+    <button id="mask-download" class="btn btn-ghost btn-xs" type="button" disabled>Download</button></div>
+</div>
+
+<div id="pop-info" class="popover" role="dialog" aria-label="Dataset and method" hidden style="width: 480px">
+  <div class="pop-head"><span class="pop-title">Dataset</span></div>
+  <div class="pop-body"><dl id="info-meta" class="kv"></dl></div>
+  <div class="pop-head" style="border-top: 1px solid var(--border)"><span class="pop-title">Method</span></div>
+  <div class="pop-body method">
+    <div><h4>Slices</h4><p>Each pixel is the equal-weight mean of the unique finite, unmasked voxels in the slab, pooled with all their symmetry equivalents. No smoothing or interpolation; grey means no measured contribution.</p></div>
+    <div><h4>Symmetry</h4><p>Generators are closed into a group, and every operation must map bin centers onto bin centers. A warning appears when the operations change the cell metric by more than 2%. Oblique axes use the reciprocal metric from the UB matrix.</p></div>
+    <div><h4>Mask</h4><p>Edge erosion removes measured voxels near unmeasured ones, where detector edges leave spurious values; the outlier cut removes voxels far above the median of their equivalents (1.4826·MAD). The mask acts before averaging.</p></div>
+    <div><h4>3-D view</h4><p>The volume is binned by an odd factor with blocks aligned to the origin, symmetrized and masked the same way, and drawn as a transparent isosurface with the current slices as planes.</p></div>
+  </div>
+</div>
+
+<div id="pop-3d" class="popover" role="dialog" aria-label="3-D view options" hidden style="width: 300px">
+  <div class="pop-head"><span class="pop-title">3-D view</span></div>
+  <div class="pop-body">
+    <div class="field"><span class="label">Isosurface grid</span>
+      <div id="iso-grid" class="segmented" data-value="100"><button type="button" data-value="64">Coarse</button><button type="button" data-value="100" class="on">Medium</button><button type="button" data-value="150">Fine</button></div></div>
+    <label class="switch"><input id="iso-slices" type="checkbox" checked><span class="switch-track"></span><span class="switch-label">Show the three slices</span></label>
+    <p class="note">Drag to rotate, scroll to zoom, right-drag to pan.</p>
+  </div>
+</div>
+
 <script type="module" src="js/app.js"></script>
 </body>
 </html>

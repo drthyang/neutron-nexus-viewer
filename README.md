@@ -8,17 +8,22 @@ The file is read in your browser by [h5wasm](https://github.com/usnistgov/h5wasm
 
 ## Using it
 
-- **Open a file** with the button or drag it onto the page. The histogram is loaded into memory as float32: a 401³ volume needs about 260 MB and takes 1–2 s to read.
-- **Slices**: each panel has a center and full-thickness control for its integrated axis. Bins whose centers lie within thickness/2 of the center are averaged, exactly as in the original Python viewer. Slices update live while you drag.
-- **Layout**: by default one slice is enlarged over two columns with the other two stacked beside it; the corner button on each panel enlarges it, and on the enlarged panel returns to three slices side by side. Below 1180 px wide the slices stack in one column.
-- **Zoom**: drag a box on a slice to zoom into it (with oblique axes the zoom window is the H–K range enclosing the box, previewed while dragging). Double-click or *Reset zoom* returns to the full view.
-- **Click a plot** to move the other two slices through that point. Dashed guides show where they cut.
-- **Color**: colormap, asinh, linear or log scale, vmin/vmax, and asinh softening. *Auto range* sets vmax to the 97th percentile and softening to the median of the positive values in the current slices.
-- **Symmetry**: pick a Laue class or type generators (see below). Slices and the 3-D view pool every voxel with its symmetry equivalents. The default is no symmetry, so the data are shown as measured.
-- **Mask**: removes spurious voxels from the unsymmetrized data before averaging (see below). *Show removed* averages only the removed voxels, so you can check what the mask takes out. *Download* saves the mask as a gzipped NumPy `.npy`.
-- **3-D view**: a transparent isosurface of the binned volume with the three current slices as planes, drawn in the lattice geometry and clipped to the view range. Set the level (typed or on a log slider), the surface and slice opacity (lower slice opacity makes the planes see-through), and the grid (about 64, 100 or 150 blocks per axis); drag to rotate, scroll to zoom, right-drag to pan.
-- **Cell angles**: axes are drawn with the reciprocal metric from the UB matrix in the file (or its stored unit cell when there is no UB). *Nominal* snaps direct-cell angles within 1° of 60°, 90° or 120° (for example, 90/90/120 for a hexagonal cell). *Measured* uses them as derived.
-- **Save PNG** exports a panel at 3× resolution with its colorbar, without guides.
+The page is a full-window workspace: a top bar (dataset, symmetry and mask chips, layout, info), a toolbar with the shared color scale, and four views (HK, HL, KL and 3-D). Below 1000 px wide, or on short screens, the views stack and the page scrolls.
+
+- **Open a file** with the dataset button or drag it onto the page. The histogram is loaded into memory as float32: a 401³ volume needs about 260 MB and takes 1–2 s to read.
+- **Layout**: *Quad* shows the four views in a 2×2 grid; *Focus* enlarges one view with the other three stacked beside it; *Single* shows one view. Each view's header has buttons to focus or maximize it; double-clicking a header maximizes it, and Esc returns.
+- **Slices**: each view's footer sets the slab center and full thickness of its integrated axis. Bins whose centers lie within thickness/2 of the center are averaged, exactly as in the original Python viewer. Slices update live while you drag. Hovering shows the coordinates, value and pooled voxel count.
+- **Clicking a slice** has two modes, switched in the toolbar:
+  - *Navigate* (default): click, or drag, to move the other two slices so all three intersect at the pointer. Dashed guides show where they cut.
+  - *Zoom*: drag a rectangle to zoom into it (with oblique axes the window is the H–K range enclosing the box, previewed while dragging); a plain click zooms in 2× around the point.
+  - In both modes, double-click or *Reset zoom* returns to the full view.
+- **Color** (toolbar): colormap, vmin/vmax around the shared colorbar, asinh, linear or log scale, and asinh softening. *Auto range* sets vmax to the 97th percentile and softening to the median of the positive values in the current slices.
+- **View** (toolbar): view range ±, dashed guides, and *Nominal cell angles*. Axes are drawn with the reciprocal metric from the UB matrix in the file (or its stored unit cell when there is no UB); nominal angles snap direct-cell angles within 1° of 60°, 90° or 120° (for example, 90/90/120 for a hexagonal cell).
+- **Symmetry** (top-bar chip): pick a Laue class or type generators (see below). Slices and the 3-D view pool every voxel with its symmetry equivalents. The default is no symmetry, so the data are shown as measured.
+- **Mask** (top-bar chip): removes spurious voxels from the unsymmetrized data before averaging (see below). *Show removed* averages only the removed voxels, so you can check what the mask takes out. *Download* saves the mask as a gzipped NumPy `.npy`.
+- **3-D view**: a transparent isosurface of the binned volume with the three current slices as planes, drawn in the lattice geometry and clipped to the view range. The footer sets the level (log slider or typed) and the surface and slice opacity (lower slice opacity makes the planes see-through); the options button sets the grid (about 64, 100 or 150 blocks per axis) and hides the slices. Drag to rotate, scroll to zoom, right-drag to pan.
+- **Info** (ⓘ): file, axes, grid, cell, measured fraction, current symmetry and mask, and a summary of the method.
+- **Save PNG** (camera button) exports a view at 3× resolution; slice exports include a title and their own colorbar, without guides.
 - **Remote files**: `?url=https://…/file.nxs` downloads and opens a file. The host must allow cross-origin requests.
 
 ## Supported files
