@@ -14,7 +14,7 @@
 } }
 </script>
 <style>
-/* Light variant of the nebula3d console design system, as a full-window workspace. */
+/* Light variant of the nebula3d console design system: top bar, control panel, workspace. */
 :root {
   --bg: #eef1f5;
   --surface: #ffffff;
@@ -31,6 +31,8 @@
   --accent-soft: rgba(47, 116, 230, 0.1);
   --accent-line: rgba(47, 116, 230, 0.35);
   --green: #13a36b;
+  --green-soft: rgba(19, 163, 107, 0.1);
+  --green-line: rgba(19, 163, 107, 0.35);
   --amber: #c98a1b;
   --red: #d64545;
   --hue-0: #d98a0b;
@@ -41,7 +43,7 @@
   --shadow-1: 0 1px 2px rgba(16, 24, 40, 0.05);
   --shadow-2: 0 12px 32px rgba(16, 24, 40, 0.14), 0 2px 6px rgba(16, 24, 40, 0.06);
   --topbar: 52px;
-  --toolbar: 46px;
+  --panel: 320px;
   --font-mono: ui-monospace, "SF Mono", "JetBrains Mono", Menlo, Consolas, monospace;
   color-scheme: light;
 }
@@ -91,11 +93,13 @@ input[type=range]::-webkit-slider-thumb:hover { transform: scale(1.15); }
 input[type=range]::-moz-range-thumb { width: 14px; height: 14px; border-radius: 50%; background: #fff; border: 1px solid var(--border-strong); box-shadow: 0 1px 3px rgba(16, 24, 40, 0.25); }
 input[type=range]::-moz-range-track { background: transparent; }
 .segmented { display: inline-flex; flex: none; background: var(--surface-2); border: 1px solid var(--border-strong); border-radius: var(--radius-sm); padding: 2px; gap: 2px; height: 30px; }
-.segmented button { display: inline-flex; align-items: center; gap: 6px; border: none; background: transparent; color: var(--text-2); border-radius: 5px; padding: 0 10px; font-size: 12px; font-weight: 550; cursor: pointer; white-space: nowrap; transition: background 120ms ease, color 120ms ease; }
+.segmented button { display: inline-flex; align-items: center; justify-content: center; gap: 6px; border: none; background: transparent; color: var(--text-2); border-radius: 5px; padding: 0 10px; font-size: 12px; font-weight: 550; cursor: pointer; white-space: nowrap; transition: background 120ms ease, color 120ms ease; }
 .segmented button:hover { color: var(--text); }
 .segmented button.on { background: var(--surface); color: var(--text); box-shadow: 0 1px 2px rgba(16, 24, 40, 0.12), 0 0 0 1px var(--border); }
 .segmented.accent button.on { background: var(--accent); color: #fff; box-shadow: none; }
 .segmented.icons button { padding: 0 7px; }
+.segmented.fill { display: flex; width: 100%; }
+.segmented.fill button { flex: 1; }
 .switch { display: inline-flex; align-items: center; gap: 8px; cursor: pointer; user-select: none; }
 .switch input { position: absolute; opacity: 0; width: 0; height: 0; }
 .switch-track { width: 30px; height: 17px; border-radius: 9px; background: var(--surface-3); border: 1px solid var(--border-strong); position: relative; flex: none; transition: background 140ms ease, border-color 140ms ease; }
@@ -104,7 +108,7 @@ input[type=range]::-moz-range-track { background: transparent; }
 .switch input:checked + .switch-track::after { transform: translateX(13px); }
 .switch input:focus-visible + .switch-track { outline: 2px solid var(--accent); outline-offset: 2px; }
 .switch input:disabled + .switch-track { opacity: 0.5; }
-.switch-label { font-size: 12.5px; color: var(--text-2); white-space: nowrap; }
+.switch-label { font-size: 12.5px; color: var(--text-2); }
 .btn {
   display: inline-flex; align-items: center; justify-content: center; gap: 7px; height: 30px; border-radius: var(--radius-sm); padding: 0 12px;
   font-size: 12.5px; font-weight: 600; cursor: pointer; border: 1px solid transparent; white-space: nowrap;
@@ -117,7 +121,7 @@ input[type=range]::-moz-range-track { background: transparent; }
 .btn-ghost:not(:disabled):hover { color: var(--text); border-color: var(--text-3); }
 .btn-lg { height: 38px; padding: 0 18px; font-size: 13.5px; }
 .btn-xs { height: 24px; padding: 0 8px; font-size: 11px; border-radius: 6px; }
-.icon-btn { display: inline-grid; place-items: center; width: 26px; height: 26px; padding: 0; border-radius: 6px; border: 1px solid transparent; background: transparent; color: var(--text-3); cursor: pointer; flex: none; }
+.icon-btn { display: inline-grid; place-items: center; width: 28px; height: 28px; padding: 0; border-radius: 6px; border: 1px solid transparent; background: transparent; color: var(--text-3); cursor: pointer; flex: none; }
 .icon-btn:hover { color: var(--text); background: var(--surface-3); }
 .icon-btn.on { color: var(--accent-hi); background: var(--accent-soft); }
 .label { font-size: 10px; font-weight: 650; letter-spacing: 0.07em; text-transform: uppercase; color: var(--text-3); white-space: nowrap; }
@@ -141,7 +145,7 @@ input[type=range]::-moz-range-track { background: transparent; }
 .brand b { font-size: 14px; font-weight: 700; text-transform: uppercase; letter-spacing: 0.06em; white-space: nowrap; }
 .vdiv { width: 1px; height: 22px; background: var(--border); flex: none; }
 .dataset-button {
-  display: flex; align-items: center; gap: 8px; min-width: 140px; max-width: 380px; height: 32px; padding: 0 10px; border-radius: 8px;
+  display: flex; align-items: center; gap: 8px; min-width: 140px; max-width: 420px; height: 32px; padding: 0 10px; border-radius: 8px;
   background: var(--surface-2); border: 1px solid var(--border-strong); cursor: pointer; font-size: 12.5px; font-weight: 600;
 }
 .dataset-button:hover { border-color: var(--accent); background: var(--surface-3); }
@@ -151,54 +155,74 @@ input[type=range]::-moz-range-track { background: transparent; }
 .ident .dot { color: var(--text-3); font-weight: 300; }
 .pill { display: inline-flex; align-items: center; height: 22px; padding: 0 8px; border-radius: 999px; background: var(--surface-2); border: 1px solid var(--border); font-family: var(--font-mono); font-size: 11px; color: var(--text-2); white-space: nowrap; }
 .spacer { flex: 1; min-width: 8px; }
-.chip {
-  display: inline-flex; align-items: center; gap: 7px; height: 30px; padding: 0 10px; border-radius: 8px; border: 1px solid var(--border-strong);
-  background: var(--surface); cursor: pointer; font-size: 12px; color: var(--text-2); white-space: nowrap;
-}
-.chip:hover { border-color: var(--text-3); color: var(--text); }
-.chip b { font-weight: 650; color: var(--text); font-family: var(--font-mono); font-size: 11.5px; }
-.chip.active { background: var(--accent-soft); border-color: var(--accent-line); color: var(--accent-hi); }
-.chip.active b { color: var(--accent-hi); }
-.chip[aria-expanded="true"] { border-color: var(--accent); box-shadow: 0 0 0 3px var(--accent-soft); }
 .status { display: flex; align-items: center; gap: 7px; font-size: 11.5px; color: var(--text-3); white-space: nowrap; }
 .status-dot { width: 7px; height: 7px; border-radius: 50%; background: var(--text-3); flex: none; }
 .status-dot.ok { background: var(--green); box-shadow: 0 0 6px rgba(19, 163, 107, 0.5); }
 .status-dot.busy { background: var(--accent); animation: pulse 1.6s ease-out infinite; }
 @keyframes pulse { 0% { box-shadow: 0 0 0 0 rgba(47, 116, 230, 0.45); } 70% { box-shadow: 0 0 0 6px rgba(47, 116, 230, 0); } 100% { box-shadow: 0 0 0 0 rgba(47, 116, 230, 0); } }
 
-/* ---- toolbar --------------------------------------------------------------------- */
-.toolbar { position: relative; z-index: 20; display: flex; align-items: center; gap: 10px; height: var(--toolbar); padding: 0 16px; background: var(--surface); border-bottom: 1px solid var(--border); overflow-x: auto; }
-.tgroup { display: flex; align-items: center; gap: 8px; flex: none; }
-.cbar { display: flex; align-items: center; gap: 6px; }
-.cbar input { width: 64px; }
-.cbar canvas { width: 130px; height: 10px; border-radius: 3px; border: 1px solid var(--border); }
-#soft-wrap input { width: 56px; }
-
-/* ---- popovers ---------------------------------------------------------------------- */
-.pop-wrap { position: relative; flex: none; display: inline-flex; }
-.popover {
-  position: fixed; z-index: 50; width: 380px; max-width: calc(100vw - 24px); max-height: calc(100vh - 80px); overflow: auto;
-  background: var(--surface); border: 1px solid var(--border); border-radius: 12px; box-shadow: var(--shadow-2);
-}
-.pop-head { display: flex; align-items: center; justify-content: space-between; gap: 10px; padding: 12px 14px; border-bottom: 1px solid var(--border); }
-.pop-title { font-size: 12.5px; font-weight: 650; }
-.pop-body { padding: 14px; display: flex; flex-direction: column; gap: 12px; }
-.pop-foot { display: flex; align-items: center; gap: 10px; padding: 10px 14px; background: var(--surface-2); border-top: 1px solid var(--border); }
-.field { display: flex; flex-direction: column; gap: 6px; min-width: 0; }
-.grid2 { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 12px; }
+/* ---- app body: control panel + work area ------------------------------------------- */
+.app { display: grid; grid-template-columns: var(--panel) minmax(0, 1fr); height: calc(100vh - var(--topbar)); height: calc(100dvh - var(--topbar)); }
+body.panel-collapsed .app { grid-template-columns: 0 minmax(0, 1fr); }
+body.panel-collapsed .panel { visibility: hidden; }
+.panel { min-height: 0; overflow-y: auto; background: var(--surface); border-right: 1px solid var(--border); }
+.psec { border-bottom: 1px solid var(--border); }
+.psec-head { display: flex; align-items: center; gap: 8px; width: 100%; height: 42px; padding: 0 16px; border: 0; background: transparent; cursor: pointer; text-align: left; }
+.psec-head:hover .psec-title { color: var(--text); }
+.psec-head .chev { color: var(--text-3); transition: transform 140ms ease; }
+.psec.collapsed .psec-head .chev { transform: rotate(-90deg); }
+.psec.collapsed .psec-body { display: none; }
+.psec-sum { margin-left: auto; min-width: 0; font-family: var(--font-mono); font-size: 10.5px; color: var(--text-3); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.psec:not(.collapsed) .psec-sum { display: none; }
+.psec-title { font-size: 10.5px; font-weight: 700; letter-spacing: 0.08em; text-transform: uppercase; color: var(--text-2); }
+.psec-body { display: flex; flex-direction: column; gap: 12px; padding: 0 16px 16px; }
+.sub { display: flex; flex-direction: column; gap: 10px; padding: 12px; border: 1px solid var(--border); border-radius: var(--radius); background: var(--surface-2); scroll-margin-top: 12px; }
+.sub.active { border-color: var(--accent-line); background: #f6f9ff; }
+.sub.active.mask-on { border-color: var(--green-line); background: #f4fbf8; }
+.sub-head { display: flex; align-items: center; gap: 8px; }
+.sub-title { font-size: 12.5px; font-weight: 650; }
+.sub-hint { font-size: 11px; color: var(--text-3); line-height: 1.45; margin: -4px 0 0; }
+.state { margin-left: auto; display: inline-flex; align-items: center; height: 20px; padding: 0 8px; border-radius: 999px; font-family: var(--font-mono); font-size: 10.5px; font-weight: 650; background: var(--surface-3); color: var(--text-3); white-space: nowrap; }
+.state.on { background: var(--accent); color: #fff; }
+.state.ok { background: var(--green); color: #fff; }
+.state.busy { background: var(--accent-soft); color: var(--accent-hi); }
+.prow { display: grid; grid-template-columns: 78px minmax(0, 1fr); align-items: center; gap: 10px; }
+.prow > .plabel { font-size: 12px; color: var(--text-2); }
+.pair { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 10px; }
 .inline { display: flex; gap: 8px; align-items: center; }
-.inline > input { flex: 1; }
+.inline > input, .inline > select { flex: 1; }
+.kv { display: grid; grid-template-columns: 70px minmax(0, 1fr); gap: 6px 10px; margin: 0; }
+.kv dt { font-size: 11.5px; color: var(--text-3); }
+.kv dd { margin: 0; font-family: var(--font-mono); font-size: 11.5px; color: var(--text); line-height: 1.5; word-break: break-word; }
 .ops { font-size: 11px; color: var(--text-3); }
-.ops summary { cursor: pointer; font-size: 10px; font-weight: 650; letter-spacing: 0.07em; text-transform: uppercase; }
+.ops summary { cursor: pointer; font-size: 11.5px; color: var(--text-2); }
 .ops div { margin-top: 8px; font-family: var(--font-mono); line-height: 1.8; word-spacing: 6px; color: var(--text-2); }
-.kv { display: grid; grid-template-columns: max-content minmax(0, 1fr); gap: 6px 14px; margin: 0; }
-.kv dt { font-size: 10px; font-weight: 650; letter-spacing: 0.07em; text-transform: uppercase; color: var(--text-3); padding-top: 2px; }
-.kv dd { margin: 0; font-family: var(--font-mono); font-size: 11.5px; color: var(--text-2); word-break: break-word; }
-.method h4 { margin: 0 0 3px; font-size: 10px; font-weight: 650; letter-spacing: 0.07em; text-transform: uppercase; color: var(--text-2); }
-.method p { margin: 0; font-size: 12px; line-height: 1.55; color: var(--text-3); }
+.cbar-panel { display: block; width: 100%; height: 10px; border-radius: 3px; border: 1px solid var(--border); }
+.flash { animation: flash 1.2s ease; }
+@keyframes flash { 0%, 40% { box-shadow: 0 0 0 3px var(--accent-soft); border-color: var(--accent); } }
 
-/* ---- workspace and views ------------------------------------------------------------ */
-.workspace { height: calc(100vh - var(--topbar) - var(--toolbar)); height: calc(100dvh - var(--topbar) - var(--toolbar)); padding: 10px; display: grid; gap: 10px; }
+/* Pipeline: measured -> mask -> symmetry -> views */
+.pipeline { list-style: none; margin: 0; padding: 0; display: flex; flex-direction: column; }
+.pipeline li { position: relative; display: grid; grid-template-columns: 18px minmax(0, 1fr) auto; align-items: center; gap: 10px; min-height: 34px; padding: 4px 8px 4px 4px; border-radius: 8px; }
+.pipeline li[data-target] { cursor: pointer; }
+.pipeline li[data-target]:hover { background: var(--surface-2); }
+.pipeline li::before { content: ""; position: absolute; left: 12px; top: -4px; bottom: -4px; width: 2px; background: var(--border); z-index: 0; }
+.pipeline li:first-child::before { top: 50%; }
+.pipeline li:last-child::before { bottom: 50%; }
+.pipe-dot { position: relative; z-index: 1; width: 12px; height: 12px; margin-left: 3px; border-radius: 50%; background: var(--surface); border: 2px solid var(--border-strong); }
+.pipeline li.on .pipe-dot { border-color: var(--accent); background: var(--accent); }
+.pipeline li.ok .pipe-dot { border-color: var(--green); background: var(--green); }
+.pipe-name { font-size: 12.5px; font-weight: 600; }
+.pipe-name small { display: block; font-weight: 400; font-size: 11px; color: var(--text-3); font-family: var(--font-mono); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.pipeline li.off .pipe-name { color: var(--text-2); }
+
+/* ---- work area: header row + views --------------------------------------------------- */
+.work { display: flex; flex-direction: column; min-width: 0; min-height: 0; }
+.work-head { display: flex; align-items: center; gap: 12px; height: 48px; padding: 0 12px; flex: none; }
+.legend { display: flex; align-items: center; gap: 8px; min-width: 0; font-family: var(--font-mono); font-size: 11px; color: var(--text-2); }
+.legend canvas { width: 160px; height: 10px; border-radius: 3px; border: 1px solid var(--border); }
+.legend .scale-name { color: var(--text-3); }
+.workspace { flex: 1; min-height: 0; padding: 0 10px 10px; display: grid; gap: 10px; }
 .workspace.quad { grid-template-columns: repeat(2, minmax(0, 1fr)); grid-template-rows: repeat(2, minmax(0, 1fr)); }
 .workspace.focus { grid-template-columns: minmax(0, 2.2fr) minmax(0, 1fr); grid-template-rows: repeat(3, minmax(0, 1fr)); }
 .workspace.focus > .view.primary { grid-column: 1; grid-row: 1 / 4; }
@@ -211,10 +235,9 @@ input[type=range]::-moz-range-track { background: transparent; }
 .view-title { font-size: 12.5px; font-weight: 650; white-space: nowrap; }
 .view-pos { font-family: var(--font-mono); font-size: 11.5px; color: var(--text-2); white-space: nowrap; }
 .view-angle { font-family: var(--font-mono); font-size: 10.5px; color: var(--text-3); padding: 1px 6px; border-radius: 5px; background: var(--surface-2); border: 1px solid var(--border-subtle); white-space: nowrap; }
-.cell-chip b { font-weight: 550; letter-spacing: -0.01em; }
-.cell-wrap[data-has-cell=""] { display: none !important; }
 .view-caption { flex: 1; min-width: 0; text-align: right; font-family: var(--font-mono); font-size: 10.5px; color: var(--text-3); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .view-actions { display: flex; align-items: center; gap: 2px; flex: none; }
+.view-actions .icon-btn { width: 26px; height: 26px; }
 .view-body { position: relative; flex: 1; min-height: 0; }
 .view-body canvas { position: absolute; inset: 0; width: 100%; height: 100%; display: block; }
 .view-body canvas.plot { cursor: crosshair; touch-action: none; }
@@ -236,6 +259,18 @@ input[type=range]::-moz-range-track { background: transparent; }
 .view-foot input.foot-fixed { flex: none; width: 90px; }
 .view-foot input.foot-fixed.short { width: 64px; }
 .cut--0 { --accent: var(--hue-0); } .cut--1 { --accent: var(--hue-1); } .cut--2 { --accent: var(--hue-2); }
+
+/* ---- popovers ---------------------------------------------------------------------- */
+.popover {
+  position: fixed; z-index: 50; width: 380px; max-width: calc(100vw - 24px); max-height: calc(100vh - 80px); overflow: auto;
+  background: var(--surface); border: 1px solid var(--border); border-radius: 12px; box-shadow: var(--shadow-2);
+}
+.pop-head { display: flex; align-items: center; justify-content: space-between; gap: 10px; padding: 12px 14px; border-bottom: 1px solid var(--border); }
+.pop-title { font-size: 12.5px; font-weight: 650; }
+.pop-body { padding: 14px; display: flex; flex-direction: column; gap: 12px; }
+.field { display: flex; flex-direction: column; gap: 6px; min-width: 0; }
+.method h4 { margin: 0 0 3px; font-size: 10px; font-weight: 650; letter-spacing: 0.07em; text-transform: uppercase; color: var(--text-2); }
+.method p { margin: 0; font-size: 12px; line-height: 1.55; color: var(--text-3); }
 
 /* ---- start, loading, toast --------------------------------------------------------- */
 .stage { height: calc(100vh - var(--topbar)); height: calc(100dvh - var(--topbar)); display: grid; place-items: center; padding: 24px; overflow: auto; }
@@ -266,21 +301,21 @@ body.dragging::after {
 }
 @media (prefers-reduced-motion: reduce) { * { animation: none !important; transition: none !important; } }
 
-/* ---- smaller screens: views stack and the page scrolls ------------------------------ */
+/* ---- smaller screens ----------------------------------------------------------------- */
 @media (max-width: 1280px) {
+  :root { --panel: 292px; }
   .hide-md { display: none !important; }
-}
-@media (max-width: 1180px) {
-  .cell-wrap { display: none !important; }
 }
 @media (max-width: 1000px), (max-height: 640px) {
   body { overflow: auto; }
-  .workspace { height: auto; display: flex; flex-direction: column; }
+  .app, body.panel-collapsed .app { display: block; height: auto; }
+  .panel { border-right: 0; border-bottom: 1px solid var(--border); overflow: visible; }
+  body.panel-collapsed .panel { display: none; }
+  .workspace { display: flex; flex-direction: column; padding: 0 10px 10px; }
   .workspace .view, .workspace.focus > .view:not(.primary), .workspace.single > .view:not(.primary) { display: flex; height: 460px; }
   .workspace .view .view-foot { display: flex !important; }
-  .layout-control, .chip-text { display: none !important; }
-  .toolbar { height: auto; flex-wrap: wrap; padding-top: 8px; padding-bottom: 8px; row-gap: 8px; overflow: visible; }
-  .toolbar .spacer { display: none; }
+  .layout-control { display: none !important; }
+  .work-head { flex-wrap: wrap; height: auto; padding: 10px; }
   .stage { height: auto; min-height: calc(100vh - var(--topbar)); }
 }
 @media (max-width: 640px) {
@@ -288,7 +323,7 @@ body.dragging::after {
   .brand b, .ident, .status-text, .hide-sm { display: none !important; }
   .hero { padding: 28px 20px; }
   .features { grid-template-columns: minmax(0, 1fr); }
-  .toolbar { padding: 0 10px; }
+  .legend canvas { width: 100px; }
 }
 </style>
 </head>
@@ -306,164 +341,163 @@ body.dragging::after {
     <span id="dataset-name">Open .nxs file…</span>
   </button>
   <input id="file" type="file" accept=".nxs,.nx5,.h5,.hdf5,.hdf" hidden>
-  <span id="ident" class="ident hide-md" hidden></span>
-  <span id="ident-grid" class="pill hide-md" hidden></span>
-  <span class="pop-wrap cell-wrap" data-loaded hidden>
-    <button id="cell-pill" class="chip cell-chip" type="button" aria-haspopup="dialog" aria-expanded="false" data-pop="pop-info">
-      <svg width="15" height="15" viewBox="0 0 18 18" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linejoin="round" aria-hidden="true"><path d="M3 12.5 6.5 4h9L12 12.5Z"/><path d="M3 12.5 5 15.5h9l-2-3M15.5 4l2 3-3.5 8.5" opacity="0.55"/></svg>
-      <b id="cell-pill-value">no cell</b>
-    </button>
-  </span>
-
+  <span id="ident" class="ident hide-md" data-loaded hidden></span>
+  <span id="ident-grid" class="pill hide-md" data-loaded hidden></span>
   <span class="spacer"></span>
-
-  <span class="pop-wrap" data-loaded hidden>
-    <button id="sym-chip" class="chip" type="button" aria-haspopup="dialog" aria-expanded="false" data-pop="pop-symmetry">
-      <svg width="15" height="15" viewBox="0 0 18 18" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linejoin="round" aria-hidden="true"><path d="M9 1.8 15.3 5.4v7.2L9 16.2 2.7 12.6V5.4Z"/><circle cx="9" cy="9" r="2"/></svg>
-      <span class="chip-text">Symmetry</span><b id="sym-chip-value">none</b>
-    </button>
-  </span>
-  <span class="pop-wrap" data-loaded hidden>
-    <button id="mask-chip" class="chip" type="button" aria-haspopup="dialog" aria-expanded="false" data-pop="pop-mask">
-      <svg width="15" height="15" viewBox="0 0 18 18" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M9 2.5 16 6 9 9.5 2 6Z"/><path d="M3.5 9.25 2 10l7 3.5 7-3.5-1.5-.75"/><path d="M3.5 13.25 2 14l7 3.5 7-3.5-1.5-.75" opacity="0.55"/></svg>
-      <span class="chip-text">Mask</span><b id="mask-chip-value">off</b>
-    </button>
-  </span>
-  <span class="vdiv layout-control" data-loaded hidden></span>
-  <div id="layout" class="segmented icons layout-control" data-value="quad" role="group" aria-label="Layout" data-loaded hidden>
-    <button type="button" data-value="quad" class="on" title="Four views">
-      <svg width="15" height="15" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.5" aria-hidden="true"><rect x="1.75" y="1.75" width="5.5" height="5.5" rx="1"/><rect x="8.75" y="1.75" width="5.5" height="5.5" rx="1"/><rect x="1.75" y="8.75" width="5.5" height="5.5" rx="1"/><rect x="8.75" y="8.75" width="5.5" height="5.5" rx="1"/></svg></button>
-    <button type="button" data-value="focus" title="One large view with the others beside it">
-      <svg width="15" height="15" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.5" aria-hidden="true"><rect x="1.75" y="1.75" width="8" height="12.5" rx="1"/><rect x="11.25" y="1.75" width="3" height="3.4" rx="0.8"/><rect x="11.25" y="6.3" width="3" height="3.4" rx="0.8"/><rect x="11.25" y="10.85" width="3" height="3.4" rx="0.8"/></svg></button>
-    <button type="button" data-value="single" title="One view (Esc to return)">
-      <svg width="15" height="15" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.5" aria-hidden="true"><rect x="1.75" y="1.75" width="12.5" height="12.5" rx="1"/></svg></button>
-  </div>
-  <span class="vdiv hide-sm"></span>
   <span class="status" title="Everything runs in this browser tab"><span id="status-dot" class="status-dot"></span><span id="status-text" class="status-text">ready</span></span>
-  <span class="pop-wrap" data-loaded hidden>
-    <button class="icon-btn" type="button" title="Dataset and method" aria-haspopup="dialog" aria-expanded="false" data-pop="pop-info">
-      <svg width="16" height="16" viewBox="0 0 18 18" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" aria-hidden="true"><circle cx="9" cy="9" r="7"/><path d="M9 8.2v4.3"/><circle cx="9" cy="5.6" r="0.6" fill="currentColor"/></svg>
-    </button>
-  </span>
+  <button class="icon-btn" type="button" title="Dataset details and method" aria-haspopup="dialog" aria-expanded="false" data-pop="pop-info" data-loaded hidden>
+    <svg width="16" height="16" viewBox="0 0 18 18" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" aria-hidden="true"><circle cx="9" cy="9" r="7"/><path d="M9 8.2v4.3"/><circle cx="9" cy="5.6" r="0.6" fill="currentColor"/></svg>
+  </button>
   <a class="icon-btn" href="https://github.com/drthyang/neutron-nexus-viewer" title="Source on GitHub" aria-label="Source on GitHub">
     <svg width="16" height="16" viewBox="0 0 16 16" fill="currentColor" aria-hidden="true"><path d="M8 0C3.58 0 0 3.58 0 8c0 3.54 2.29 6.53 5.47 7.59.4.07.55-.17.55-.38 0-.19-.01-.82-.01-1.49-2.01.37-2.53-.49-2.69-.94-.09-.23-.48-.94-.82-1.13-.28-.15-.68-.52-.01-.53.63-.01 1.08.58 1.23.82.72 1.21 1.87.87 2.33.66.07-.52.28-.87.51-1.07-1.78-.2-3.64-.89-3.64-3.95 0-.87.31-1.59.82-2.15-.08-.2-.36-1.02.08-2.12 0 0 .67-.21 2.2.82.64-.18 1.32-.27 2-.27.68 0 1.36.09 2 .27 1.53-1.04 2.2-.82 2.2-.82.44 1.1.16 1.92.08 2.12.51.56.82 1.27.82 2.15 0 3.07-1.87 3.75-3.65 3.95.29.25.54.73.54 1.48 0 1.07-.01 1.93-.01 2.2 0 .21.15.46.55.38A8.013 8.013 0 0016 8c0-4.42-3.58-8-8-8z"/></svg>
   </a>
 </header>
 
-<div id="toolbar" class="toolbar" hidden>
-  <span class="tgroup">
-    <select id="cmap" aria-label="Colormap" title="Colormap"></select>
-    <span class="cbar" title="Color range: the values at the two ends of the colormap">
-      <input id="vmin" class="num" type="number" step="any" aria-label="vmin">
-      <canvas id="cmap-bar" width="256" height="1" aria-hidden="true"></canvas>
-      <input id="vmax" class="num" type="number" step="any" aria-label="vmax">
-    </span>
-  </span>
-  <span class="tgroup">
-    <div id="scale" class="segmented" data-value="asinh" role="group" aria-label="Color scale"><button type="button" data-value="asinh" class="on">Asinh</button><button type="button" data-value="linear">Linear</button><button type="button" data-value="log">Log</button></div>
-    <label id="soft-wrap" class="tgroup" title="Asinh softening: values below it are shown nearly linearly"><span class="label">Soft</span><input id="soft" class="num" type="number" min="0" step="any"></label>
-    <button id="auto" class="btn btn-ghost" type="button" title="vmin 0, vmax at the 97th percentile and softening at the median of positive values in the current slices">
-      <svg width="14" height="14" viewBox="0 0 18 18" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linejoin="round" aria-hidden="true"><path d="M9 2.2c.4 2.9 1.9 4.4 4.8 4.8-2.9.4-4.4 1.9-4.8 4.8-.4-2.9-1.9-4.4-4.8-4.8C7.1 6.6 8.6 5.1 9 2.2Z"/><path d="M14 11.5c.2 1.3.9 2 2.2 2.2-1.3.2-2 .9-2.2 2.2-.2-1.3-.9-2-2.2-2.2 1.3-.2 2-.9 2.2-2.2Z"/></svg>
-      <span class="hide-md">Auto range</span></button>
-  </span>
-  <span class="vdiv"></span>
-  <span class="pop-wrap">
-    <button class="chip" type="button" aria-haspopup="dialog" aria-expanded="false" data-pop="pop-view">
-      <svg width="15" height="15" viewBox="0 0 18 18" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" aria-hidden="true"><path d="M2.5 5h13M2.5 9h13M2.5 13h13"/><circle cx="6" cy="5" r="1.6" fill="#fff"/><circle cx="12" cy="9" r="1.6" fill="#fff"/><circle cx="8" cy="13" r="1.6" fill="#fff"/></svg>
-      View <b id="view-chip-value">full</b>
-    </button>
-  </span>
-  <span class="spacer"></span>
-  <span class="tgroup">
-    <span class="label hide-md">Click</span>
-    <div id="click-mode" class="segmented accent" data-value="navigate" role="group" aria-label="Clicking a slice">
-      <button type="button" data-value="navigate" class="on" title="Click or drag: move the other two slices through the point">
-        <svg width="14" height="14" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" aria-hidden="true"><circle cx="8" cy="8" r="4.5"/><path d="M8 1v3M8 12v3M1 8h3M12 8h3"/></svg><span class="hide-md">Navigate</span></button>
-      <button type="button" data-value="zoom" title="Drag a rectangle to zoom into it; click to zoom in 2×; double-click for the full view">
-        <svg width="14" height="14" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" aria-hidden="true"><circle cx="7" cy="7" r="4.8"/><path d="M10.5 10.5 14.5 14.5M7 4.8v4.4M4.8 7h4.4"/></svg><span class="hide-md">Zoom</span></button>
-      <button type="button" data-value="move" title="Drag to move the visible region; double-click for the full view">
-        <svg width="14" height="14" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M8 1.5v13M1.5 8h13M8 1.5 6 3.5M8 1.5l2 2M8 14.5l-2-2M8 14.5l2-2M1.5 8l2-2M1.5 8l2 2M14.5 8l-2-2M14.5 8l-2 2"/></svg><span class="hide-md">Move</span></button>
+<section id="intro" class="stage">
+  <div class="hero">
+    <span class="hero-glyph"><svg width="28" height="28" viewBox="0 0 18 18" fill="currentColor" aria-hidden="true"><circle cx="3.5" cy="3.5" r="1.3"/><circle cx="9" cy="3.5" r="1.3"/><circle cx="14.5" cy="3.5" r="1.3"/><circle cx="3.5" cy="9" r="1.3"/><circle cx="9" cy="9" r="2"/><circle cx="14.5" cy="9" r="1.3"/><circle cx="3.5" cy="14.5" r="1.3"/><circle cx="9" cy="14.5" r="1.3"/><circle cx="14.5" cy="14.5" r="1.3"/></svg></span>
+    <h1>Explore 3-D neutron histograms</h1>
+    <p>Open a Mantid <code>MDHistoWorkspace</code> written by <code>SaveMD</code>, or any NeXus/HDF5 file whose <code>NXdata</code> group holds a 3-D histogram.</p>
+    <div class="hero-actions">
+      <button id="open-intro" class="btn btn-primary btn-lg" type="button">Open .nxs file…</button>
+      <button id="open-example" class="btn btn-ghost btn-lg" type="button" title="A small synthetic hexagonal dataset (1.3 MB) with coverage gaps and detector-edge artifacts">Try example data</button>
     </div>
-  </span>
-</div>
+    <ul class="features">
+      <li><svg width="16" height="16" viewBox="0 0 18 18" fill="currentColor" aria-hidden="true"><circle cx="3.5" cy="3.5" r="1.3"/><circle cx="9" cy="3.5" r="1.3"/><circle cx="14.5" cy="3.5" r="1.3"/><circle cx="3.5" cy="9" r="1.3"/><circle cx="9" cy="9" r="2"/><circle cx="14.5" cy="9" r="1.3"/><circle cx="3.5" cy="14.5" r="1.3"/><circle cx="9" cy="14.5" r="1.3"/><circle cx="14.5" cy="14.5" r="1.3"/></svg>
+        <div><b>Orthogonal slices</b><span>HK, HL and KL cuts in the true lattice geometry, linked by clicking.</span></div></li>
+      <li><svg width="16" height="16" viewBox="0 0 18 18" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linejoin="round" aria-hidden="true"><path d="M9 1.8 15.3 5.4v7.2L9 16.2 2.7 12.6V5.4Z"/><circle cx="9" cy="9" r="2"/></svg>
+        <div><b>Symmetry averaging</b><span>Any Laue class or your own operations, pooled exactly on the bin grid.</span></div></li>
+      <li><svg width="16" height="16" viewBox="0 0 18 18" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M9 2.5 16 6 9 9.5 2 6Z"/><path d="M3.5 9.25 2 10l7 3.5 7-3.5-1.5-.75"/></svg>
+        <div><b>Artifact masking</b><span>Remove detector-edge voxels and symmetry outliers before averaging.</span></div></li>
+      <li><svg width="16" height="16" viewBox="0 0 18 18" fill="none" stroke="currentColor" stroke-width="1.6" aria-hidden="true"><circle cx="9" cy="9" r="7"/><circle cx="9" cy="9" r="3.6"/><circle cx="9" cy="9" r="0.8" fill="currentColor" stroke="none"/></svg>
+        <div><b>3-D view</b><span>Transparent isosurface with the current slices as planes.</span></div></li>
+    </ul>
+    <p class="privacy">Or drop a file anywhere. Everything runs in your browser; the file is never uploaded.</p>
+  </div>
+</section>
 
-<main>
-  <section id="intro" class="stage">
-    <div class="hero">
-      <span class="hero-glyph"><svg width="28" height="28" viewBox="0 0 18 18" fill="currentColor" aria-hidden="true"><circle cx="3.5" cy="3.5" r="1.3"/><circle cx="9" cy="3.5" r="1.3"/><circle cx="14.5" cy="3.5" r="1.3"/><circle cx="3.5" cy="9" r="1.3"/><circle cx="9" cy="9" r="2"/><circle cx="14.5" cy="9" r="1.3"/><circle cx="3.5" cy="14.5" r="1.3"/><circle cx="9" cy="14.5" r="1.3"/><circle cx="14.5" cy="14.5" r="1.3"/></svg></span>
-      <h1>Explore 3-D neutron histograms</h1>
-      <p>Open a Mantid <code>MDHistoWorkspace</code> written by <code>SaveMD</code>, or any NeXus/HDF5 file whose <code>NXdata</code> group holds a 3-D histogram.</p>
-      <div class="hero-actions">
-        <button id="open-intro" class="btn btn-primary btn-lg" type="button">Open .nxs file…</button>
-        <span>or drop it anywhere</span>
+<section id="loading" class="stage" hidden>
+  <div class="loading-card">
+    <div class="row"><span class="spin"></span><span id="loading-title">Opening file</span></div>
+    <div class="boot-bar"><div id="progress" class="boot-fill"></div></div>
+    <div id="progress-label" class="boot-label">Starting…</div>
+  </div>
+</section>
+
+<div id="app" class="app" hidden>
+  <aside id="panel" class="panel" aria-label="Controls">
+    <section class="psec" data-sec="dataset">
+      <button class="psec-head" type="button" aria-expanded="true"><svg class="chev" width="12" height="12" viewBox="0 0 12 12" aria-hidden="true"><path d="M2.5 4.5 6 8l3.5-3.5" fill="none" stroke="currentColor" stroke-width="1.4" stroke-linecap="round" stroke-linejoin="round"/></svg><span class="psec-title">Dataset</span><span id="sum-dataset" class="psec-sum"></span></button>
+      <div class="psec-body">
+        <dl class="kv">
+          <dt>Cell</dt><dd id="data-cell">—</dd>
+          <dt>Recip.</dt><dd id="data-recip">—</dd>
+          <dt>Grid</dt><dd id="data-grid">—</dd>
+          <dt>Measured</dt><dd id="data-measured">—</dd>
+        </dl>
       </div>
-      <ul class="features">
-        <li><svg width="16" height="16" viewBox="0 0 18 18" fill="currentColor" aria-hidden="true"><circle cx="3.5" cy="3.5" r="1.3"/><circle cx="9" cy="3.5" r="1.3"/><circle cx="14.5" cy="3.5" r="1.3"/><circle cx="3.5" cy="9" r="1.3"/><circle cx="9" cy="9" r="2"/><circle cx="14.5" cy="9" r="1.3"/><circle cx="3.5" cy="14.5" r="1.3"/><circle cx="9" cy="14.5" r="1.3"/><circle cx="14.5" cy="14.5" r="1.3"/></svg>
-          <div><b>Orthogonal slices</b><span>HK, HL and KL cuts in the true lattice geometry, linked by clicking.</span></div></li>
-        <li><svg width="16" height="16" viewBox="0 0 18 18" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linejoin="round" aria-hidden="true"><path d="M9 1.8 15.3 5.4v7.2L9 16.2 2.7 12.6V5.4Z"/><circle cx="9" cy="9" r="2"/></svg>
-          <div><b>Symmetry averaging</b><span>Any Laue class or your own operations, pooled exactly on the bin grid.</span></div></li>
-        <li><svg width="16" height="16" viewBox="0 0 18 18" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M9 2.5 16 6 9 9.5 2 6Z"/><path d="M3.5 9.25 2 10l7 3.5 7-3.5-1.5-.75"/></svg>
-          <div><b>Artifact masking</b><span>Remove detector-edge voxels and symmetry outliers before averaging.</span></div></li>
-        <li><svg width="16" height="16" viewBox="0 0 18 18" fill="none" stroke="currentColor" stroke-width="1.6" aria-hidden="true"><circle cx="9" cy="9" r="7"/><circle cx="9" cy="9" r="3.6"/><circle cx="9" cy="9" r="0.8" fill="currentColor" stroke="none"/></svg>
-          <div><b>3-D view</b><span>Transparent isosurface with the current slices as planes.</span></div></li>
-      </ul>
-      <p class="privacy">Runs entirely in your browser. The file is never uploaded.</p>
-    </div>
-  </section>
+    </section>
 
-  <section id="loading" class="stage" hidden>
-    <div class="loading-card">
-      <div class="row"><span class="spin"></span><span id="loading-title">Opening file</span></div>
-      <div class="boot-bar"><div id="progress" class="boot-fill"></div></div>
-      <div id="progress-label" class="boot-label">Starting…</div>
-    </div>
-  </section>
+    <section class="psec" data-sec="processing">
+      <button class="psec-head" type="button" aria-expanded="true"><svg class="chev" width="12" height="12" viewBox="0 0 12 12" aria-hidden="true"><path d="M2.5 4.5 6 8l3.5-3.5" fill="none" stroke="currentColor" stroke-width="1.4" stroke-linecap="round" stroke-linejoin="round"/></svg><span class="psec-title">Processing</span><span id="sum-processing" class="psec-sum"></span></button>
+      <div class="psec-body">
+        <ol class="pipeline" aria-label="Processing pipeline">
+          <li class="ok"><span class="pipe-dot"></span><span class="pipe-name">Measured voxels<small id="pipe-measured">—</small></span></li>
+          <li id="pipe-mask" class="off" data-target="mask"><span class="pipe-dot"></span><span class="pipe-name">Mask<small id="pipe-mask-text">off</small></span></li>
+          <li id="pipe-sym" class="off" data-target="symmetry"><span class="pipe-dot"></span><span class="pipe-name">Symmetry average<small id="pipe-sym-text">none</small></span></li>
+          <li class="ok"><span class="pipe-dot"></span><span class="pipe-name">Views<small>3 slices + 3-D</small></span></li>
+        </ol>
 
-  <section id="workspace" class="workspace quad" hidden></section>
-</main>
+        <div id="symmetry" class="sub">
+          <div class="sub-head">
+            <svg width="16" height="16" viewBox="0 0 18 18" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linejoin="round" aria-hidden="true"><path d="M9 1.8 15.3 5.4v7.2L9 16.2 2.7 12.6V5.4Z"/><circle cx="9" cy="9" r="2"/></svg>
+            <span class="sub-title">Symmetry averaging</span><span id="sym-state" class="state">none</span>
+          </div>
+          <p class="sub-hint">Averages each voxel with its symmetry-equivalent voxels.</p>
+          <div class="prow"><label class="plabel" for="sym-preset">Laue class</label><select id="sym-preset"></select></div>
+          <div class="field">
+            <label class="plabel label" for="sym-ops" title="Operations in h,k,l (or real-space x,y,z), separated by ;">Generators</label>
+            <span class="inline"><input id="sym-ops" class="mono" type="text" spellcheck="false" autocomplete="off" placeholder="-h,-k,-l; h+k,-h,l"><button id="sym-apply" class="btn btn-ghost" type="button">Apply</button></span>
+          </div>
+          <p id="sym-status" class="note"></p>
+          <details id="sym-details" class="ops"><summary>Group operations (<span id="sym-count">1</span>)</summary><div id="sym-list"></div></details>
+        </div>
+
+        <div id="mask" class="sub">
+          <div class="sub-head">
+            <svg width="16" height="16" viewBox="0 0 18 18" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M9 2.5 16 6 9 9.5 2 6Z"/><path d="M3.5 9.25 2 10l7 3.5 7-3.5-1.5-.75"/><path d="M3.5 13.25 2 14l7 3.5 7-3.5-1.5-.75" opacity="0.55"/></svg>
+            <span class="sub-title">Mask</span><span id="mask-state" class="state">off</span>
+          </div>
+          <p class="sub-hint">Drops bad voxels (detector edges, outliers) before averaging.</p>
+          <div class="pair">
+            <label class="field" title="Remove measured voxels within this many voxels of unmeasured ones (detector and coverage edges)"><span class="label">Edge erosion</span><input id="mask-erode" class="num" type="number" min="0" max="10" step="1" value="1"></label>
+            <label class="field" title="Remove voxels more than k robust sigmas above the median of their symmetry equivalents; 0 disables. Needs a Laue class."><span class="label">Outlier cut k·σ</span><input id="mask-k" class="num" type="number" min="0" step="0.5" value="0"></label>
+          </div>
+          <span class="inline"><button id="mask-apply" class="btn btn-primary" type="button" style="flex: 1">Apply mask</button><button id="mask-clear" class="btn btn-ghost" type="button" disabled>Clear</button></span>
+          <p id="mask-status" class="note">No mask: all measured voxels are used.</p>
+          <div class="inline" style="justify-content: space-between">
+            <label class="switch" title="Average only the removed voxels, to check what the mask takes out"><input id="mask-removed" type="checkbox" disabled><span class="switch-track"></span><span class="switch-label">Show removed voxels</span></label>
+            <button id="mask-download" class="btn btn-ghost btn-xs" type="button" disabled title="Gzipped .npy in signal order: 1 = edge, 2 = outlier">Download</button>
+          </div>
+        </div>
+      </div>
+    </section>
+
+    <section class="psec" data-sec="display">
+      <button class="psec-head" type="button" aria-expanded="true"><svg class="chev" width="12" height="12" viewBox="0 0 12 12" aria-hidden="true"><path d="M2.5 4.5 6 8l3.5-3.5" fill="none" stroke="currentColor" stroke-width="1.4" stroke-linecap="round" stroke-linejoin="round"/></svg><span class="psec-title">Display</span><span id="sum-display" class="psec-sum"></span></button>
+      <div class="psec-body">
+        <div class="inline" style="justify-content: flex-end; margin-top: -6px"><button id="auto" class="btn btn-ghost btn-xs" type="button" title="vmin 0, vmax at the 97th percentile and softening at the median of positive values in the current slices">Auto range</button></div>
+        <div class="prow"><label class="plabel" for="cmap">Colormap</label><select id="cmap"></select></div>
+        <div class="prow"><span class="plabel"></span><canvas id="cmap-bar" class="cbar-panel" width="256" height="1" aria-hidden="true"></canvas></div>
+        <div class="prow"><span class="plabel">Range</span><span class="pair"><input id="vmin" class="num" type="number" step="any" aria-label="vmin" title="vmin"><input id="vmax" class="num" type="number" step="any" aria-label="vmax" title="vmax"></span></div>
+        <div class="prow"><span class="plabel">Scale</span>
+          <div id="scale" class="segmented fill" data-value="asinh" role="group" aria-label="Color scale"><button type="button" data-value="asinh" class="on">Asinh</button><button type="button" data-value="linear">Linear</button><button type="button" data-value="log">Log</button></div></div>
+        <div id="soft-wrap" class="prow" title="Asinh softening: values below it are shown nearly linearly"><label class="plabel" for="soft">Softening</label><input id="soft" class="num" type="number" min="0" step="any"></div>
+        <div class="prow" title="Show ± this many r.l.u. around the origin; empty for the full range"><label class="plabel" for="limit">View ±</label><input id="limit" class="num" type="number" min="0" step="any" placeholder="full range"></div>
+        <label class="switch"><input id="guides" type="checkbox" checked><span class="switch-track"></span><span class="switch-label">Guides where the other slices cut</span></label>
+        <label id="angles-wrap" class="switch" title="Snap direct-cell angles within 1° of 60°, 90° or 120°"><input id="angles" type="checkbox" checked><span class="switch-track"></span><span class="switch-label">Nominal cell angles (60/90/120°)</span></label>
+      </div>
+    </section>
+  </aside>
+
+  <div class="work">
+    <div class="work-head">
+      <button id="panel-toggle" class="icon-btn" type="button" title="Hide the control panel" aria-pressed="true">
+        <svg width="16" height="16" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.5" aria-hidden="true"><rect x="1.75" y="2.25" width="12.5" height="11.5" rx="1.5"/><path d="M6 2.5v11"/></svg>
+      </button>
+      <div id="click-mode" class="segmented accent" data-value="navigate" role="group" aria-label="Clicking a slice">
+        <button type="button" data-value="navigate" class="on" title="Navigate: click or drag to move the other two slices through the point">
+          <svg width="14" height="14" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" aria-hidden="true"><circle cx="8" cy="8" r="4.5"/><path d="M8 1v3M8 12v3M1 8h3M12 8h3"/></svg><span class="hide-md">Navigate</span></button>
+        <button type="button" data-value="zoom" title="Zoom: drag a rectangle to zoom into it; click to zoom in 2×; double-click for the full view">
+          <svg width="14" height="14" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" aria-hidden="true"><circle cx="7" cy="7" r="4.8"/><path d="M10.5 10.5 14.5 14.5M7 4.8v4.4M4.8 7h4.4"/></svg><span class="hide-md">Zoom</span></button>
+        <button type="button" data-value="move" title="Move: drag to move the visible region; double-click for the full view">
+          <svg width="14" height="14" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M8 1.5v13M1.5 8h13M8 1.5 6 3.5M8 1.5l2 2M8 14.5l-2-2M8 14.5l2-2M1.5 8l2-2M1.5 8l2 2M14.5 8l-2-2M14.5 8l-2 2"/></svg><span class="hide-md">Move</span></button>
+      </div>
+      <span class="spacer"></span>
+      <span class="legend" title="Shared color scale (set it in the Display section)">
+        <span id="legend-min">0</span><canvas id="legend-bar" width="256" height="1" aria-hidden="true"></canvas><span id="legend-max">1</span><span id="legend-scale" class="scale-name">asinh</span>
+      </span>
+      <span class="spacer"></span>
+      <div id="layout" class="segmented icons layout-control" data-value="quad" role="group" aria-label="Layout">
+        <button type="button" data-value="quad" class="on" title="Four views">
+          <svg width="15" height="15" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.5" aria-hidden="true"><rect x="1.75" y="1.75" width="5.5" height="5.5" rx="1"/><rect x="8.75" y="1.75" width="5.5" height="5.5" rx="1"/><rect x="1.75" y="8.75" width="5.5" height="5.5" rx="1"/><rect x="8.75" y="8.75" width="5.5" height="5.5" rx="1"/></svg></button>
+        <button type="button" data-value="focus" title="One large view with the others beside it">
+          <svg width="15" height="15" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.5" aria-hidden="true"><rect x="1.75" y="1.75" width="8" height="12.5" rx="1"/><rect x="11.25" y="1.75" width="3" height="3.4" rx="0.8"/><rect x="11.25" y="6.3" width="3" height="3.4" rx="0.8"/><rect x="11.25" y="10.85" width="3" height="3.4" rx="0.8"/></svg></button>
+        <button type="button" data-value="single" title="One view (Esc to return)">
+          <svg width="15" height="15" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.5" aria-hidden="true"><rect x="1.75" y="1.75" width="12.5" height="12.5" rx="1"/></svg></button>
+      </div>
+    </div>
+    <section id="workspace" class="workspace quad"></section>
+  </div>
+</div>
 
 <div id="error" class="toast" role="alert" hidden><span id="error-text"></span>
   <button id="error-close" class="icon-btn" type="button" title="Dismiss" aria-label="Dismiss"><svg width="12" height="12" viewBox="0 0 12 12" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" aria-hidden="true"><path d="M2 2l8 8M10 2l-8 8"/></svg></button></div>
 
 <!-- Popovers, positioned under their trigger buttons by app.js -->
-<div id="pop-view" class="popover" role="dialog" aria-label="View options" hidden>
-  <div class="pop-head"><span class="pop-title">View</span></div>
-  <div class="pop-body">
-    <label class="field"><span class="label">View range ± (r.l.u.)</span><input id="limit" class="num" type="number" min="0" step="any" placeholder="full range"></label>
-    <label class="switch"><input id="guides" type="checkbox" checked><span class="switch-track"></span><span class="switch-label">Dashed guides where the other slices cut</span></label>
-    <label id="angles-wrap" class="switch" title="Snap direct-cell angles within 1° of 60°, 90° or 120°"><input id="angles" type="checkbox" checked><span class="switch-track"></span><span class="switch-label">Nominal cell angles (snap to 60°/90°/120°)</span></label>
-  </div>
-</div>
-
-<div id="pop-symmetry" class="popover" role="dialog" aria-label="Symmetry averaging" hidden style="width: 420px">
-  <div class="pop-head"><span class="pop-title">Symmetry averaging</span><span id="sym-badge" class="badge">1</span></div>
-  <div class="pop-body">
-    <label class="field"><span class="label">Laue class</span><select id="sym-preset"></select></label>
-    <div class="field"><label class="label" for="sym-ops">Generators · h,k,l or x,y,z, separated by ;</label>
-      <span class="inline"><input id="sym-ops" class="mono" type="text" spellcheck="false" autocomplete="off" placeholder="-h,-k,-l; h+k,-h,l"><button id="sym-apply" class="btn btn-ghost" type="button">Apply</button></span></div>
-    <p id="sym-status" class="note"></p>
-  </div>
-  <div class="pop-foot"><details id="sym-details" class="ops" style="flex: 1"><summary>Group operations · <span id="sym-count">1</span></summary><div id="sym-list"></div></details></div>
-</div>
-
-<div id="pop-mask" class="popover" role="dialog" aria-label="Mask" hidden style="width: 420px">
-  <div class="pop-head"><span class="pop-title">Mask · applied before symmetry</span>
-    <label class="switch" title="Average only the removed voxels, to check what the mask takes out"><input id="mask-removed" type="checkbox" disabled><span class="switch-track"></span><span class="switch-label">Show removed</span></label></div>
-  <div class="pop-body">
-    <div class="grid2">
-      <label class="field" title="Remove measured voxels within this many voxels of unmeasured ones (detector and coverage edges)"><span class="label">Edge erosion (voxels)</span><input id="mask-erode" class="num" type="number" min="0" max="10" step="1" value="1"></label>
-      <label class="field" title="Remove voxels more than k robust sigmas above the median of their symmetry equivalents; 0 disables"><span class="label">Outlier cut (k·σ)</span><input id="mask-k" class="num" type="number" min="0" step="0.5" value="0"></label>
-    </div>
-    <span class="inline"><button id="mask-apply" class="btn btn-primary" type="button">Apply mask</button><button id="mask-clear" class="btn btn-ghost" type="button" disabled>Clear</button></span>
-    <p id="mask-status" class="note">No mask: all measured voxels are used.</p>
-  </div>
-  <div class="pop-foot"><span class="note" style="flex: 1">Mask file: gzipped .npy in signal order, 1 = edge, 2 = outlier</span>
-    <button id="mask-download" class="btn btn-ghost btn-xs" type="button" disabled>Download</button></div>
-</div>
-
-<div id="pop-info" class="popover" role="dialog" aria-label="Dataset and method" hidden style="width: 480px">
+<div id="pop-info" class="popover" role="dialog" aria-label="Dataset details and method" hidden style="width: 480px">
   <div class="pop-head"><span class="pop-title">Dataset</span></div>
-  <div class="pop-body"><dl id="info-meta" class="kv"></dl></div>
+  <div class="pop-body"><dl id="info-meta" class="kv" style="grid-template-columns: max-content minmax(0, 1fr)"></dl></div>
   <div class="pop-head" style="border-top: 1px solid var(--border)"><span class="pop-title">Method</span></div>
   <div class="pop-body method">
     <div><h4>Slices</h4><p>Each pixel is the equal-weight mean of the unique finite, unmasked voxels in the slab, pooled with all their symmetry equivalents. No smoothing or interpolation; grey means no measured contribution.</p></div>
@@ -477,7 +511,7 @@ body.dragging::after {
   <div class="pop-head"><span class="pop-title">3-D view</span></div>
   <div class="pop-body">
     <div class="field"><span class="label">Isosurface grid</span>
-      <div id="iso-grid" class="segmented" data-value="100"><button type="button" data-value="64">Coarse</button><button type="button" data-value="100" class="on">Medium</button><button type="button" data-value="150">Fine</button></div></div>
+      <div id="iso-grid" class="segmented fill" data-value="100"><button type="button" data-value="64">Coarse</button><button type="button" data-value="100" class="on">Medium</button><button type="button" data-value="150">Fine</button></div></div>
     <label class="switch"><input id="iso-slices" type="checkbox" checked><span class="switch-track"></span><span class="switch-label">Show the three slices</span></label>
     <p class="note">Drag to rotate, scroll to zoom, right-drag to pan.</p>
   </div>

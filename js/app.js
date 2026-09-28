@@ -133,10 +133,8 @@ addEventListener('keydown', (e) => {
 function show(stage) {
   $('intro').hidden = stage !== 'intro';
   $('loading').hidden = stage !== 'loading';
-  $('workspace').hidden = stage !== 'workspace';
-  $('toolbar').hidden = stage !== 'workspace';
+  $('app').hidden = stage !== 'workspace';
   for (const el of document.querySelectorAll('[data-loaded]')) el.hidden = stage !== 'workspace';
-  $('ident').hidden = $('ident-grid').hidden = stage !== 'workspace';
 }
 
 function progress(label, fraction) {
@@ -284,7 +282,7 @@ const handlers = {
     $('mask-apply').disabled = false;
     $('mask-status').className = 'note error';
     $('mask-status').textContent = message;
-    updateChips();
+    updateStates();
   },
   'mask-file': ({ blob }) => download(blob, `${stem()}_mask.npy.gz`),
 };
@@ -318,43 +316,74 @@ const stem = () => sourceName.replace(/\.[^.]+$/, '');
 function describe() {
   const { dims, shape, lattice, stats } = meta;
   const bins = [0, 1, 2].map((d) => shape[2 - d]);
+  const widths = dims.map((d) => fmt((d.edges[d.edges.length - 1] - d.edges[0]) / (d.edges.length - 1), 4));
   $('ident').innerHTML = dims.map((d, i) => `<span class="hue-${i}">${escapeHTML(d.label)}</span>`).join('<span class="dot">·</span>');
   $('ident-grid').textContent = bins.every((b) => b === bins[0]) ? `${bins[0]}³` : bins.join('×');
+
+  // Dataset section of the control panel.
+  let recip = null;
   if (lattice) {
-    const { a, b, c, alpha, beta, gamma } = lattice;
-    $('cell-pill-value').textContent = `${a.toFixed(3)} ${b.toFixed(3)} ${c.toFixed(3)} Å  ${alpha.toFixed(2)}° ${beta.toFixed(2)}° ${gamma.toFixed(2)}°`;
-    $('cell-pill').title = `Unit cell from the ${lattice.source}: a, b, c and α, β, γ. Click for the reciprocal lattice.`;
+    const G = reciprocalMetric(lattice), len = [0, 1, 2].map((i) => Math.sqrt(G[i][i]));
+    const ang = (i, j) => Math.acos(G[i][j] / (len[i] * len[j])) * 180 / Math.PI;
+    recip = { len, angles: [ang(1, 2), ang(0, 2), ang(0, 1)] };
   }
-  $('cell-pill').parentElement.dataset.hasCell = lattice ? '1' : '';
+  const { a, b, c, alpha, beta, gamma } = lattice ?? {};
+  $('data-cell').innerHTML = lattice
+    ? `${a.toFixed(3)} ${b.toFixed(3)} ${c.toFixed(3)} Å<br>${alpha.toFixed(2)}° ${beta.toFixed(2)}° ${gamma.toFixed(2)}° <span class="note">(${escapeHTML(lattice.source)})</span>`
+    : 'not in file';
+  $('data-recip').innerHTML = recip
+    ? `${recip.len.map((l) => l.toFixed(4)).join(' ')} Å⁻¹<br>${recip.angles.map((x) => x.toFixed(2)).join('° ')}°`
+    : '—';
+  $('data-grid').textContent = `${bins.join(' × ')}, Δ ${widths.join(' ')}`;
+  $('data-measured').textContent = `${pct(stats.fraction)} of voxels`;
+  $('sum-dataset').textContent = lattice ? `${a.toFixed(3)} ${b.toFixed(3)} ${c.toFixed(3)} Å · ${gamma.toFixed(1)}°` : `${bins.join('×')}`;
+  $('pipe-measured').textContent = `${(stats.valid / 1e6).toFixed(1)} M · ${pct(stats.fraction)} of the grid`;
+
+  // Full details in the info popover.
   const items = [
     ['File', `${sourceName} (${mb(sourceSize)})`],
     ['Signal', meta.signal],
     ['Axes', dims.map((d) => `${d.longName} ${fmt(d.edges[0], 2)} … ${fmt(d.edges[d.edges.length - 1], 2)}`).join('\n')],
-    ['Grid', `${bins.join(' × ')} bins, Δ = ${dims.map((d) => fmt((d.edges[d.edges.length - 1] - d.edges[0]) / (d.edges.length - 1), 4)).join(', ')}`],
+    ['Grid', `${bins.join(' × ')} bins, Δ = ${widths.join(', ')}`],
     ['Measured', `${pct(stats.fraction)} of voxels · read in ${meta.seconds.toFixed(1)} s`],
   ];
   if (lattice) {
-    const { a, b, c, alpha, beta, gamma } = lattice;
     items.push([`Cell (${lattice.source})`, `a ${a.toFixed(4)}, b ${b.toFixed(4)}, c ${c.toFixed(4)} Å\nα ${alpha.toFixed(3)}°, β ${beta.toFixed(3)}°, γ ${gamma.toFixed(3)}°`]);
-    const G = reciprocalMetric(lattice), len = [0, 1, 2].map((i) => Math.sqrt(G[i][i]));
-    const ang = (i, j) => (Math.acos(G[i][j] / (len[i] * len[j])) * 180 / Math.PI).toFixed(3);
-    items.push(['Reciprocal', `a* ${len[0].toFixed(5)}, b* ${len[1].toFixed(5)}, c* ${len[2].toFixed(5)} Å⁻¹ (no 2π)\nα* ${ang(1, 2)}°, β* ${ang(0, 2)}°, γ* ${ang(0, 1)}°`]);
+    const [as, bs, cs] = recip.len, [al, be, ga] = recip.angles;
+    items.push(['Reciprocal', `a* ${as.toFixed(5)}, b* ${bs.toFixed(5)}, c* ${cs.toFixed(5)} Å⁻¹ (no 2π)\nα* ${al.toFixed(3)}°, β* ${be.toFixed(3)}°, γ* ${ga.toFixed(3)}°`]);
     if ($('angles').checked) items.push(['Display', 'Nominal angles: direct-cell angles within 1° of 60/90/120° are snapped for drawing']);
   }
   items.push(['Symmetry', symmetry.ops.length > 1 ? `${symmetry.name} (${symmetry.ops.length} operations)` : 'none']);
   items.push(['Mask', mask ? `${pct((mask.edge + mask.outlier) / mask.measured)} of voxels removed` : 'none']);
   $('info-meta').innerHTML = items.map(([k, v]) => `<dt>${escapeHTML(k)}</dt><dd>${escapeHTML(v).replace(/\n/g, '<br>')}</dd>`).join('');
-  updateChips();
+  updateStates();
 }
 
-function updateChips() {
+/** Processing pipeline, section badges and the legend above the views. */
+function updateStates() {
   const sym = symmetry.ops.length > 1;
-  $('sym-chip-value').textContent = sym ? symmetry.name : 'none';
-  $('sym-chip').classList.toggle('active', sym);
-  $('mask-chip-value').textContent = mask ? pct((mask.edge + mask.outlier) / mask.measured) : 'off';
-  $('mask-chip').classList.toggle('active', !!mask);
-  const limit = $('limit').value.trim();
-  $('view-chip-value').textContent = limit ? `±${limit}` : 'full';
+  $('sym-state').textContent = sym ? `${symmetry.name} · ${symmetry.ops.length}` : 'none';
+  $('sym-state').className = `state${sym ? ' on' : ''}`;
+  $('symmetry').classList.toggle('active', sym);
+  $('pipe-sym').className = sym ? 'on' : 'off';
+  $('pipe-sym-text').textContent = sym ? `${symmetry.name} · ${symmetry.ops.length} operations` : 'none — voxels used as measured';
+  const removed = mask ? pct((mask.edge + mask.outlier) / mask.measured) : null;
+  if (!$('mask-apply').disabled) {
+    $('mask-state').textContent = mask ? `${removed} removed` : 'off';
+    $('mask-state').className = `state${mask ? ' ok' : ''}`;
+  }
+  $('mask').classList.toggle('active', !!mask);
+  $('mask').classList.toggle('mask-on', !!mask);
+  $('pipe-mask').className = mask ? 'ok' : 'off';
+  $('pipe-mask-text').textContent = mask
+    ? `${removed} removed${mask.radius ? ` · edge ${mask.radius}` : ''}${mask.k ? ` · ${mask.k}σ outliers` : ''}${$('mask-removed').checked ? ' · showing removed' : ''}`
+    : 'off — all measured voxels';
+  // One-line summaries shown on collapsed panel sections.
+  $('sum-processing').textContent = `${mask ? `mask ${removed}` : 'no mask'} · ${sym ? symmetry.name : 'no symmetry'}`;
+  $('sum-display').textContent = `${$('cmap').value} · ${$('vmin').value}–${$('vmax').value} · ${$('scale').dataset.value}`;
+  $('legend-min').textContent = fmtValue(Number($('vmin').value) || 0);
+  $('legend-max').textContent = fmtValue(Number($('vmax').value) || 0);
+  $('legend-scale').textContent = $('scale').dataset.value;
 }
 
 function viewShell(key, badge, title) {
@@ -676,10 +705,12 @@ function colorTicks(s) {
 }
 
 function paintColorbar() {
-  const c = $('cmap-bar').getContext('2d'), lut = LUTS[$('cmap').value];
-  const img = c.createImageData(256, 1);
-  for (let k = 0; k < 256; k++) img.data.set([lut[3 * k], lut[3 * k + 1], lut[3 * k + 2], 255], 4 * k);
-  c.putImageData(img, 0, 0);
+  const lut = LUTS[$('cmap').value];
+  for (const id of ['cmap-bar', 'legend-bar']) {
+    const c = $(id).getContext('2d'), img = c.createImageData(256, 1);
+    for (let k = 0; k < 256; k++) img.data.set([lut[3 * k], lut[3 * k + 1], lut[3 * k + 2], 255], 4 * k);
+    c.putImageData(img, 0, 0);
+  }
 }
 
 // ---- Drawing -------------------------------------------------------------------
@@ -905,7 +936,7 @@ function redraw() {
     drawPanel(p);
   }
   paintColorbar();
-  updateChips();
+  updateStates();
   update3D();
 }
 
@@ -988,7 +1019,6 @@ function applySymmetry() {
 function showSymmetry() {
   const { ops } = symmetry, statusEl = $('sym-status');
   statusEl.className = 'note';
-  $('sym-badge').textContent = ops.length > 1 ? `${symmetry.name} · ${ops.length}` : '1';
   if (ops.length === 1) {
     statusEl.textContent = 'No symmetry averaging: each voxel is used as measured.';
   } else {
@@ -1010,7 +1040,7 @@ function showSymmetry() {
   }
   $('sym-list').textContent = ops.map(formatOp).join('   ');
   $('sym-count').textContent = ops.length;
-  updateChips();
+  updateStates();
 }
 
 // ---- Mask -------------------------------------------------------------------------------
@@ -1031,7 +1061,8 @@ function applyMask(clear = false) {
   }
   $('mask-apply').disabled = true;
   status('busy', 'building mask');
-  $('mask-chip-value').textContent = '…';
+  $('mask-state').textContent = 'working…';
+  $('mask-state').className = 'state busy';
   $('mask-status').className = 'note';
   $('mask-status').textContent = radius || k ? 'Building mask…' : 'Clearing mask…';
   worker.postMessage({ type: 'mask', id: ++requestId, radius, k, maps: symmetry.maps, symmetry: symmetry.name });
@@ -1040,7 +1071,7 @@ function applyMask(clear = false) {
 function showMask(seconds) {
   const statusEl = $('mask-status');
   statusEl.className = 'note';
-  updateChips();
+  updateStates();
   if (!mask) {
     statusEl.textContent = 'No mask: all measured voxels are used.';
     return;
@@ -1157,6 +1188,7 @@ restore();
 show('intro');
 status('', 'no file');
 $('open').onclick = $('open-intro').onclick = () => $('file').click();
+$('open-example').onclick = () => openURL('examples/demo_hexagonal.nxs');
 $('file').onchange = () => { if ($('file').files[0]) openFile($('file').files[0]); $('file').value = ''; };
 $('error-close').onclick = () => error('');
 for (const id of ['cmap', 'vmin', 'vmax', 'soft', 'limit', 'angles', 'guides']) $(id).addEventListener('input', redraw);
@@ -1173,6 +1205,42 @@ segmented($('scale'), (value) => {
 segmented($('iso-grid'), () => { if (iso) { iso.userLevel = false; requestIso(); } });
 $('iso-slices').onchange = update3D;
 $('auto').onclick = autoRange;
+function setPanel(open) {
+  document.body.classList.toggle('panel-collapsed', !open);
+  $('panel-toggle').setAttribute('aria-pressed', String(open));
+  $('panel-toggle').title = open ? 'Hide the control panel' : 'Show the control panel';
+  try { localStorage.setItem('nxv-panel', open ? 'open' : 'closed'); } catch { /* storage unavailable */ }
+}
+$('panel-toggle').onclick = () => setPanel(document.body.classList.contains('panel-collapsed'));
+// Collapsible panel sections, remembered per browser.
+let collapsedSections = [];
+try { collapsedSections = JSON.parse(localStorage.getItem('nxv-sections')) ?? []; } catch { /* storage unavailable */ }
+for (const sec of document.querySelectorAll('.psec')) {
+  const head = sec.querySelector('.psec-head');
+  const set = (collapsed) => {
+    sec.classList.toggle('collapsed', collapsed);
+    head.setAttribute('aria-expanded', String(!collapsed));
+  };
+  set(collapsedSections.includes(sec.dataset.sec));
+  head.onclick = () => {
+    set(!sec.classList.contains('collapsed'));
+    const now = [...document.querySelectorAll('.psec.collapsed')].map((s) => s.dataset.sec);
+    try { localStorage.setItem('nxv-sections', JSON.stringify(now)); } catch { /* storage unavailable */ }
+  };
+}
+try { if (localStorage.getItem('nxv-panel') === 'closed') setPanel(false); } catch { /* storage unavailable */ }
+for (const li of document.querySelectorAll('.pipeline li[data-target]')) {
+  li.onclick = () => {
+    setPanel(true);
+    const sec = li.closest('.psec');
+    if (sec.classList.contains('collapsed')) sec.querySelector('.psec-head').click();
+    const target = $(li.dataset.target);
+    target.scrollIntoView({ block: 'nearest', behavior: 'smooth' });
+    target.classList.remove('flash');
+    void target.offsetWidth;
+    target.classList.add('flash');
+  };
+}
 $('sym-preset').onchange = () => {
   const preset = PRESETS.find(([name]) => name === $('sym-preset').value);
   if (!preset) { $('sym-ops').focus(); return; }
@@ -1184,7 +1252,7 @@ $('sym-apply').onclick = applySymmetry;
 $('mask-apply').onclick = () => applyMask();
 $('mask-clear').onclick = () => applyMask(true);
 for (const id of ['mask-erode', 'mask-k']) $(id).onkeydown = (e) => { if (e.key === 'Enter') applyMask(); };
-$('mask-removed').onchange = () => panels.forEach(request);
+$('mask-removed').onchange = () => { updateStates(); panels.forEach(request); };
 $('mask-download').onclick = () => worker.postMessage({ type: 'mask-download' });
 
 document.addEventListener('dragover', (e) => { e.preventDefault(); document.body.classList.add('dragging'); });
