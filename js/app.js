@@ -1,5 +1,5 @@
 import { COLORMAPS } from './colormaps.js';
-import { cartesianBasis, nominalCell, planeGeometry } from './nexus.js';
+import { cartesianBasis, nominalCell, planeGeometry, reciprocalMetric } from './nexus.js';
 import { IDENTITY_MAP } from './slab.js';
 import { closeGroup, formatOp, indexMaps, metricChange, parseOps, PRESETS } from './symmetry.js';
 
@@ -31,7 +31,8 @@ let requestId = 0, symmetry = NO_SYMMETRY, mask = null;
 // Workspace layout: 'quad', 'focus' or 'single', around the primary view ('hk', 'hl', 'kl' or '3d').
 let layout = 'quad', primary = 'hk', lastMulti = 'quad';
 const views = {};
-// What clicking a slice does: 'navigate' moves the other two slices, 'zoom' zooms in.
+// What clicking a slice does: 'navigate' moves the other two slices, 'zoom' zooms in,
+// 'move' drags the visible region.
 let clickMode = 'navigate';
 // 3-D view state: the lazily loaded View3D, its elements and the isosurface request queue.
 let view3d = null, iso = null;
@@ -54,11 +55,15 @@ function fmtValue(v) {
   return s.replace('-', '−');
 }
 
-function niceTicks(lo, hi, count = 5) {
+function niceStep(raw) {
+  const p = 10 ** Math.floor(Math.log10(raw));
+  return [1, 2, 2.5, 5, 10].map((m) => m * p).find((s) => s >= raw * 0.999);
+}
+
+function niceTicks(lo, hi, count = 5, fixedStep = null) {
   const raw = (hi - lo) / count;
   if (!(raw > 0)) return [];
-  const p = 10 ** Math.floor(Math.log10(raw));
-  const step = [1, 2, 2.5, 5, 10].map((m) => m * p).find((s) => s >= raw * 0.999);
+  const step = fixedStep ?? niceStep(raw);
   const out = [];
   for (let k = Math.ceil(lo / step - 1e-9); k * step <= hi + step * 1e-9; k++) out.push(roundTo(k * step, step / 100));
   return out;
@@ -315,6 +320,12 @@ function describe() {
   const bins = [0, 1, 2].map((d) => shape[2 - d]);
   $('ident').innerHTML = dims.map((d, i) => `<span class="hue-${i}">${escapeHTML(d.label)}</span>`).join('<span class="dot">·</span>');
   $('ident-grid').textContent = bins.every((b) => b === bins[0]) ? `${bins[0]}³` : bins.join('×');
+  if (lattice) {
+    const { a, b, c, alpha, beta, gamma } = lattice;
+    $('cell-pill-value').textContent = `${a.toFixed(3)} ${b.toFixed(3)} ${c.toFixed(3)} Å  ${alpha.toFixed(2)}° ${beta.toFixed(2)}° ${gamma.toFixed(2)}°`;
+    $('cell-pill').title = `Unit cell from the ${lattice.source}: a, b, c and α, β, γ. Click for the reciprocal lattice.`;
+  }
+  $('cell-pill').parentElement.dataset.hasCell = lattice ? '1' : '';
   const items = [
     ['File', `${sourceName} (${mb(sourceSize)})`],
     ['Signal', meta.signal],
@@ -324,7 +335,11 @@ function describe() {
   ];
   if (lattice) {
     const { a, b, c, alpha, beta, gamma } = lattice;
-    items.push([`Cell (${lattice.source})`, `${a.toFixed(4)}, ${b.toFixed(4)}, ${c.toFixed(4)} Å\n${alpha.toFixed(2)}°, ${beta.toFixed(2)}°, ${gamma.toFixed(2)}°`]);
+    items.push([`Cell (${lattice.source})`, `a ${a.toFixed(4)}, b ${b.toFixed(4)}, c ${c.toFixed(4)} Å\nα ${alpha.toFixed(3)}°, β ${beta.toFixed(3)}°, γ ${gamma.toFixed(3)}°`]);
+    const G = reciprocalMetric(lattice), len = [0, 1, 2].map((i) => Math.sqrt(G[i][i]));
+    const ang = (i, j) => (Math.acos(G[i][j] / (len[i] * len[j])) * 180 / Math.PI).toFixed(3);
+    items.push(['Reciprocal', `a* ${len[0].toFixed(5)}, b* ${len[1].toFixed(5)}, c* ${len[2].toFixed(5)} Å⁻¹ (no 2π)\nα* ${ang(1, 2)}°, β* ${ang(0, 2)}°, γ* ${ang(0, 1)}°`]);
+    if ($('angles').checked) items.push(['Display', 'Nominal angles: direct-cell angles within 1° of 60/90/120° are snapped for drawing']);
   }
   items.push(['Symmetry', symmetry.ops.length > 1 ? `${symmetry.name} (${symmetry.ops.length} operations)` : 'none']);
   items.push(['Mask', mask ? `${pct((mask.edge + mask.outlier) / mask.measured)} of voxels removed` : 'none']);
@@ -387,6 +402,7 @@ function setupViewer() {
     const maxWidth = Math.min(e[n] - e[0], 41 * step);
     const key = VIEW_KEY[fixed];
     const shell = viewShell(key, `<span class="badge hue-${fixed}">${escapeHTML(F.label)}</span>`, `${escapeHTML(X.label)} – ${escapeHTML(Y.label)}`);
+    shell.q('.view-pos').insertAdjacentHTML('beforebegin', '<span class="view-angle" hidden></span>');
     shell.actions.innerHTML = `
       <button type="button" class="btn btn-ghost btn-xs zoom-reset" hidden title="Back to the full view (or double-click the plot)">Reset zoom</button>
       <button type="button" class="icon-btn save" title="Save PNG">${ICONS.save}</button>`;
@@ -409,7 +425,7 @@ function setupViewer() {
     const p = {
       fixed, x, y, step, lo, hi, version: 0, key, section: shell.section, zoom: null, drag: null,
       zoomReset: q('.zoom-reset'), slider: q('.slider'), center: q('.center'), wslider: q('.wslider'), width: q('.width'),
-      caption: q('.view-caption'), pos: q('.view-pos'), canvas: q('canvas'), hover: q('.overlay-chip'),
+      caption: q('.view-caption'), pos: q('.view-pos'), angle: q('.view-angle'), canvas: q('canvas'), hover: q('.overlay-chip'),
     };
     p.canvas.setAttribute('aria-label', `${X.label}–${Y.label} intensity slice`);
     Object.assign(p.slider, { min: roundTo(lo, step), max: roundTo(hi, step), step, value: center });
@@ -424,7 +440,7 @@ function setupViewer() {
     p.canvas.onpointerdown = (ev) => startBox(p, ev);
     p.canvas.onpointermove = (ev) => { hover(p, ev); moveBox(p, ev); };
     p.canvas.onpointerup = (ev) => endBox(p, ev);
-    p.canvas.onpointercancel = () => { p.drag = null; redraw(); };
+    p.canvas.onpointercancel = () => { p.drag = null; p.canvas.classList.remove('panning'); redraw(); };
     p.canvas.onpointerleave = () => { p.hover.hidden = true; };
     p.canvas.ondblclick = () => { clearTimeout(p.clickTimer); setZoom(p, null); };
     p.zoomReset.onclick = () => setZoom(p, null);
@@ -505,8 +521,10 @@ function localPoint(p, e) {
 function startBox(p, e) {
   if (e.button !== 0 || !p.inverse) return;
   const [x, y] = localPoint(p, e);
-  p.drag = { x0: x, y0: y, x1: x, y1: y, moved: false };
+  // Keep the mapping at the start of the drag: panning changes p.inverse as it goes.
+  p.drag = { x0: x, y0: y, x1: x, y1: y, moved: false, view: p.view, inverse: p.inverse };
   try { p.canvas.setPointerCapture(e.pointerId); } catch { /* synthetic or already released pointer */ }
+  if (clickMode === 'move') p.canvas.classList.add('panning');
 }
 
 function setClickMode(mode) {
@@ -516,20 +534,37 @@ function setClickMode(mode) {
 }
 
 // Navigate mode: dragging keeps moving the other slices. Zoom mode: dragging
-// draws the zoom box.
+// draws the zoom box. Move mode: dragging slides the visible region.
 function moveBox(p, e) {
   if (!p.drag) return;
   [p.drag.x1, p.drag.y1] = localPoint(p, e);
-  p.drag.moved ||= Math.hypot(p.drag.x1 - p.drag.x0, p.drag.y1 - p.drag.y0) > 5;
+  p.drag.moved ||= Math.hypot(p.drag.x1 - p.drag.x0, p.drag.y1 - p.drag.y0) > (clickMode === 'move' ? 1 : 5);
   if (!p.drag.moved) return;
   if (clickMode === 'zoom') drawPanel(p);
+  else if (clickMode === 'move') pan(p, p.drag);
   else navigate(p, e);
+}
+
+/**
+ * Shift the view window by the dragged distance, measured with the mapping
+ * from the start of the drag. The window center stays inside the data.
+ */
+function pan(p, d) {
+  const [a0, b0] = d.inverse(d.x0, d.y0), [a1, b1] = d.inverse(d.x1, d.y1);
+  const [u0, u1, v0, v1] = d.view, X = meta.dims[p.x], Y = meta.dims[p.y];
+  const shift = (lo, hi, delta, edges) => {
+    const c = clamp((lo + hi) / 2 - delta, edges[0], edges[edges.length - 1]);
+    return [c - (hi - lo) / 2, c + (hi - lo) / 2];
+  };
+  setZoom(p, { u: shift(u0, u1, a1 - a0, X.edges), v: shift(v0, v1, b1 - b0, Y.edges) });
 }
 
 function endBox(p, e) {
   const d = p.drag;
   p.drag = null;
+  p.canvas.classList.remove('panning');
   if (!d) return;
+  if (clickMode === 'move') { if (d.moved) pan(p, d); return; }
   if (d.moved) {
     if (clickMode === 'navigate') { navigate(p, e); return; }
     const box = boxWindow(p, d);
@@ -570,7 +605,17 @@ function boxWindow(p, d) {
   const v = [Math.max(ey[0], Math.min(...corners.map((c) => c[1]))), Math.min(ey[1], Math.max(...corners.map((c) => c[1])))];
   // At least two bins across each axis.
   const wx = 2 * (ex[1] - ex[0]) / (X.edges.length - 1), wy = 2 * (ey[1] - ey[0]) / (Y.edges.length - 1);
-  return u[1] - u[0] >= wx && v[1] - v[0] >= wy ? { u, v } : null;
+  if (!(u[1] - u[0] >= wx && v[1] - v[0] >= wy)) return null;
+  // With a common scale, widen the shorter side so both axes span the same
+  // length (an equal-sided window), centered on the dragged box.
+  const g = geometry(p);
+  if (g.equal) {
+    const lu = (u[1] - u[0]) * g.lx, lv = (v[1] - v[0]) * g.ly;
+    const widen = (r, len, l) => { const c = (r[0] + r[1]) / 2, h = len / l / 2; return [c - h, c + h]; };
+    if (lu < lv) return { u: widen(u, lv, g.lx), v };
+    return { u, v: widen(v, lu, g.ly) };
+  }
+  return { u, v };
 }
 
 function setZoom(p, box) {
@@ -758,14 +803,16 @@ function draw(p, canvas, w, h, dpr, exporting = false) {
   c.font = `10.5px ${MONO}`;
   c.textAlign = 'center';
   c.textBaseline = 'top';
-  for (const t of niceTicks(u0, u1)) {
+  // Axes that share a scale share a tick step, so equal lengths look equal.
+  const step = g.equal ? Math.max(niceStep(Math.min(u1 - u0, v1 - v0) / 5), niceStep(Math.max(u1 - u0, v1 - v0) / 10)) : null;
+  for (const t of niceTicks(u0, u1, 5, step)) {
     const [a, b] = project(t, v0);
     c.beginPath(); c.moveTo(a, b); c.lineTo(a, b + 4); c.stroke();
     c.fillText(fmt(t), a, b + 7);
   }
   c.textAlign = 'right';
   c.textBaseline = 'middle';
-  for (const t of niceTicks(v0, v1)) {
+  for (const t of niceTicks(v0, v1, 5, step)) {
     const [a, b] = project(u0, t);
     c.beginPath(); c.moveTo(a, b); c.lineTo(a - 4, b); c.stroke();
     c.fillText(fmt(t), a - 7, b);
@@ -850,7 +897,13 @@ function redraw() {
     return;
   }
   $('soft-wrap').hidden = settings.scale !== 'asinh';
-  for (const p of panels) drawPanel(p);
+  for (const p of panels) {
+    const g = geometry(p), angle = Math.acos(clamp(g.cos, -1, 1)) * 180 / Math.PI;
+    p.angle.hidden = !g.lattice || Math.abs(angle - 90) < 0.5;
+    p.angle.textContent = `∠ ${angle.toFixed(1)}°`;
+    p.angle.title = `Angle between the ${meta.dims[p.x].label} and ${meta.dims[p.y].label} axes (reciprocal lattice, ${settings.angles} cell angles)`;
+    drawPanel(p);
+  }
   paintColorbar();
   updateChips();
   update3D();
@@ -1086,7 +1139,7 @@ function restore() {
   if (saved.cmap in LUTS) $('cmap').value = saved.cmap;
   if (typeof saved.angles === 'boolean') $('angles').checked = saved.angles;
   if (typeof saved.guides === 'boolean') $('guides').checked = saved.guides;
-  setClickMode(saved.clickMode === 'zoom' ? 'zoom' : 'navigate');
+  setClickMode(['zoom', 'move'].includes(saved.clickMode) ? saved.clickMode : 'navigate');
   try {
     const l = JSON.parse(localStorage.getItem('nxv-layout'));
     if (['quad', 'focus'].includes(l?.mode)) lastMulti = layout = l.mode;
@@ -1108,6 +1161,7 @@ $('file').onchange = () => { if ($('file').files[0]) openFile($('file').files[0]
 $('error-close').onclick = () => error('');
 for (const id of ['cmap', 'vmin', 'vmax', 'soft', 'limit', 'angles', 'guides']) $(id).addEventListener('input', redraw);
 for (const id of ['cmap', 'angles', 'guides']) $(id).addEventListener('change', persist);
+$('angles').addEventListener('change', () => { if (meta) describe(); });
 $('cmap').addEventListener('input', paintColorbar);
 segmented($('click-mode'), (mode) => { setClickMode(mode); persist(); });
 segmented($('layout'), (mode) => setLayout(mode, primary));
