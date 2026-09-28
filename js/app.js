@@ -862,6 +862,25 @@ function draw(p, canvas, w, h, dpr, exporting = false) {
   c.fillStyle = MISSING;
   c.fill();
   const shown = compareShown();
+  if (shown === 'split' || shown === 'b') {
+    // B's half is hatched parallel to the cut, so it stands out where it has no data.
+    c.save();
+    path(shown === 'split' ? corners.slice(1) : corners);
+    c.clip();
+    const [ax, ay] = corners[3], len = Math.hypot(corners[1][0] - ax, corners[1][1] - ay);
+    const d = [(corners[1][0] - ax) / len, (corners[1][1] - ay) / len], n = [-d[1], d[0]];
+    const offsets = corners.map(([x, y]) => (x - ax) * n[0] + (y - ay) * n[1]);
+    c.strokeStyle = 'rgba(71, 84, 103, 0.3)';
+    c.lineWidth = 1;
+    c.beginPath();
+    for (let t = Math.min(...offsets); t <= Math.max(...offsets); t += 6) {
+      const [x, y] = [ax + t * n[0], ay + t * n[1]];
+      c.moveTo(x - 2 * len * d[0], y - 2 * len * d[1]);
+      c.lineTo(x + 2 * len * d[0], y + 2 * len * d[1]);
+    }
+    c.stroke();
+    c.restore();
+  }
   const layers = shown === 'split' ? [[p, meta.dims, [corners[0], corners[1], corners[3]]], [p.b, compare.meta.dims, corners.slice(1)]]
     : shown === 'b' ? [[p.b, compare.meta.dims, corners]] : [[p, meta.dims, corners]];
   for (const [layer, dims, clip] of layers) {
@@ -897,14 +916,17 @@ function draw(p, canvas, w, h, dpr, exporting = false) {
     c.restore();
   }
 
-  // The dividing diagonal and dataset tags when comparing.
+  // The cut along the diagonal (a white gap with dark edges) and dataset tags when comparing.
   if (shown === 'split') {
     c.save();
-    c.lineCap = 'round';
-    for (const [color, width] of [['rgba(18, 24, 33, 0.5)', 3.5], ['#ffffff', 1.5]]) {
+    c.lineCap = 'butt';
+    c.shadowColor = 'rgba(18, 24, 33, 0.35)';
+    c.shadowBlur = 6;
+    for (const [color, width] of [['rgba(18, 24, 33, 0.8)', 8], ['#ffffff', 5]]) {
       c.strokeStyle = color;
       c.lineWidth = width;
       c.beginPath(); c.moveTo(...corners[3]); c.lineTo(...corners[1]); c.stroke();
+      c.shadowColor = 'transparent';
     }
     c.restore();
   }
@@ -999,29 +1021,31 @@ function datasetTag(c, letter, name, at, along, side, room, flip) {
   const [ax, ay] = unit(along), [bx, by] = unit(side);
   const x = at[0] + 12 * ax + 8 * bx, y = at[1] + 12 * ay + 8 * by;
   c.save();
-  c.font = `600 11px ${SANS}`;
-  const h = 20, badge = 16, maxText = room - badge - 16;
+  c.font = `600 12px ${SANS}`;
+  const h = 26, badge = 20, maxText = room - badge - 16;
   let text = name;
   if (c.measureText(text).width > maxText) {
     while (text.length > 1 && c.measureText(`${text}…`).width > maxText) text = text.slice(0, -1);
     text += '…';
   }
   const tw = maxText > 24 ? c.measureText(text).width : 0;
-  const w = 2 + badge + (tw ? 6 + tw + 8 : 2), left = flip ? x - w : x, top = flip ? y : y - h;
+  const w = 3 + badge + (tw ? 7 + tw + 9 : 3), left = flip ? x - w : x, top = flip ? y : y - h;
   c.fillStyle = 'rgba(255, 255, 255, 0.9)';
   c.strokeStyle = 'rgba(18, 24, 33, 0.18)';
   c.lineWidth = 1;
-  c.beginPath(); c.roundRect(left, top, w, h, 5); c.fill(); c.stroke();
+  c.beginPath(); c.roundRect(left, top, w, h, 6); c.fill(); c.stroke();
   c.fillStyle = INK;
-  c.beginPath(); c.roundRect(left + 2, top + 2, badge, badge, 4); c.fill();
+  c.beginPath(); c.roundRect(left + 3, top + 3, badge, badge, 5); c.fill();
   c.fillStyle = '#ffffff';
   c.textAlign = 'center';
   c.textBaseline = 'middle';
-  c.fillText(letter, left + 2 + badge / 2, top + h / 2 + 0.5);
+  c.font = `700 12.5px ${SANS}`;
+  c.fillText(letter, left + 3 + badge / 2, top + h / 2 + 0.5);
   if (tw) {
+    c.font = `600 12px ${SANS}`;
     c.fillStyle = INK2;
     c.textAlign = 'left';
-    c.fillText(text, left + badge + 8, top + h / 2 + 0.5);
+    c.fillText(text, left + 3 + badge + 7, top + h / 2 + 0.5);
   }
   c.restore();
 }
@@ -1351,6 +1375,11 @@ function sliceTexture(p, s, u, v) {
     c.drawImage(b, 0, 0);
     c.restore();
   }
+  if (shown === 'split') {
+    c.strokeStyle = '#ffffff';
+    c.lineWidth = Math.max(1.5, Math.max(cols, rows) / 70);
+    c.beginPath(); c.moveTo(...px(u[0], v[1])); c.lineTo(...px(u[1], v[0])); c.stroke();
+  }
   p.texture = canvas;
   p.textureKey = key;
   return { image: canvas, key };
@@ -1524,7 +1553,7 @@ function showCompare(progressText = '') {
     statusEl.className = 'note warn';
     statusEl.textContent = warnings.join(' ');
   } else {
-    statusEl.textContent = 'Slice positions, symmetry, mask and color scale apply to both. Hover shows both values.';
+    statusEl.textContent = 'Slice positions, symmetry, mask and color scale apply to both. B\'s half is hatched where it has no data; hover shows both values.';
   }
 }
 

@@ -78,7 +78,7 @@ A transparent isosurface of the binned, symmetrized and masked volume, with the 
 
 ## Comparing two datasets
 
-*Open second file (B)* in the Compare card, or drop a file on the card, opens a second dataset next to the first (A). Every slice is then cut along its diagonal, from the top-left to the bottom-right corner of the view: A fills the lower-left half and B the upper-right half. Tags in the corners name the files, and the top bar shows both.
+*Open second file (B)* in the Compare card, or drop a file on the card, opens a second dataset next to the first (A). Every slice is then cut along its diagonal, from the top-left to the bottom-right corner of the view: A fills the lower-left half and B the upper-right half. A white gap marks the cut, B's half is hatched where it has no data, and tags in the corners name the files. The top bar shows both.
 
 - **Shared**: slice positions and thickness, zoom and pan, symmetry, mask settings and the color scale apply to both datasets, so the two halves are directly comparable. *Auto range* pools both.
 - **A / Split / B** in the workspace header shows one dataset over the whole view, or the split.
