@@ -53,3 +53,5 @@ No other runtime dependencies. The file never leaves the browser; only these two
 ## Deployment
 
 GitHub Pages serves the root of `main` (*Deploy from a branch*, `main`, `/ (root)`) at [drthyang.github.io/neutron-nexus-viewer](https://drthyang.github.io/neutron-nexus-viewer/). Every push to `main` redeploys it within about a minute. `.nojekyll` makes Pages serve the files as they are.
+
+Pages lets browsers cache files for 10 minutes. `index.html` therefore loads `js/app.js` with its own `Last-Modified` date as a query string, so a freshly deployed page never runs with an older cached `app.js`. The other modules are loaded by plain relative URLs.

@@ -464,7 +464,7 @@ function viewShell(key, badge, title) {
   maxBtn.onclick = () => setLayout(layout === 'single' && primary === key ? lastMulti : 'single', key);
   section.querySelector('.view-head').ondblclick = (e) => { if (!e.target.closest('button')) maxBtn.click(); };
   // In the focus layout the small views are thumbnails: a click (outside their buttons) shows one large.
-  const enlarge = () => layout === 'focus' && primary !== key && !compactLayout.matches;
+  const enlarge = () => section.classList.contains('thumb');
   section.addEventListener('click', (e) => { if (enlarge() && !e.target.closest('button, input, select, a')) setLayout('focus', key); });
   section.addEventListener('keydown', (e) => {
     if (e.target === section && (e.key === 'Enter' || e.key === ' ') && enlarge()) {
@@ -579,6 +579,7 @@ function setupViewer() {
 
 // Below this size the views stack in one column and the layouts do not apply.
 const compactLayout = matchMedia('(max-width: 1000px), (max-height: 640px)');
+compactLayout.addEventListener('change', () => { if (views.hk) setLayout(layout, primary); });
 
 function setLayout(mode, key = primary) {
   if (!views[key]) key = 'hk';
@@ -592,8 +593,10 @@ function setLayout(mode, key = primary) {
   for (const [k, v] of Object.entries(views)) {
     const isPrimary = k === key;
     v.section.classList.toggle('primary', isPrimary);
-    // Small views in the focus layout can be reached with Tab and opened with Enter.
-    if (mode === 'focus' && !isPrimary) v.section.tabIndex = 0;
+    // Small views in the focus layout are thumbnails (styled by .thumb), reachable with Tab and opened with Enter.
+    const thumb = mode === 'focus' && !isPrimary && !compactLayout.matches;
+    v.section.classList.toggle('thumb', thumb);
+    if (thumb) v.section.tabIndex = 0;
     else v.section.removeAttribute('tabindex');
     const back = mode === 'focus' && isPrimary;
     v.focusBtn.innerHTML = back ? ICONS.quad : ICONS.focus;
@@ -935,9 +938,9 @@ function draw(p, canvas, w, h, dpr, exporting = false) {
   if (shown === 'split') {
     c.save();
     c.lineCap = 'butt';
-    c.shadowColor = 'rgba(18, 24, 33, 0.35)';
-    c.shadowBlur = 6;
-    for (const [color, width] of [['rgba(18, 24, 33, 0.8)', 8], ['#ffffff', 5]]) {
+    c.shadowColor = 'rgba(18, 24, 33, 0.25)';
+    c.shadowBlur = 3;
+    for (const [color, width] of [['rgba(18, 24, 33, 0.75)', 4.5], ['#ffffff', 2.5]]) {
       c.strokeStyle = color;
       c.lineWidth = width;
       c.beginPath(); c.moveTo(...corners[3]); c.lineTo(...corners[1]); c.stroke();
@@ -1392,7 +1395,7 @@ function sliceTexture(p, s, u, v) {
   }
   if (shown === 'split') {
     c.strokeStyle = '#ffffff';
-    c.lineWidth = Math.max(1.5, Math.max(cols, rows) / 70);
+    c.lineWidth = Math.max(1, Math.max(cols, rows) / 120);
     c.beginPath(); c.moveTo(...px(u[0], v[1])); c.lineTo(...px(u[1], v[0])); c.stroke();
   }
   p.texture = canvas;
