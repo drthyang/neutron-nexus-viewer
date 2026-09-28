@@ -168,7 +168,14 @@ body.comparing .dataset-button { min-width: 0; max-width: 260px; }
 .app { display: grid; grid-template-columns: var(--panel) minmax(0, 1fr); height: calc(100vh - var(--topbar)); height: calc(100dvh - var(--topbar)); }
 body.panel-collapsed .app { grid-template-columns: 0 minmax(0, 1fr); }
 body.panel-collapsed .panel { visibility: hidden; }
-.panel { min-height: 0; overflow-y: auto; background: var(--surface); border-right: 1px solid var(--border); }
+.panel { display: flex; flex-direction: column; min-height: 0; overflow-y: auto; background: var(--surface); border-right: 1px solid var(--border); }
+.panel > * { flex: none; }
+/* Copyright, license and documentation, as in the other apps. */
+.credit { font-size: 11px; color: var(--text-3); }
+.credit .sep { margin: 0 6px; color: var(--border-strong); }
+.credit a { color: var(--text-2); text-decoration: none; }
+.credit a:hover { color: var(--accent-hi); text-decoration: underline; }
+.panel-foot { position: sticky; bottom: 0; margin-top: auto; display: flex; flex-direction: column; gap: 2px; padding: 10px 16px; border-top: 1px solid var(--border); background: var(--surface); }
 .psec { border-bottom: 1px solid var(--border); }
 .psec-head { display: flex; align-items: center; gap: 8px; width: 100%; height: 42px; padding: 0 16px; border: 0; background: transparent; cursor: pointer; text-align: left; }
 .psec-head:hover .psec-title { color: var(--text); }
@@ -275,6 +282,9 @@ body.panel-collapsed .panel { visibility: hidden; }
 .field { display: flex; flex-direction: column; gap: 6px; min-width: 0; }
 .method h4 { margin: 0 0 3px; font-size: 10px; font-weight: 650; letter-spacing: 0.07em; text-transform: uppercase; color: var(--text-2); }
 .method p { margin: 0; font-size: 12px; line-height: 1.55; color: var(--text-3); }
+.pop-links { display: flex; align-items: center; gap: 12px; font-size: 11.5px; }
+.pop-links a { color: var(--accent-hi); text-decoration: none; font-weight: 550; }
+.pop-links a:hover { text-decoration: underline; }
 
 /* ---- start, loading, toast --------------------------------------------------------- */
 .stage { height: calc(100vh - var(--topbar)); height: calc(100dvh - var(--topbar)); display: grid; place-items: center; padding: 24px; overflow: auto; }
@@ -288,9 +298,10 @@ body.panel-collapsed .panel { visibility: hidden; }
 .features li svg { color: var(--accent); margin-top: 1px; }
 .features b { display: block; font-size: 12.5px; font-weight: 650; }
 .features span { font-size: 11.5px; color: var(--text-3); line-height: 1.45; }
-.hero-alt { margin: -12px 0 24px; font-size: 12.5px; color: var(--text-3); }
+.hero > .hero-alt { margin: -12px auto 24px; font-size: 12.5px; color: var(--text-3); }
 .linklike { border: 0; background: none; padding: 0; color: var(--accent-hi); font-size: inherit; cursor: pointer; text-decoration: underline; text-underline-offset: 2px; }
-.privacy { margin: 22px 0 0; font-size: 11.5px; color: var(--text-3); }
+.hero > .credit { max-width: none; margin: 18px 0 0; padding-top: 16px; border-top: 1px solid var(--border-subtle); font-size: 11px; color: var(--text-3); }
+.hero > .privacy { margin: 22px auto 0; font-size: 11.5px; color: var(--text-3); }
 .loading-card { width: min(520px, 100%); background: var(--surface); border: 1px solid var(--border); border-radius: 14px; box-shadow: var(--shadow-1); padding: 22px 24px; }
 .loading-card .row { display: flex; align-items: center; gap: 10px; margin-bottom: 14px; font-size: 13px; font-weight: 600; }
 .boot-label { font-family: var(--font-mono); font-size: 11.5px; color: var(--text-3); margin-top: 10px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
@@ -317,6 +328,7 @@ body.dragging.drop-b::after { content: "Drop to compare as dataset B"; }
   body { overflow: auto; }
   .app, body.panel-collapsed .app { display: block; height: auto; }
   .panel { border-right: 0; border-bottom: 1px solid var(--border); overflow: visible; }
+  .panel-foot { position: static; }
   body.panel-collapsed .panel { display: none; }
   .workspace { display: flex; flex-direction: column; padding: 0 10px 10px; }
   .workspace .view, .workspace.focus > .view:not(.primary), .workspace.single > .view:not(.primary) { display: flex; height: 460px; }
@@ -383,6 +395,7 @@ body.dragging.drop-b::after { content: "Drop to compare as dataset B"; }
         <div><b>3-D view</b><span>Transparent isosurface with the current slices as planes.</span></div></li>
     </ul>
     <p class="privacy">Or drop a file anywhere. Everything runs in your browser; the file is never uploaded.</p>
+    <p class="credit">© 2026 Tsung-Han Yang<span class="sep" aria-hidden="true">·</span><a href="https://github.com/drthyang/neutron-nexus-viewer/blob/main/LICENSE" target="_blank" rel="noopener noreferrer">AGPLv3</a><span class="sep" aria-hidden="true">·</span><a href="https://github.com/drthyang/neutron-nexus-viewer#readme" target="_blank" rel="noopener noreferrer">About &amp; documentation</a></p>
   </div>
 </section>
 
@@ -485,6 +498,7 @@ body.dragging.drop-b::after { content: "Drop to compare as dataset B"; }
         <label id="angles-wrap" class="switch" title="Snap direct-cell angles within 1° of 60°, 90° or 120°"><input id="angles" type="checkbox" checked><span class="switch-track"></span><span class="switch-label">Nominal cell angles (60/90/120°)</span></label>
       </div>
     </section>
+    <footer class="panel-foot credit"><span>© 2026 Tsung-Han Yang</span><span><a href="https://github.com/drthyang/neutron-nexus-viewer/blob/main/LICENSE" target="_blank" rel="noopener noreferrer">AGPLv3</a><span class="sep" aria-hidden="true">·</span><a href="https://github.com/drthyang/neutron-nexus-viewer#readme" target="_blank" rel="noopener noreferrer">About &amp; documentation</a></span></footer>
   </aside>
 
   <div class="work">
@@ -531,7 +545,8 @@ body.dragging.drop-b::after { content: "Drop to compare as dataset B"; }
 <div id="pop-info" class="popover" role="dialog" aria-label="Dataset details and method" hidden style="width: 480px">
   <div class="pop-head"><span class="pop-title">Dataset</span></div>
   <div class="pop-body"><dl id="info-meta" class="kv" style="grid-template-columns: max-content minmax(0, 1fr)"></dl></div>
-  <div class="pop-head" style="border-top: 1px solid var(--border)"><span class="pop-title">Method</span></div>
+  <div class="pop-head" style="border-top: 1px solid var(--border)"><span class="pop-title">Method</span>
+    <span class="pop-links" title="Documentation on GitHub"><a href="https://github.com/drthyang/neutron-nexus-viewer/blob/main/docs/USER_GUIDE.md" target="_blank" rel="noopener noreferrer">User guide</a><a href="https://github.com/drthyang/neutron-nexus-viewer/blob/main/docs/METHOD.md" target="_blank" rel="noopener noreferrer">Method</a><a href="https://github.com/drthyang/neutron-nexus-viewer/blob/main/docs/DEVELOPMENT.md" target="_blank" rel="noopener noreferrer">Development</a></span></div>
   <div class="pop-body method">
     <div><h4>Slices</h4><p>Each pixel is the equal-weight mean of the unique finite, unmasked voxels in the slab, pooled with all their symmetry equivalents. No smoothing or interpolation; grey means no measured contribution.</p></div>
     <div><h4>Symmetry</h4><p>Generators are closed into a group, and every operation must map bin centers onto bin centers. A warning appears when the operations change the cell metric by more than 2%. Oblique axes use the reciprocal metric from the UB matrix.</p></div>

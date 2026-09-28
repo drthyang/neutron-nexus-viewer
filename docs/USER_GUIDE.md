@@ -26,6 +26,7 @@ The histogram is held in memory as float32. A 401³ volume needs about 260 MB an
   - **Processing**: the pipeline *Measured voxels → Mask → Symmetry average → Views*, followed by the Symmetry and Mask controls. Active stages are highlighted.
   - **Display**: colormap, color range, scale, view range, guides and cell angles.
 - **Workspace**: a header row with the click mode, the shared color legend and the layout, then four views (HK, HL, KL and 3-D).
+- **Panel footer**: copyright, the license and a link to this documentation. The ⓘ popover links to each guide.
 
 Below 1000 px wide, or on short screens, the panel sits above the views and the page scrolls.
 
