@@ -95,7 +95,7 @@ Once B is open, the Dataset section lists both files and one table for the two: 
 
 The **Export** section at the bottom of the panel hands the processed volume to the 3D-ΔPDF pipeline of [NEBULA3D](https://github.com/drthyang/nebula3d). NEBULA3D does not symmetrize, so choose a Laue class (and a mask) first.
 
-- **Open in NEBULA3D** opens NEBULA3D in a new tab and builds the volume while it starts; NEBULA3D then loads it and selects it as its dataset, ready to configure and run. The card reports when NEBULA3D has loaded it. If the browser blocks the tab, allow pop-ups for this site.
+- **Open in NEBULA3D** opens NEBULA3D in a new tab and builds the volume while it starts, and NEBULA3D shows the build's progress meanwhile; it then loads the volume and selects it as its dataset, ready to configure and run. The card reports when NEBULA3D has loaded it. If the browser blocks the tab, allow pop-ups for this site.
 - **Download** saves the same file, to open in NEBULA3D with *Load volume…* (or to put in the data folder of its desktop app).
 
 - **Content**: every voxel is the mean of the measured, unmasked voxels among its symmetry equivalents, as in the slices; voxels with none are written as 0 with mask 0, and NEBULA3D backfills them. When comparing, dataset A is exported.

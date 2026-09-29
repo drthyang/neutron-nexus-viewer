@@ -373,7 +373,10 @@ const handlers = {
     updateStates();
   },
   'mask-file': ({ blob }) => download(blob, `${stem()}_mask.npy.gz`),
-  'progress-export': ({ label, fraction }) => showExportProgress(label, fraction),
+  'progress-export': ({ label, fraction }) => {
+    showExportProgress(label, fraction);
+    forwardProgress(label, fraction);
+  },
   'export-file': ({ blob, stats, seconds }) => {
     const { name, send, attrs } = exportJob;
     exportJob = null;
@@ -1527,6 +1530,15 @@ function postHandoff(h, message) {
   else h.win.postMessage(message, h.origin);
 }
 
+/** Show the waiting NEBULA3D tab how far the volume is built (once it is listening). */
+function forwardProgress(label, fraction) {
+  const h = handoff;
+  if (!h || h.file) return;
+  h.progress = { label, fraction };
+  if (!h.ready) return;
+  try { postHandoff(h, { type: 'nebula3d-import-progress', id: h.id, label, fraction }); } catch { /* tab gone */ }
+}
+
 function sendHandoff() {
   const h = handoff;
   if (!h?.ready || !h.file || h.sent) return;
@@ -1565,7 +1577,10 @@ function onHandoffMessage(data) {
   const h = handoff;
   if (!h || data?.id !== h.id) return;
   if (data.type === 'nebula3d-import-ready') {
+    // On the first "ready", show NEBULA3D the progress it missed while loading.
+    const first = !h.ready;
     h.ready = true;
+    if (first && h.progress) forwardProgress(h.progress.label, h.progress.fraction);
     sendHandoff();
   } else if (data.type === 'nebula3d-import-loaded') {
     const name = h.file?.name ?? 'the volume';
