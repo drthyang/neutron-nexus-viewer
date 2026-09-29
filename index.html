@@ -157,7 +157,6 @@ button.ds:hover, .ds-b:has(.ds-main:hover) { background: var(--surface-3); }
 .ds-name { font-size: 12.5px; font-weight: 650; line-height: 1.2; }
 .ds-facts { font-family: var(--font-mono); font-size: 10.5px; line-height: 1.2; color: var(--text-3); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
 .ds-warn { display: inline-grid; place-items: center; width: 16px; height: 16px; border-radius: 50%; background: var(--amber); color: #fff; font-size: 10.5px; font-weight: 700; flex: none; cursor: help; }
-.ds-bar { position: absolute; left: 0; right: 0; bottom: 0; height: 3px; background: var(--surface-3); }
 .ds-add { height: 40px; border-style: dashed; color: var(--text-3); }
 .file-sep { display: grid; place-items: center; width: 22px; flex: none; color: var(--text-3); }
 body.comparing .ds { max-width: 400px; }
@@ -171,6 +170,9 @@ body.comparing #open > .ds-icon { display: none; }
 .status-dot { width: 7px; height: 7px; border-radius: 50%; background: var(--text-3); flex: none; }
 .status-dot.ok { background: var(--green); box-shadow: 0 0 6px rgba(19, 163, 107, 0.5); }
 .status-dot.busy { background: var(--accent); animation: pulse 1.6s ease-out infinite; }
+.status { font-variant-numeric: tabular-nums; }
+.work-progress { position: absolute; left: 0; right: 0; bottom: -1px; height: 2px; background: var(--accent-soft); overflow: hidden; }
+.work-progress > div { height: 100%; width: 0; background: var(--accent); transition: width 0.2s ease; }
 @keyframes pulse { 0% { box-shadow: 0 0 0 0 rgba(47, 116, 230, 0.45); } 70% { box-shadow: 0 0 0 6px rgba(47, 116, 230, 0); } 100% { box-shadow: 0 0 0 0 rgba(47, 116, 230, 0); } }
 
 /* ---- app body: control panel + work area ------------------------------------------- */
@@ -428,7 +430,6 @@ body.dragging.drop-b::after { content: "Drop to compare as dataset B"; }
       <button id="compare-button" class="ds-main" type="button"><span class="ab-tag">B</span><span class="ds-text"><span id="compare-name" class="fname ds-name"></span><span id="compare-facts" class="ds-facts"></span></span></button>
       <span id="compare-warn" class="ds-warn" hidden>!</span>
       <button id="compare-close" class="icon-btn" type="button" title="Remove B"><svg width="11" height="11" viewBox="0 0 12 12" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" aria-hidden="true"><path d="M2.5 2.5l7 7M9.5 2.5l-7 7"/></svg></button>
-      <div id="compare-progress" class="ds-bar" hidden><div id="compare-bar" class="boot-fill"></div></div>
     </div>
     <button id="compare-open" class="btn btn-ghost ds-add hide-sm" type="button" hidden title="Compare with a second file (B): every slice is split along its diagonal, and I(Q) shows both. Or drop a file here.">
       <svg width="14" height="14" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linejoin="round" aria-hidden="true"><path d="M1.75 1.75v12.5h12.5Z" fill="currentColor" opacity="0.22" stroke="none"/><rect x="1.75" y="1.75" width="12.5" height="12.5" rx="1.5"/><path d="M2.25 2.25l11.5 11.5"/></svg>Compare…</button>
@@ -436,7 +437,9 @@ body.dragging.drop-b::after { content: "Drop to compare as dataset B"; }
   <input id="file" type="file" accept=".nxs,.nx5,.h5,.hdf5,.hdf" hidden>
   <input id="file-b" type="file" accept=".nxs,.nx5,.h5,.hdf5,.hdf" hidden>
   <span class="spacer"></span>
-  <span class="status" title="Everything runs in this browser tab"><span id="status-dot" class="status-dot"></span><span id="status-text" class="status-text">ready</span></span>
+  <span id="status" class="status" title="Everything runs in this browser tab"><span id="status-dot" class="status-dot"></span><span id="status-text" class="status-text">ready</span></span>
+  <!-- Work in progress (masks, I(Q), the NEBULA3D export, opening B): one bar along the bottom edge of the top bar. -->
+  <div id="work-progress" class="work-progress" hidden><div id="work-progress-fill"></div></div>
   <button class="icon-btn" type="button" title="Dataset details and method" aria-haspopup="dialog" aria-expanded="false" data-pop="pop-info" data-loaded hidden>
     <svg width="16" height="16" viewBox="0 0 18 18" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" aria-hidden="true"><circle cx="9" cy="9" r="7"/><path d="M9 8.2v4.3"/><circle cx="9" cy="5.6" r="0.6" fill="currentColor"/></svg>
   </button>
@@ -540,7 +543,6 @@ body.dragging.drop-b::after { content: "Drop to compare as dataset B"; }
           </div>
           <p class="sub-hint">Reduces the masked, symmetrized volume to 1-D: the mean intensity in each |Q| shell, over the part of the shell that has data.</p>
           <p id="powder-status" class="note"></p>
-          <div id="powder-progress" class="boot-bar" hidden><div id="powder-bar" class="boot-fill"></div></div>
           <span class="inline"><button id="powder-show" class="btn btn-ghost" type="button" style="flex: 1" title="Show I(Q) in the fourth view, in place of the 3-D view">Show I(Q)</button><button id="powder-download" class="btn btn-ghost" type="button" title="Save I(Q) as text: Q, I, σ, coverage and voxels per shell">Download</button></span>
         </div>
         <div id="export" class="sub">
@@ -550,7 +552,6 @@ body.dragging.drop-b::after { content: "Drop to compare as dataset B"; }
           </div>
           <p class="sub-hint">The last step here: hand the masked, symmetrized volume to NEBULA3D for 3D-ΔPDF analysis, in a new tab or as a file.</p>
           <p id="export-status" class="note"></p>
-          <div id="export-progress" class="boot-bar" hidden><div id="export-bar" class="boot-fill"></div></div>
           <span class="inline"><button id="export-open" class="btn btn-primary" type="button" style="flex: 1" title="Open NEBULA3D in a new tab and load this volume there">Open in NEBULA3D ↗</button><button id="export-run" class="btn btn-ghost" type="button" title="Save the file, to load it in NEBULA3D with Load volume…">Download</button></span>
         </div>
       </div>

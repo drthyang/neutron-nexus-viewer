@@ -172,9 +172,40 @@ function fitName(el) {
 
 const urlName = (url) => decodeURIComponent(new URL(url, location.href).pathname.split('/').pop()) || 'remote.nxs';
 
+// Work in progress, shown in the top bar: building a mask, I(Q), the NEBULA3D
+// export, opening B. The status names the job that started first and how far
+// it is (with the number of others), the bar under the top bar shows all of
+// them together, and hovering lists them. Without jobs, the status is the one
+// last set with status().
+const jobs = new Map();
+let idle = ['', 'no file'];
+
 function status(state, text) {
-  $('status-dot').className = `status-dot ${state}`;
-  $('status-text').textContent = text;
+  idle = [state, text];
+  showJobs();
+}
+
+/** Start or update job `key`: `name` for the top bar, `step` for its tooltip. */
+function setJob(key, name, step = '', fraction = 0) {
+  jobs.set(key, { name, step, fraction: clamp(fraction || 0, 0, 1) });
+  showJobs();
+}
+
+function endJob(...keys) {
+  for (const key of keys) jobs.delete(key);
+  showJobs();
+}
+
+function showJobs() {
+  const list = [...jobs.values()], busy = list.length > 0, first = list[0];
+  const percent = (f) => `${Math.round(100 * f)}%`;
+  $('status-dot').className = `status-dot ${busy ? 'busy' : idle[0]}`;
+  $('status-text').textContent = busy ? `${first.name} · ${percent(first.fraction)}${list.length > 1 ? ` +${list.length - 1}` : ''}` : idle[1];
+  $('status').title = busy
+    ? list.map((j) => `${j.name}${j.step ? `: ${j.step}` : ''} · ${percent(j.fraction)}`).join('\n')
+    : 'Everything runs in this browser tab';
+  $('work-progress').hidden = !busy;
+  if (busy) $('work-progress-fill').style.width = percent(list.reduce((s, j) => s + j.fraction, 0) / list.length);
 }
 
 // Popovers: one open at a time, placed under the button that opened it.
@@ -230,6 +261,7 @@ function error(message) {
 
 function fail(message) {
   error(message);
+  endJob('mask-a', 'iq-a', 'export');
   status(meta ? 'ok' : '', meta ? 'ready' : 'no file');
   if (!panels.length) show('intro');
 }
@@ -239,6 +271,7 @@ function openFile(file) {
   compare?.worker?.terminate();
   compare = null;
   exportJob = null;
+  jobs.clear();
   showCompare();
   closePopovers();
   meta = null;
@@ -360,11 +393,12 @@ const handlers = {
     if (iso.wanted) sendIso();
   },
   'progress-mask': ({ label, fraction }) => {
+    setJob('mask-a', 'Mask', label, fraction);
     $('mask-status').className = 'note';
     $('mask-status').textContent = `${label}… ${Math.round(100 * fraction)}%`;
   },
   mask: ({ stats, radius, k, symmetry: group, seconds }) => {
-    status('ok', 'ready');
+    endJob('mask-a');
     $('mask-apply').disabled = false;
     mask = stats ? { ...stats, radius, k, group } : null;
     maskVersion++;
@@ -379,7 +413,7 @@ const handlers = {
     describe();
   },
   'mask-error': ({ message }) => {
-    status('ok', 'ready');
+    endJob('mask-a');
     $('mask-apply').disabled = false;
     $('mask-status').className = 'note error';
     $('mask-status').textContent = message;
@@ -393,7 +427,7 @@ const handlers = {
   'export-file': ({ blob, stats, seconds }) => {
     const { name, send, attrs } = exportJob;
     exportJob = null;
-    status('ok', 'ready');
+    endJob('export');
     showExport();
     if (send) {
       if (!handoff) return; // the NEBULA3D tab was closed meanwhile
@@ -410,7 +444,7 @@ const handlers = {
   'export-error': ({ message }) => {
     if (exportJob?.send) endHandoff(`the viewer could not build the volume: ${message}`);
     exportJob = null;
-    status('ok', 'ready');
+    endJob('export');
     showExport();
     $('export-status').className = 'note error';
     $('export-status').textContent = message;
@@ -1504,7 +1538,7 @@ function applyMask(clear = false) {
     return;
   }
   $('mask-apply').disabled = true;
-  status('busy', 'building mask');
+  setJob('mask-a', 'Mask', radius || k ? 'Starting' : 'Clearing', 0);
   $('mask-state').textContent = 'working…';
   $('mask-state').className = 'state busy';
   $('mask-status').className = 'note';
@@ -1536,7 +1570,6 @@ function showExport() {
   if (exportJob || !meta) return;
   const statusEl = $('export-status');
   statusEl.title = '';
-  $('export-progress').hidden = true;
   let plan;
   try {
     plan = exportPlan(meta.dims, meta.lattice);
@@ -1564,8 +1597,7 @@ function showExport() {
 }
 
 function showExportProgress(label, fraction) {
-  $('export-progress').hidden = false;
-  $('export-bar').style.width = `${Math.round(100 * clamp(fraction, 0, 1))}%`;
+  setJob('export', 'Export', label, fraction);
   $('export-status').className = 'note';
   $('export-status').textContent = `${label}… ${Math.round(100 * fraction)}%`;
 }
@@ -1596,7 +1628,7 @@ function runExport(send = false) {
   exportJob = { name: `${stem()}_${sym ? `sym${symmetry.name.replace(/\//g, '')}` : 'unsym'}.nxs`, send, attrs };
   $('export-run').disabled = $('export-open').disabled = true;
   exportState('busy', 'working…');
-  status('busy', 'exporting');
+  setJob('export', 'Export', 'Symmetrizing', 0);
   showExportProgress('Symmetrizing', 0);
   worker.postMessage({ type: 'export', id: ++requestId, plan: { order, lo, size, shape, centers, ub }, maps, attrs });
   return true;
@@ -2012,10 +2044,11 @@ function queuePowder(layer, w, request, key) {
 }
 
 function sendPowder(layer, w) {
-  const q = layer.wanted;
+  const q = layer.wanted, b = layer === powder.b;
   layer.wanted = null;
   layer.busy = true;
   layer.progress = null;
+  setJob(b ? 'iq-b' : 'iq-a', b ? 'I(Q) B' : 'I(Q)', 'Starting', 0);
   w.postMessage({ type: 'powder', id: ++requestId, ...q });
 }
 
@@ -2027,6 +2060,7 @@ function powderResult(which, msg, message = '') {
   layer.progress = null;
   Object.assign(layer, msg ? { data: msg, error: '' } : { data: null, error: message });
   if (layer.wanted) sendPowder(layer, which === 'a' ? worker : compare.worker);
+  else endJob(`iq-${which}`);
   showPowder();
   drawPowderView();
   finishPowderDownload();
@@ -2036,6 +2070,7 @@ function powderProgress(which, { label, fraction }) {
   const layer = powder?.[which];
   if (!layer?.busy) return;
   layer.progress = { label, fraction };
+  setJob(`iq-${which}`, which === 'a' ? 'I(Q)' : 'I(Q) B', label, fraction);
   showPowder();
 }
 
@@ -2049,11 +2084,9 @@ function showPowder() {
   };
   const layers = [['A', powder.a], ...(compare?.ready ? [['B', powder.b]] : [])];
   const working = layers.filter(([, l]) => l.busy);
-  $('powder-progress').hidden = !working.length;
   if (working.length) {
     const fraction = working.reduce((s, [, l]) => s + (l.progress?.fraction ?? 0), 0) / working.length;
     const label = working.find(([, l]) => l.progress)?.[1].progress.label ?? 'Starting';
-    $('powder-bar').style.width = `${Math.round(100 * fraction)}%`;
     state('busy', 'working…');
     statusEl.className = 'note';
     statusEl.textContent = `${label}${compare?.ready ? ` (${working.map(([k]) => k).join(', ')})` : ''}… ${Math.round(100 * fraction)}%`;
@@ -2571,16 +2604,22 @@ function openCompare(file) {
     error(`Dataset B: ${e.message || 'the HDF5 reader could not start.'}`);
   };
   w.postMessage({ type: 'open', file });
-  showCompare('Opening', 0);
+  compareWork('open-b', 'Opening', 0);
+}
+
+/** Work on B (`key` 'open-b' or 'mask-b'): a job in the top bar, and the step under B's name. */
+function compareWork(key, step, fraction) {
+  setJob(key, key === 'mask-b' ? 'Mask B' : 'Opening B', step, fraction);
+  showCompare(step, fraction);
 }
 
 async function openCompareURL(url) {
   if (!panels.length) return;
   closeCompare();
   const current = compare = { worker: null, name: urlName(url), ready: false };
-  showCompare('Downloading', 0);
+  compareWork('open-b', 'Downloading', 0);
   try {
-    const file = await fetchFile(url, (got, total) => { if (compare === current) showCompare(`Downloading ${downloaded(got, total)}`, total ? got / total : 0); });
+    const file = await fetchFile(url, (got, total) => { if (compare === current) compareWork('open-b', `Downloading ${downloaded(got, total)}`, total ? got / total : 0); });
     if (compare === current) openCompare(file);
   } catch (err) {
     if (compare !== current) return;
@@ -2592,6 +2631,7 @@ async function openCompareURL(url) {
 function closeCompare() {
   compare?.worker?.terminate();
   compare = null;
+  endJob('open-b', 'mask-b', 'iq-b');
   for (const p of panels) {
     p.b = newLayer();
     showCaption(p);
@@ -2621,15 +2661,16 @@ function sendCompareMask(radius, k) {
   compare.maskBusy = true;
   compare.maskRequested = `${radius},${k}`;
   compare.worker.postMessage({ type: 'mask', id: ++requestId, radius, k: kb, maps: compare.maps, symmetry: symmetry.name });
-  showCompare('Building mask', 0);
+  compareWork('mask-b', 'Building mask', 0);
 }
 
 const compareHandlers = {
-  progress: ({ label, fraction }) => showCompare(label, fraction),
+  progress: ({ label, fraction }) => compareWork('open-b', label, fraction),
   meta: ({ info }) => { compare.meta = info; },
   ready: ({ stats, seconds }) => {
     Object.assign(compare.meta, { stats, seconds });
     compare.ready = true;
+    endJob('open-b');
     Object.assign(compare, compareMaps());
     for (const p of panels) p.b = newLayer();
     // B gets A's mask before its first slices.
@@ -2667,9 +2708,10 @@ const compareHandlers = {
     if (p.b.wanted) sendB(p);
     redraw();
   },
-  'progress-mask': ({ label, fraction }) => showCompare(label, fraction),
+  'progress-mask': ({ label, fraction }) => compareWork('mask-b', label, fraction),
   mask: ({ stats, radius, k }) => {
     compare.maskBusy = false;
+    endJob('mask-b');
     compare.mask = stats ? { ...stats, radius, k } : null;
     compare.maskVersion = (compare.maskVersion ?? 0) + 1;
     showCompare();
@@ -2679,6 +2721,7 @@ const compareHandlers = {
   },
   'mask-error': ({ message }) => {
     compare.maskBusy = false;
+    endJob('mask-b');
     compare.maskNote = `Mask for B failed: ${message}`;
     showCompare();
     panels.forEach((p) => request(p, 'b'));
@@ -2707,8 +2750,6 @@ function showCompare(step = '', fraction = null) {
   if (!compare) return;
   setFileName($('compare-name'), compare.name, sourceName);
   const stepText = step && `${step}${fraction > 0 ? ` · ${Math.round(100 * fraction)}%` : '…'}`;
-  $('compare-progress').hidden = !stepText || fraction === null;
-  $('compare-bar').style.width = `${Math.round(100 * clamp(fraction ?? 0, 0, 1))}%`;
   $('compare-facts').textContent = stepText || (ready ? datasetFacts(compare.meta) : 'Opening…');
   $('compare-close').title = ready ? 'Remove B' : 'Cancel';
   // Warnings about B: its axes, and processing that could not be applied to it.

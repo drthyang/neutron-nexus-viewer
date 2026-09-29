@@ -19,7 +19,7 @@ The histogram is held in memory as float32. A 401³ volume needs about 260 MB an
 
 ## The screen
 
-- **Top bar**: the datasets, then the engine status and ⓘ for the full dataset details, a summary of the method and links to these guides. Each dataset is a chip with its file name over one line of facts: the cell (angles other than 90°), the grid and the measured fraction; hover for the details, such as the reciprocal lattice, bin widths and mask. Click A to open another file, or *Compare…* to add a second one (B); see [Comparing](#comparing-two-datasets). Long file names are shortened in the middle.
+- **Top bar**: the datasets, then the status and ⓘ for the full dataset details, a summary of the method and links to these guides. The status also shows work in progress (building a mask, I(Q), the NEBULA3D export, opening B): the job that started first and how far it is, with the number of others ("Mask · 45% +1"), and a thin bar along the bottom edge of the top bar for all of them together; hover it for the list. Each dataset is a chip with its file name over one line of facts: the cell (angles other than 90°), the grid and the measured fraction; hover for the details, such as the reciprocal lattice, bin widths and mask. Click A to open another file, or *Compare…* to add a second one (B); see [Comparing](#comparing-two-datasets). Long file names are shortened in the middle.
 - **Control panel** (left, collapsible; each section folds to a one-line summary), in the order you work:
   - **Processing**: the pipeline *Measured voxels → Mask → Symmetry average → Views → NEBULA3D*, followed by the Symmetry and Mask controls. Active stages are highlighted, and clicking a stage jumps to its controls.
   - **Export**: the last step: I(Q), the volume reduced to 1-D, and handing the processed volume to NEBULA3D.
@@ -100,7 +100,7 @@ I(Q) reduces the masked, symmetrized volume to one dimension: the mean intensity
 
 *Compare…* in the top bar, or dropping a file on it, opens a second dataset next to the first (A). Every slice is then cut along its diagonal, from the top-left to the bottom-right corner of the view: A fills the lower-left half and B the upper-right half. A white gap marks the cut, B's half is hatched where it has no data, and tags in the corners name the files.
 
-B then gets its own chip in the top bar, after A and the split icon, with its facts. While it loads, and while its mask is built, the chip shows the step and a thin progress bar; an amber *!* marks warnings (hover to read them).
+B then gets its own chip in the top bar, after A and the split icon, with its facts. While it loads, and while its mask is built, the chip shows the step, and the status in the top bar the progress; an amber *!* marks warnings (hover to read them).
 
 - **Shared**: slice positions and thickness, zoom and pan, symmetry, mask settings and the color scale apply to both datasets, so the two halves are directly comparable. *Auto range* pools both.
 - **A / Split / B** in the workspace header shows one dataset over the whole view, or the split.
