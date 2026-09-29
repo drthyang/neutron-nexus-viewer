@@ -1954,13 +1954,13 @@ function update3D() {
   show3DCut();
 }
 
-/** The line cut in the 3-D view, unless turned off in its options: its line and the box of voxels it averages. */
+/** The line cut in the 3-D view: its line through the slices and the box of voxels it averages. */
 function show3DCut() {
   if (!view3d) return;
   const p = cutPanel();
   let spec = null;
   try {
-    if (p?.data && $('iso-cut').checked) spec = cutSpec();
+    if (p?.data) spec = cutSpec();
   } catch { /* the cut view says why */ }
   if (!spec) {
     view3d.setCut(null);
@@ -2778,7 +2778,7 @@ function setupCut() {
     <button type="button" class="btn btn-ghost btn-xs zoom-reset" hidden title="Back to the full range (or double-click the plot)">Reset zoom</button>
     <div class="segmented sm cut-scale" role="group" aria-label="Intensity scale"><button type="button" data-value="linear" title="Linear intensity scale">Lin</button><button type="button" data-value="log" title="Logarithmic intensity scale">Log</button></div>
     <button type="button" class="icon-btn" title="Line cut options" aria-haspopup="dialog" aria-expanded="false" data-pop="pop-cut">${ICONS.gear}</button>
-    <button type="button" class="icon-btn data" title="Download the cut as text: position, coordinates, I, σ and voxels per point">${ICONS.download}</button>
+    <button type="button" class="icon-btn" title="Download the cut: CSV or text" aria-haspopup="menu" aria-expanded="false" data-pop="pop-cut-download">${ICONS.download}</button>
     <button type="button" class="icon-btn save" title="Save PNG">${ICONS.save}</button>`;
   shell.actions.append(shell.focusBtn, shell.maxBtn);
   shell.q('.view-body').innerHTML = `<canvas class="plot" role="img" aria-label="Line cut: the intensity along a line in a slice"></canvas><span class="overlay-chip" hidden></span>
@@ -2848,7 +2848,6 @@ function setupCut() {
   };
   for (const input of [cut.from, cut.to, cut.width]) input.onkeydown = (e) => { if (e.key === 'Enter') input.blur(); };
   wirePlot(cut);
-  q('.data').onclick = downloadCut;
   q('.save').onclick = () => savePlotPNG(cut, `${shownStem()}_cut_${cutFileName()}.png`);
   showCut();
 }
@@ -3183,30 +3182,60 @@ function drawCutOverlay(c, p, corners) {
   c.restore();
 }
 
-/** Save the cut as text, once it is computed. */
-function downloadCut() {
+/** Save the cut as 'csv' or 'dat' (text), once it is computed. */
+function downloadCut(format) {
   if (!cut?.line) return;
-  cut.download = true;
+  cut.download = format;
   updateCut();
   finishCutDownload();
 }
 
 function finishCutDownload() {
   if (!cut?.download || cut.stale || [cut.a, ...(compare?.ready ? [cut.b] : [])].some((l) => l.busy || l.wanted)) return;
+  const format = cut.download;
   cut.download = false;
   if (!cut.a.data) return;
-  const both = compare?.ready && cut.b.data;
-  download(new Blob([cutText()], { type: 'text/plain' }), `${both ? pairStem(stem(), stemOf(compare.name)) : stem()}_cut_${cutFileName()}.dat`);
+  const both = compare?.ready && cut.b.data, name = `${both ? pairStem(stem(), stemOf(compare.name)) : stem()}_cut_${cutFileName()}`;
+  if (format === 'csv') download(new Blob([cutCSV()], { type: 'text/csv' }), `${name}.csv`);
+  else download(new Blob([cutText()], { type: 'text/plain' }), `${name}.dat`);
+}
+
+/**
+ * The cut's points: per point its position along the cut's axis, its three
+ * coordinates, and I, σ and voxels of each dataset shown (named in `values`).
+ */
+function cutTable() {
+  const sets = [['A', sourceName, cut.a.data]];
+  if (compare?.ready && cut.b.data) sets.push(['B', compare.name, cut.b.data]);
+  const data = sets[0][2];
+  const rows = Array.from(data.intensity, (_, k) => {
+    const s = shellMid(data, k);
+    return [s, ...cutPoint(cutAt(s)), ...sets.flatMap(([, , d]) => [d.intensity[k], d.sigma[k], d.voxels[k]])];
+  });
+  const values = sets.length > 1 ? sets.flatMap(([k]) => [`I_${k}`, `sigma_${k}`, `voxels_${k}`]) : ['I', 'sigma', 'voxels'];
+  return { sets, data, rows, values };
+}
+
+/**
+ * The cut as CSV: a header row, then per point its coordinates and I, σ and
+ * voxels of each dataset, with empty cells where there is no value. The
+ * position along the cut is the coordinate of its axis, so it is not repeated.
+ */
+function cutCSV() {
+  const { rows, values } = cutTable();
+  const cell = (x) => (Number.isFinite(x) ? String(Number(x.toPrecision(7))) : '');
+  const quote = (text) => (/[",\n]/.test(text) ? `"${text.replace(/"/g, '""')}"` : text);
+  const lines = [[...meta.dims.map((d) => d.label), ...values].map(quote).join(',')];
+  for (const row of rows) lines.push(row.slice(1).map(cell).join(','));
+  return `${lines.join('\r\n')}\r\n`;
 }
 
 /** The cut as text: a commented header, then per point its position, coordinates, and I, σ and voxels of each dataset. */
 function cutText() {
-  const sets = [['A', sourceName, cut.a.data]];
-  if (compare?.ready && cut.b.data) sets.push(['B', compare.name, cut.b.data]);
-  const both = sets.length > 1, data = sets[0][2], p = cutPanel(), spec = cutSpec(), { axis, path } = cutPath(), { unit, scale } = cutWidthUnit(p);
+  const { sets, data, rows, values } = cutTable();
+  const both = sets.length > 1, p = cutPanel(), spec = cutSpec(), { axis, path } = cutPath(), { unit, scale } = cutWidthUnit(p);
   const X = meta.dims[p.x], Y = meta.dims[p.y], F = meta.dims[p.fixed], step = (data.edges[data.edges.length - 1] - data.edges[0]) / data.intensity.length;
   const num = (x) => (Number.isFinite(x) ? String(Number(x.toPrecision(7))) : 'nan');
-  const columns = both ? sets.flatMap(([k]) => [`I_${k}`, `sigma_${k}`, `voxels_${k}`]) : ['I', 'sigma', 'voxels'];
   const lines = [
     `# Line cut along ${path} of ${sets.map(([k, name]) => (both ? `${k} = ${name}` : name)).join(' and ')}`,
     `# Written by NeXus Viewer (https://drthyang.github.io/neutron-nexus-viewer/) on ${new Date().toISOString()}`,
@@ -3218,13 +3247,9 @@ function cutText() {
     '# I: the equal-weight mean of the distinct measured, unmasked voxels in the union of the symmetry orbits of the voxels at the point, as in the slices',
     `# sigma: ${sets.map(([k, , d]) => `${both ? `${k} ` : ''}${d.errors ? `propagated from ${d.errors}, voxels independent` : 'nan, no uncertainties in the file'}`).join('; ')}`,
     '# voxels: the number of distinct voxels with data pooled at the point',
-    `# ${axis.label} ${meta.dims.map((d) => d.label).join(' ')} ${columns.join(' ')}`,
+    `# ${axis.label} ${meta.dims.map((d) => d.label).join(' ')} ${values.join(' ')}`,
   ];
-  data.intensity.forEach((_, k) => {
-    const s = shellMid(data, k), cells = [num(s), ...cutPoint(cutAt(s)).map(num)];
-    for (const [, , d] of sets) cells.push(num(d.intensity[k]), num(d.sigma[k]), num(d.voxels[k]));
-    lines.push(cells.join(' '));
-  });
+  for (const row of rows) lines.push(row.map(num).join(' '));
   return `${lines.join('\n')}\n`;
 }
 
@@ -3437,7 +3462,6 @@ function restore() {
   if (typeof saved.iqCoverage === 'boolean') $('iq-coverage').checked = saved.iqCoverage;
   if (['linear', 'log'].includes(saved.cutScale)) cutScale = saved.cutScale;
   if (typeof saved.cutBand === 'boolean') $('cut-band').checked = saved.cutBand;
-  if (typeof saved.cut3d === 'boolean') $('iso-cut').checked = saved.cut3d;
   try {
     const l = JSON.parse(localStorage.getItem('nxv-layout'));
     if (['quad', 'focus'].includes(l?.mode)) lastMulti = layout = l.mode;
@@ -3451,7 +3475,7 @@ function persist() {
   const values = {
     cmap: $('cmap').value, scale: $('scale').dataset.value, angles: $('angles').checked, guides: $('guides').checked, grid: $('grid').checked, clickMode,
     iqScale: powderScale, iqSplit: $('iq-split').dataset.value, iqBand: $('iq-band').checked, iqCoverage: $('iq-coverage').checked,
-    cutScale, cutBand: $('cut-band').checked, cut3d: $('iso-cut').checked,
+    cutScale, cutBand: $('cut-band').checked,
   };
   try { localStorage.setItem('nxv-settings', JSON.stringify(values)); } catch { /* storage unavailable */ }
 }
@@ -3490,7 +3514,6 @@ segmented($('scale'), (value) => {
 });
 segmented($('iso-grid'), () => { if (iso) { iso.userLevel = false; requestIso(); } });
 $('iso-slices').onchange = update3D;
-$('iso-cut').onchange = () => { persist(); show3DCut(); };
 $('auto').onclick = autoRange;
 function setPanel(open) {
   document.body.classList.toggle('panel-collapsed', !open);
@@ -3547,6 +3570,9 @@ $('powder-download').onclick = downloadPowder;
 segmented($('iq-split'), () => { persist(); requestPowder(); });
 for (const id of ['iq-band', 'iq-coverage']) $(id).onchange = () => { persist(); drawPlot(powder); };
 $('cut-band').onchange = () => { persist(); drawPlot(cut); };
+for (const item of $('pop-cut-download').querySelectorAll('[data-format]')) {
+  item.onclick = () => { closePopovers(); downloadCut(item.dataset.format); };
+}
 $('cut-step').onchange = changeCutWidth;
 $('cut-step').onkeydown = (e) => { if (e.key === 'Enter') e.target.blur(); };
 

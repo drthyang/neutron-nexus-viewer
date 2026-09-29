@@ -375,6 +375,12 @@ body.panel-collapsed .panel { visibility: hidden; }
 .pop-links { display: flex; align-items: center; gap: 1.2rem; font-size: 1.15rem; }
 .pop-links a { color: var(--accent-hi); text-decoration: none; font-weight: 550; }
 .pop-links a:hover { text-decoration: underline; }
+/* A menu of choices in a popover, such as the line cut's download formats. */
+.pop-body.menu { gap: 0.2rem; padding: 0.6rem; }
+.menu-item { display: flex; flex-direction: column; align-items: flex-start; gap: 0.2rem; width: 100%; padding: 0.8rem 1rem; border: 0; border-radius: var(--radius-sm); background: transparent; text-align: left; cursor: pointer; }
+.menu-item:hover { background: var(--surface-2); }
+.menu-item b { font-size: 1.25rem; font-weight: 650; }
+.menu-item span { font-size: 1.15rem; line-height: 1.4; color: var(--text-3); }
 
 /* ---- start, loading, toast --------------------------------------------------------- */
 .stage { height: calc(100vh - var(--topbar)); height: calc(100dvh - var(--topbar)); display: grid; place-items: center; padding: 2.4rem; overflow: auto; }
@@ -725,7 +731,6 @@ body.dragging.drop-b::after { content: "Drop to compare as dataset B"; }
     <div class="field"><span class="label">Isosurface grid</span>
       <div id="iso-grid" class="segmented fill" data-value="100"><button type="button" data-value="64">Coarse</button><button type="button" data-value="100" class="on">Medium</button><button type="button" data-value="150">Fine</button></div></div>
     <label class="switch"><input id="iso-slices" type="checkbox" checked><span class="switch-track"></span><span class="switch-label">Show the three slices</span></label>
-    <label class="switch" title="The cut's line, and the box of voxels it averages: its width across the line and its slice's thickness"><input id="iso-cut" type="checkbox" checked><span class="switch-track"></span><span class="switch-label">Show the line cut</span></label>
     <p class="note">Drag to rotate, scroll to zoom, right-drag to pan.</p>
   </div>
 </div>
@@ -750,6 +755,13 @@ body.dragging.drop-b::after { content: "Drop to compare as dataset B"; }
     <div class="prow" title="Spacing of the cut's points along its axis; empty for that axis's bin width"><label class="plabel" for="cut-step">Step</label><input id="cut-step" class="num" type="number" min="0" step="any" aria-label="Cut step"></div>
     <label class="switch"><input id="cut-band" type="checkbox" checked><span class="switch-track"></span><span class="switch-label">Error band (±σ)</span></label>
     <p class="note">In <b>Cut</b> mode, drag across a slice to draw a cut, and drag an end to change it; hold Shift to keep it along a lattice direction. The cut lies in its slice and follows the slice's position and thickness. Each point averages the voxels within the width W of the line, pooled with their symmetry equivalents as in the slices.</p>
+  </div>
+</div>
+
+<div id="pop-cut-download" class="popover" role="menu" aria-label="Download the line cut" hidden style="width: 30rem">
+  <div class="pop-body menu">
+    <button type="button" class="menu-item" role="menuitem" data-format="csv"><b>CSV</b><span>Coordinates, I, σ and voxels per point, for spreadsheets and pandas</span></button>
+    <button type="button" class="menu-item" role="menuitem" data-format="dat"><b>Text (.dat)</b><span>The same with the position along the cut and a commented header of its settings, for numpy.loadtxt</span></button>
   </div>
 </div>
 
