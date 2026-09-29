@@ -22,7 +22,7 @@ The histogram is held in memory as float32. A 401³ volume needs about 260 MB an
 - **Top bar**: the open file (A and B, joined by the split icon, when comparing), the engine status, and ⓘ for dataset details, a summary of the method and links to these guides. Long file names are shortened in the middle; hover for the full name.
 - **Control panel** (left, collapsible; each section folds to a one-line summary), in the order you work:
   - **Dataset**: unit cell (from UB), reciprocal lattice, grid and measured fraction, and the Compare card for opening a second dataset.
-  - **Display**: colormap, color range, scale, view range, guides and cell angles.
+  - **Display**: colormap, color range, scale, view range, guides, integer grid and cell angles.
   - **Processing**: the pipeline *Measured voxels → Mask → Symmetry average → Views → NEBULA3D*, followed by the Symmetry and Mask controls. Active stages are highlighted, and clicking a stage jumps to its controls.
   - **Export**: the last step, handing the processed volume to NEBULA3D.
 - **Workspace**: a header row with the click mode, the shared color legend (click it for the Display settings) and the layout, then four views (HK, HL, KL and 3-D).
@@ -51,6 +51,7 @@ The mask removes voxels from the measured data before symmetry averaging:
 - **Scale**: asinh (with a softening value), linear or log. *Auto range* sets vmin to 0, vmax to the 97th percentile, and softening to the median of the positive values in the current slices.
 - **View ±**: shows ± this many r.l.u. around the origin. Leave it empty for the full range.
 - **Guides**: dashed lines where the other two slices cut each view.
+- **Integer grid**: thin lines at whole-number values of each view's axes, such as integer H and K in the HK view. They follow the true axis directions, so on a hexagonal cell they meet at 60°. An axis whose lines would be closer than 6 pixels gets none.
 - **Nominal cell angles**: snaps direct-cell angles within 1° of 60°, 90° or 120° for drawing. Otherwise the angles derived from UB are used.
 
 Axes are drawn with the reciprocal metric of the cell. Axes that share a unit have the same length per r.l.u. and share one tick step. Views whose axes are not orthogonal show the angle between them, for example ∠ 60° for HK in a hexagonal cell.
@@ -105,5 +106,5 @@ The **Export** section at the bottom of the panel hands the processed volume to 
 ## Layouts and export
 
 - **Layouts**: *Quad* (2×2), *Focus* (one large view with the other three beside it) and *Single*. In *Focus*, the small views are thumbnails: hovering one highlights it, and clicking it (or Enter) shows it large. Each view's header can focus or maximize it, and double-clicking a header maximizes it. Esc returns.
-- **Save PNG** exports a view at 3× resolution. Slice exports include a title and their own colorbar, without guides. When comparing, they keep the split and the dataset tags.
+- **Save PNG** exports a view at 3× resolution. Slice exports include a title, their own colorbar and the integer grid when it is on, without guides. When comparing, they keep the split and the dataset tags.
 - **Remembered settings**: the colormap, scale, click mode, layout, panel state and folded sections are remembered per browser.

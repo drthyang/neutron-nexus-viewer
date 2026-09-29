@@ -860,7 +860,7 @@ function readSettings() {
   const s = {
     cmap: $('cmap').value, scale: $('scale').dataset.value, min: Number($('vmin').value), max: Number($('vmax').value),
     soft: Number($('soft').value), limit: limit === '' ? Infinity : Number(limit),
-    angles: $('angles').checked ? 'nominal' : 'measured', guides: $('guides').checked,
+    angles: $('angles').checked ? 'nominal' : 'measured', guides: $('guides').checked, grid: $('grid').checked,
   };
   if (![s.min, s.max].every(Number.isFinite) || s.max <= s.min) throw new Error('Use finite color limits with vmax > vmin.');
   if (s.scale === 'asinh' && !(s.soft > 0)) throw new Error('Asinh softening must be positive.');
@@ -1036,6 +1036,28 @@ function draw(p, canvas, w, h, dpr, exporting = false) {
     c.transform(sx * g.lx * dx, 0, sx * g.ly * g.cos * dy, -sy * g.ly * sin * dy, x0, y0);
     c.imageSmoothingEnabled = false;
     c.drawImage(layerImage(layer, s), 0, 0);
+    c.restore();
+  }
+
+  // Integer grid: lines at whole-number values of both axes (integer H, K, L on
+  // r.l.u. axes), along the true axis directions. An axis whose lines would be
+  // closer than 6 px apart on screen gets none.
+  if (s.grid) {
+    const gapU = sx * g.lx * sy * sin / Math.hypot(sx * g.cos, sy * sin), gapV = sy * g.ly * sin;
+    const lines = [];
+    if (gapU >= 6) for (let n = Math.ceil(u0); n <= u1; n++) lines.push([project(n, v0), project(n, v1)]);
+    if (gapV >= 6) for (let n = Math.ceil(v0); n <= v1; n++) lines.push([project(u0, n), project(u1, n)]);
+    c.save();
+    path(corners);
+    c.clip();
+    // A light line on a faint dark one, so the grid shows on dark and bright colors alike.
+    for (const [color, width] of [['rgba(18, 24, 33, 0.28)', 2], ['rgba(255, 255, 255, 0.55)', 0.75]]) {
+      c.strokeStyle = color;
+      c.lineWidth = width;
+      c.beginPath();
+      for (const [[a, b], [e, f]] of lines) { c.moveTo(a, b); c.lineTo(e, f); }
+      c.stroke();
+    }
     c.restore();
   }
 
@@ -1938,6 +1960,7 @@ function restore() {
   if (saved.cmap in LUTS) $('cmap').value = saved.cmap;
   if (typeof saved.angles === 'boolean') $('angles').checked = saved.angles;
   if (typeof saved.guides === 'boolean') $('guides').checked = saved.guides;
+  if (typeof saved.grid === 'boolean') $('grid').checked = saved.grid;
   setClickMode(['zoom', 'move'].includes(saved.clickMode) ? saved.clickMode : 'navigate');
   try {
     const l = JSON.parse(localStorage.getItem('nxv-layout'));
@@ -1948,7 +1971,7 @@ function restore() {
 }
 
 function persist() {
-  const values = { cmap: $('cmap').value, scale: $('scale').dataset.value, angles: $('angles').checked, guides: $('guides').checked, clickMode };
+  const values = { cmap: $('cmap').value, scale: $('scale').dataset.value, angles: $('angles').checked, guides: $('guides').checked, grid: $('grid').checked, clickMode };
   try { localStorage.setItem('nxv-settings', JSON.stringify(values)); } catch { /* storage unavailable */ }
 }
 
@@ -1972,8 +1995,8 @@ segmented($('compare-view'), (value) => {
   redraw();
 });
 $('error-close').onclick = () => error('');
-for (const id of ['cmap', 'vmin', 'vmax', 'soft', 'limit', 'angles', 'guides']) $(id).addEventListener('input', redraw);
-for (const id of ['cmap', 'angles', 'guides']) $(id).addEventListener('change', persist);
+for (const id of ['cmap', 'vmin', 'vmax', 'soft', 'limit', 'angles', 'guides', 'grid']) $(id).addEventListener('input', redraw);
+for (const id of ['cmap', 'angles', 'guides', 'grid']) $(id).addEventListener('change', persist);
 for (const id of ['vmin', 'vmax', 'soft']) $(id).addEventListener('input', () => { rangeIsAuto = false; });
 $('angles').addEventListener('change', () => { if (meta) describe(); });
 $('cmap').addEventListener('input', paintColorbar);

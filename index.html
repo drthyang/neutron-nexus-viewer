@@ -488,6 +488,7 @@ body.dragging.drop-b::after { content: "Drop to compare as dataset B"; }
         <div id="soft-wrap" class="prow" title="Asinh softening: values below it are shown nearly linearly"><label class="plabel" for="soft">Softening</label><input id="soft" class="num" type="number" min="0" step="any"></div>
         <div class="prow" title="Show ± this many r.l.u. around the origin; empty for the full range"><label class="plabel" for="limit">View ±</label><input id="limit" class="num" type="number" min="0" step="any" placeholder="full range"></div>
         <label class="switch"><input id="guides" type="checkbox" checked><span class="switch-track"></span><span class="switch-label">Guides where the other slices cut</span></label>
+        <label class="switch" title="Lines at whole-number values of each slice's axes: integer H, K and L on r.l.u. axes"><input id="grid" type="checkbox"><span class="switch-track"></span><span class="switch-label">Integer grid</span></label>
         <label id="angles-wrap" class="switch" title="Snap direct-cell angles within 1° of 60°, 90° or 120°"><input id="angles" type="checkbox" checked><span class="switch-track"></span><span class="switch-label">Nominal cell angles (60/90/120°)</span></label>
       </div>
     </section>
