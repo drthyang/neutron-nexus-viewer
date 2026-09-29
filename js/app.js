@@ -138,6 +138,9 @@ function shortenName(name, fits, other = null) {
   return label(s, e);
 }
 
+/** A file name for running text: at most `max` characters, shortened in the middle. */
+const shortName = (name, max = 36) => shortenName(name, (t) => t.length <= max);
+
 // File names in the page are fitted to their element (CSS .fname), again whenever it resizes.
 const nameFitter = new ResizeObserver((entries) => { for (const { target } of entries) fitName(target); });
 
@@ -380,13 +383,13 @@ const handlers = {
       if (!handoff) return; // the NEBULA3D tab was closed meanwhile
       handoff.file = new File([blob], name, { type: 'application/x-hdf5' });
       handoff.meta = attrs;
-      exportNote('busy', 'sending…', `Built ${name} (${mb(blob.size)}); waiting for NEBULA3D to start…`);
+      exportNote('busy', 'sending…', `Built ${shortName(name)} (${mb(blob.size)}); waiting for NEBULA3D to start…`, name);
       sendHandoff();
       return;
     }
     download(blob, name);
-    exportNote('ok', 'saved', `Saved ${name} (${mb(blob.size)}, ${pct(stats.valid / stats.total)} of voxels valid) in ${seconds.toFixed(1)} s. `
-      + 'In NEBULA3D, open it with Load volume…');
+    exportNote('ok', 'saved', `Saved ${shortName(name)} (${mb(blob.size)}, ${pct(stats.valid / stats.total)} of voxels valid) in ${seconds.toFixed(1)} s. `
+      + 'In NEBULA3D, open it with Load volume…', name);
   },
   'export-error': ({ message }) => {
     if (exportJob?.send) endHandoff(`the viewer could not build the volume: ${message}`);
@@ -1402,6 +1405,7 @@ function showMask(seconds) {
 function showExport() {
   if (exportJob || !meta) return;
   const statusEl = $('export-status');
+  statusEl.title = '';
   $('export-progress').hidden = true;
   let plan;
   try {
@@ -1468,10 +1472,12 @@ function runExport(send = false) {
   return true;
 }
 
-function exportNote(kind, state, text) {
+/** Show the export's state and a message; `file`, the full name a message shortens, is its tooltip. */
+function exportNote(kind, state, text, file = '') {
   exportState(kind, state);
   $('export-status').className = `note${kind === 'ok' ? ' ok' : kind === 'error' ? ' error' : ''}`;
   $('export-status').textContent = text;
+  $('export-status').title = file;
 }
 
 /** The export's state badge, its section summary and the pipeline's NEBULA3D step. */
@@ -1510,7 +1516,7 @@ function sendHandoff() {
   if (!h?.ready || !h.file || h.sent) return;
   h.sent = true;
   h.win.postMessage({ type: 'nebula3d-import', id: h.id, schema: 'nexus-viewer/1', file: h.file, meta: h.meta }, h.origin);
-  exportNote('busy', 'sending…', `Sent ${h.file.name} to NEBULA3D; loading it there…`);
+  exportNote('busy', 'sending…', `Sent ${shortName(h.file.name)} to NEBULA3D; loading it there…`, h.file.name);
 }
 
 /** Stop the handoff; with a `reason`, tell NEBULA3D (so it stops waiting) and show it. */
@@ -1543,7 +1549,7 @@ addEventListener('message', (e) => {
   } else if (e.data.type === 'nebula3d-import-loaded') {
     const name = h.file?.name ?? 'the volume';
     endHandoff();
-    exportNote('ok', 'sent', `NEBULA3D loaded ${name} and selected it as its dataset; continue in its tab.`);
+    exportNote('ok', 'sent', `NEBULA3D loaded ${shortName(name)} and selected it as its dataset; continue in its tab.`, name);
   } else if (e.data.type === 'nebula3d-import-error') {
     endHandoff();
     exportNote('error', 'failed', `NEBULA3D could not load the volume: ${e.data.message}`);

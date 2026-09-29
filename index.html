@@ -168,7 +168,9 @@ body.comparing #open > svg { display: none; }
 .app { display: grid; grid-template-columns: var(--panel) minmax(0, 1fr); height: calc(100vh - var(--topbar)); height: calc(100dvh - var(--topbar)); }
 body.panel-collapsed .app { grid-template-columns: 0 minmax(0, 1fr); }
 body.panel-collapsed .panel { visibility: hidden; }
-.panel { display: flex; flex-direction: column; min-height: 0; overflow-y: auto; background: var(--surface); border-right: 1px solid var(--border); }
+.panel { display: flex; flex-direction: column; min-height: 0; overflow-x: hidden; overflow-y: auto; background: var(--surface); border-right: 1px solid var(--border); }
+/* Long names and numbers wrap inside the panel instead of widening it. */
+.panel .note, .panel .sub-hint, .panel .kv dd, .panel .pipe-name { overflow-wrap: anywhere; }
 .panel > * { flex: none; }
 /* Copyright, license and documentation, as in the other apps. */
 .credit { font-size: 11px; color: var(--text-3); }
