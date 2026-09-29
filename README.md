@@ -5,8 +5,8 @@
 [![License: AGPL v3](https://img.shields.io/badge/license-AGPL--3.0-3c8c3c)](LICENSE)
 [![Runs in the browser](https://img.shields.io/badge/runs-in%20your%20browser-6b6b6b)](https://drthyang.github.io/neutron-nexus-viewer/)
 
-**Reciprocal-space slices of 3-D neutron scattering data, with symmetry averaging,
-artifact masking, two-dataset comparison, a 3-D view and I(Q), all in your browser.**
+**Reciprocal-space slices and line cuts of 3-D neutron scattering data, with symmetry
+averaging, artifact masking, two-dataset comparison, a 3-D view and I(Q), all in your browser.**
 
 **▶ Try it: [drthyang.github.io/neutron-nexus-viewer](https://drthyang.github.io/neutron-nexus-viewer/)** —
 nothing to install, and your data never leaves your machine. Open a Mantid `.nxs`
@@ -34,13 +34,15 @@ short-range-order diffuse scattering condenses into superlattice peaks.
 
 | Area | What you get | Read more |
 | --- | --- | --- |
-| **Slices** | HK, HL and KL cuts with live slab center and thickness. Click to move the other slices through a point, drag a box to zoom, or drag to pan; quad, focus and single layouts | [Slice views](docs/USER_GUIDE.md#slice-views) |
+| **Slices** | HK, HL and KL cuts with live slab center and thickness. Click to move the other slices through a point, drag a box to zoom, or drag to pan (pinch on a touch screen); quad, focus and single layouts | [Slice views](docs/USER_GUIDE.md#slice-views) |
+| **Line cuts** | Drag a line across a slice for a 1-D profile of the volume along any direction in its plane, averaged over a band of adjustable width and the slice's thickness, with symmetry pooling, σ and both datasets; saved as text | [Line cuts](docs/USER_GUIDE.md#line-cuts) · [Method](docs/METHOD.md#line-cuts) |
 | **Symmetry averaging** | Any Laue class or your own operations, closed into a group and applied exactly on the bin grid, with a check that they fit the cell | [Symmetry](docs/METHOD.md#symmetry-averaging) |
 | **Artifact masking** | Removes detector-edge voxels and symmetry outliers before averaging; preview what is removed and export the mask as a NumPy array | [Masking](docs/METHOD.md#masking-detector-edge-artifacts) |
 | **Two-dataset comparison** | A second file, such as another temperature, splits every slice along its diagonal, with shared positions, processing and color scale; hover reads both values | [Comparing](docs/USER_GUIDE.md#comparing-two-datasets) |
 | **3-D view** | A transparent isosurface of the processed volume, with the current slices as planes | [3-D view](docs/USER_GUIDE.md#3-d-view) |
-| **I(Q)** | The processed volume reduced to 1-D: the mean intensity per \|Q\| shell over the voxels with data, with symmetry orbits weighted by multiplicity, split voxels, propagated σ and shell coverage; saved as text | [I(Q)](docs/USER_GUIDE.md#iq) · [Method](docs/METHOD.md#powder-average-iq) |
+| **I(Q)** | The processed volume reduced to 1-D, on request: the mean intensity per \|Q\| shell over the voxels with data, with symmetry orbits weighted by multiplicity, split voxels, propagated σ and shell coverage; saved as text | [I(Q)](docs/USER_GUIDE.md#iq) · [Method](docs/METHOD.md#powder-average-iq) |
 | **Hand-off to NEBULA3D** | One click sends the masked, symmetrized volume to [NEBULA3D](https://github.com/drthyang/nebula3d)'s 3D-ΔPDF pipeline in a new tab, or saves it as a file | [Export](docs/USER_GUIDE.md#export-for-nebula3d) |
+| **Any screen** | Laptops to 4K and 5K monitors (drawn larger at 100% scaling), tablets and phones: views first on narrow screens, touch-sized controls and pinch zoom | [The screen](docs/USER_GUIDE.md#the-screen) |
 | **Files and links** | Mantid `MDHistoWorkspace` (`SaveMD`) and any 3-D `NXdata`; local files or links that open a file, a comparison, symmetry and mask; PNG export with a colorbar | [Opening data](docs/USER_GUIDE.md#opening-data) |
 
 ## Quick start
@@ -50,8 +52,10 @@ short-range-order diffuse scattering condenses into superlattice peaks.
    **Mask** if detector edges show up as bright rims.
 3. Click a slice to move the other two through that point. Switch the header to
    **Zoom** or **Move** to explore, and **Focus** to show one view large.
-4. To compare, click **Compare…** next to the file in the top bar and open a second file.
-5. For a 3D-ΔPDF, choose **Open in NEBULA3D** in the **Export** section:
+4. For a 1-D profile, switch the header to **Cut** and drag across a slice: the cut
+   appears in the fourth view, and follows the slice as you move it.
+5. To compare, click **Compare…** next to the file in the top bar and open a second file.
+6. For a 3D-ΔPDF, choose **Open in NEBULA3D** in the **Export** section:
    [NEBULA3D](https://drthyang.github.io/nebula3d/) opens with the volume loaded.
 
 ## Run locally
@@ -71,8 +75,8 @@ Tests (`npm install && npm test`), the code layout and deployment are covered in
 
 | Document | What it covers |
 | --- | --- |
-| [User guide](docs/USER_GUIDE.md) | The interface, every control, comparison, layouts, export, remote files and supported formats |
-| [Method](docs/METHOD.md) | How slices, symmetry averaging, masking, comparison, the 3-D view and the NEBULA3D export are computed, and how they are validated |
+| [User guide](docs/USER_GUIDE.md) | The interface on each kind of screen, every control, line cuts, comparison, layouts, export, remote files and supported formats |
+| [Method](docs/METHOD.md) | How slices, line cuts, symmetry averaging, masking, comparison, the 3-D view, I(Q) and the NEBULA3D export are computed, and how they are validated |
 | [Development](docs/DEVELOPMENT.md) | Code layout, tests and fixtures, example data, dependencies and deployment |
 
 ## License

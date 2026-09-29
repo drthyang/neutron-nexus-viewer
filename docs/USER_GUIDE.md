@@ -23,10 +23,15 @@ The histogram is held in memory as float32. A 401³ volume needs about 260 MB an
 - **Control panel** (left, collapsible; each section folds to a one-line summary), in the order you work:
   - **Processing**: the pipeline *Measured voxels → Mask → Symmetry average → Views → NEBULA3D*, followed by the Symmetry and Mask controls. Active stages are highlighted, and clicking a stage jumps to its controls.
   - **Export**: the last step: I(Q), the volume reduced to 1-D, and handing the processed volume to NEBULA3D.
-- **Workspace**: a header row with the click mode, the display controls (see [Display](#display)) and the layout, then four views: HK, HL, KL, and the 3-D view or I(Q), which share the fourth place (the *3D | I(Q)* switch in its header picks one).
+- **Workspace**: a header row with the click mode, the display controls (see [Display](#display)) and the layout, then four views: HK, HL, KL, and the 3-D view, I(Q) or the line cut, which share the fourth place (the *3D | I(Q) | Cut* switch in its header picks one). On narrower windows the header row drops its button labels and colorbar (hover a button for its name), and wraps onto a second row when it still does not fit.
 - **Panel footer**: copyright, the license and a link to this documentation. The ⓘ popover links to each guide.
 
-Below 1000 px wide, or on short screens, the panel sits above the views and the page scrolls.
+The layout follows the screen:
+
+- **Narrow screens** (below 1000 px, such as phones and tablets held upright): the views come first, one under the other (two per row from 700 px), each at most as tall as the screen, and the panel follows them; the page scrolls. The layout buttons are hidden, since every view is shown.
+- **Short windows**: the panel stays beside the views, which keep a usable height; the views scroll.
+- **Touch screens**: buttons, fields and sliders are 36–44 px tall, and two fingers pinch and pan a slice (see [Clicking a slice](#clicking-a-slice)).
+- **Large screens at 100% scaling** (more than 2560×1440, such as 4K and 5K monitors): the whole interface, plot text included, is drawn 1.25–2× larger, so it is not tiny. Browser zoom (⌘ + / Ctrl +) adjusts it further.
 
 ## Symmetry averaging
 
@@ -74,8 +79,21 @@ The workspace header switches what the mouse does:
 | **Navigate** | moves the other two slices through the point | the same, continuously |
 | **Zoom** | zooms in 2× around the point | zooms into the box; with a common unit, the window is widened so both axes span the same length |
 | **Move** | — | slides the visible region |
+| **Cut** | — | draws a [line cut](#line-cuts); a drag from an end of the cut moves that end |
 
-In every mode, double-click (or *Reset zoom*) returns to the full view.
+In every mode, double-click (or *Reset zoom*) returns to the full view. On a touch screen, two fingers zoom by pinching and pan by moving together.
+
+## Line cuts
+
+A line cut is a 1-D profile through the volume along a line in one of the slices: *3-D volume → 2-D slice → 1-D cut*. It lies in its slice's plane and within its slab, so it follows the slice as you move it or change its thickness.
+
+- **Drawing**: choose **Cut** in the workspace header (or *Draw a cut* in the empty cut view) and drag across a slice. The ends snap to voxel centres; hold Shift to keep the cut along a lattice direction, such as (H, 0), (H, H) or (H, 2H). Drag an end to change the cut, or drag elsewhere to draw a new one. The cut shows in the fourth place, and on its slice as a line between two handles inside a dashed band, the width it averages.
+- **Typed ends** (footer): *From* and *To* take three coordinates, like `-3, 0, 1` and `3, 0, 1`. They must share one coordinate, and the cut lies in the slice through it, which moves there: for these, the HK slice moves to L = 1 (the cut's current slice is kept when the ends fit it).
+- **Width W**: the full width of the band across the line, in Å⁻¹ on a lattice plane (with 2π, as for I(Q)) or in the axes' unit otherwise. The slider covers half a voxel to 30 voxels on a log scale; empty means three voxels.
+- **Points**: along the axis the cut changes more along (H for a cut along (H, 0.5H+1, 0)), every bin width of that axis by default; *Step* in the options changes it. Each point averages the voxels whose centres lie within W/2 of the line and within half a step of the point, pooled with their symmetry equivalents as in the slices. See [Method → Line cuts](METHOD.md#line-cuts).
+- **Plot**: as for I(Q): *Lin | Log*, hover to read the point's coordinates and I ± σ with the voxels pooled for each dataset (the point is marked on the slice), drag a box to zoom (a flat drag zooms along the cut only), and double-click for the full range. The options also hide the error band. σ comes from the file's uncertainties, read the first time a cut or I(Q) needs them.
+- **Comparing**: both datasets are cut along the same line with their own grid, symmetry and mask, and drawn as two curves; *A / Split / B* chooses which are shown.
+- **Download** saves a text file named after the path, like `<file>_cut_H_0_1.dat` (`<A>_vs_<B>_cut_…` when comparing): a commented header with the ends, slice, slab, width, step, symmetry and mask, then one row per point with its position along the axis, its three coordinates, and I, σ and voxels for each dataset. *Save PNG* exports the plot with a title and a legend.
 
 ## 3-D view
 
@@ -83,7 +101,7 @@ A transparent isosurface of the binned, symmetrized and masked volume, with the 
 
 ## I(Q)
 
-I(Q) reduces the masked, symmetrized volume to one dimension: the mean intensity in each shell of |Q|, over the part of the shell that has data. Open it with *I(Q)* in the header of the 3-D view (the two share the fourth place) or *Show I(Q)* in the **Export** section. It is computed when it is shown, and again when the symmetry, the mask or its settings change.
+I(Q) reduces the masked, symmetrized volume to one dimension: the mean intensity in each shell of |Q|, over the part of the shell that has data. Open it with *I(Q)* in the header of the 3-D view (the two share the fourth place), *Show I(Q)* in the **Export** section, or *Compute I(Q)* in its empty view. It is computed only once asked for, not when a file opens; after that, it is recomputed while shown when the symmetry, the mask or its settings change.
 
 - **Normalization**: unmeasured and masked voxels are left out, not counted as zero, so gaps in coverage do not lower I(Q). Symmetry-equivalent voxels are pooled as in the slices, and each orbit counts with its multiplicity, so a shell is not biased toward the directions that were measured best. See [Method → I(Q)](METHOD.md#powder-average-iq).
 - **Q bins** (footer): the ΔQ field takes Mantid `Rebin` parameters. `0.05` gives shells of 0.05 Å⁻¹; a negative step gives logarithmic shells, so `-0.01` means ΔQ/Q = 1% (suited to the constant Δd/d resolution of time-of-flight instruments); `0.5, 0.02, 3, 0.05, 10` gives 0.02 Å⁻¹ shells from 0.5 to 3 Å⁻¹ and 0.05 Å⁻¹ shells from 3 to 10 Å⁻¹, and any mix of ranges works. As in Mantid, a range ends at its boundary with a last bin of 0.25 to 1.25 steps. Empty means shells of the shortest bin step in |Q|.
@@ -94,7 +112,7 @@ I(Q) reduces the masked, symmetrized volume to one dimension: the mean intensity
 - **Coverage**: the fraction of each shell's volume that has data, after symmetry. Where it falls (beyond the measured region, or where shells leave the grid), I(Q) rests on few voxels.
 - **Plot**: hover to read Q, d = 2π/Q, and I ± σ with the coverage of each dataset. Drag a box to zoom (a flat drag zooms Q only), click in *Zoom* mode to zoom 2×, drag in *Move* mode to pan, and double-click (or *Reset zoom*) for the full range.
 - **Comparing**: both datasets are reduced on the same shells, each with its own grid, cell and mask, and drawn as two curves; *A / Split / B* chooses which are shown.
-- **Download** (in the view's header or the Export section) saves a text file, `<file>_IQ.dat`: a commented header with the file, cell, shells (also as Rebin parameters, to reproduce them in Mantid), symmetry, mask and normalization, then one row per shell with Q (the shell centre, the midpoint of its edges), I, σ, coverage and the number of voxels with data, for A and B when comparing. `numpy.loadtxt` reads it directly. *Save PNG* exports the plot at 3× with a title and a legend.
+- **Download** (in the view's header or the Export section) saves a text file, `<file>_IQ.dat` (when comparing, the two names joined with their shared words once: `demo_300K` and `demo_10K` give `demo_300K_vs_10K_IQ.dat`): a commented header with the file, cell, shells (also as Rebin parameters, to reproduce them in Mantid), symmetry, mask and normalization, then one row per shell with Q (the shell centre, the midpoint of its edges), I, σ, coverage and the number of voxels with data, for A and B when comparing. `numpy.loadtxt` reads it directly. *Save PNG* exports the plot at 3× with a title and a legend.
 
 ## Comparing two datasets
 
@@ -125,4 +143,4 @@ The **Export** section at the bottom of the panel hands the processed volume to 
 
 - **Layouts**: *Quad* (2×2), *Focus* (one large view with the other three beside it) and *Single*. In *Focus*, the small views are thumbnails: hovering one highlights it, and clicking it (or Enter) shows it large. Each view's header can focus or maximize it, and double-clicking a header maximizes it. Esc returns.
 - **Save PNG** exports a view at 3× resolution. Slice exports include a title, their own colorbar and the integer grid when it is on, without guides. When comparing, they keep the split and the dataset tags.
-- **Remembered settings**: the colormap, scale, click mode, layout, the view in the fourth place, the I(Q) options, panel state and folded sections are remembered per browser.
+- **Remembered settings**: the colormap, scale, click mode, layout, the view in the fourth place, the I(Q) and line cut options, panel state and folded sections are remembered per browser.

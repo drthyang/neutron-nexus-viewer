@@ -3,6 +3,7 @@
 // into a float32 volume and answers slice requests from the page.
 
 import h5wasm from 'https://cdn.jsdelivr.net/npm/h5wasm@0.10.3/dist/esm/hdf5_hl.js';
+import { lineCut } from './cut.js';
 import { symmetrizeForExport, writeNebulaFile } from './export.js';
 import { binVolume, coarseGrid, orbitMean, surfaceNets } from './iso.js';
 import { edgeMask, maskStats, outlierMask } from './mask.js';
@@ -11,7 +12,7 @@ import { powderAverage } from './powder.js';
 import { averageSlab, selectBins } from './slab.js';
 import { indexMaps } from './symmetry.js';
 
-// `variance` (σ² per voxel) is read from the file when I(Q) first needs it:
+// `variance` (σ² per voxel) is read from the file when I(Q) or a line cut first needs it:
 // undefined until then, null without uncertainties.
 let info = null, volume = null, mask = null, path = null, variance, varianceNote = '';
 const coarse = new Map(), means = new Map();
@@ -25,8 +26,9 @@ self.onmessage = async ({ data }) => {
     else if (data.type === 'mask-download') await downloadMask(data);
     else if (data.type === 'export') await exportVolume(data);
     else if (data.type === 'powder') powder(data);
+    else if (data.type === 'cut') cut(data);
   } catch (err) {
-    const type = { iso: 'iso-error', mask: 'mask-error', 'mask-download': 'mask-error', export: 'export-error', powder: 'powder-error' }[data.type] ?? 'error';
+    const type = { iso: 'iso-error', mask: 'mask-error', 'mask-download': 'mask-error', export: 'export-error', powder: 'powder-error', cut: 'cut-error' }[data.type] ?? 'error';
     self.postMessage({ type, id: data.id, fixed: data.fixed, message: err?.message ?? String(err) });
   }
 };
@@ -178,25 +180,50 @@ function powder({ id, plan, maps, symmetry }) {
   };
   // The first time, a fifth of the progress is reading the uncertainties.
   const start = variance === undefined && info.errors ? 0.2 : 0;
-  if (variance === undefined) {
-    variance = null;
-    if (info.errors) {
-      const h5 = new h5wasm.File(path, 'r');
-      try {
-        variance = loadVariance(h5, info, progress('Reading uncertainties', 0, start));
-      } catch (err) {
-        varianceNote = `uncertainties not read: ${err.message}`;
-      } finally {
-        h5.close();
-      }
-    }
-  }
+  readVariance(progress('Reading uncertainties', 0, start));
   const result = powderAverage(volume, info.shape, plan, maps, mask, variance, progress('Averaging shells', start, 1));
   const errors = variance ? info.errors.path.split('/').pop() : null;
   self.postMessage({
     type: 'powder', id, ...result, bins: plan.bins, split: plan.split, frame: plan.frame, symmetry, order: maps.length,
     masked: !!mask, errors, errorsNote: varianceNote, seconds: (performance.now() - t0) / 1000,
   }, [result.edges.buffer, result.intensity.buffer, result.sigma.buffer, result.voxels.buffer, result.coverage.buffer]);
+}
+
+/** Read the uncertainties the first time they are needed; `variance` stays null without them. */
+function readVariance(onProgress) {
+  if (variance !== undefined) return;
+  variance = null;
+  if (!info.errors) return;
+  const h5 = new h5wasm.File(path, 'r');
+  try {
+    variance = loadVariance(h5, info, onProgress);
+  } catch (err) {
+    varianceNote = `uncertainties not read: ${err.message}`;
+  } finally {
+    h5.close();
+  }
+}
+
+// A line cut through the slab of a slice (see cut.js); `cut` is its geometry in
+// display coordinates, the same for both datasets, and `maps` the group on this grid.
+function cut({ id, cut: spec, maps, symmetry, removed }) {
+  if (!volume) throw new Error('No histogram loaded.');
+  const t0 = performance.now();
+  let last = 0;
+  readVariance((fraction) => {
+    const now = performance.now();
+    if (now - last > 100 || fraction === 1) {
+      last = now;
+      self.postMessage({ type: 'progress-cut', label: 'Reading uncertainties', fraction });
+    }
+  });
+  const invert = !!(removed && mask);
+  const result = lineCut(volume, info.shape, info.dims, spec, maps, mask, invert, variance);
+  const errors = variance ? info.errors.path.split('/').pop() : null;
+  self.postMessage({
+    type: 'cut', id, ...result, symmetry, order: maps.length, masked: !!mask, removed: invert, errors, errorsNote: varianceNote,
+    seconds: (performance.now() - t0) / 1000,
+  }, [result.edges.buffer, result.intensity.buffer, result.sigma.buffer, result.voxels.buffer]);
 }
 
 // The symmetrized, masked volume as a NEBULA3D input file (see export.js):

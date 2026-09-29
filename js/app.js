@@ -1,4 +1,5 @@
 import { COLORMAPS } from './colormaps.js';
+import { cutAxis, cutBand, cutEdges } from './cut.js';
 import { exportPlan } from './export.js';
 import { cartesianBasis, nominalCell, planeGeometry, reciprocalMetric } from './nexus.js';
 import { parseBins, powderPlan, qExtent } from './powder.js';
@@ -35,14 +36,14 @@ let requestId = 0, symmetry = NO_SYMMETRY, mask = null;
 let layout = 'quad', primary = 'hk', lastMulti = 'quad';
 const views = {};
 // What clicking a slice does: 'navigate' moves the other two slices, 'zoom' zooms in,
-// 'move' drags the visible region.
+// 'move' drags the visible region and 'cut' draws a line cut.
 let clickMode = 'navigate';
 // 3-D view state: the lazily loaded View3D, its elements and the isosurface request queue.
 let view3d = null, iso = null;
-// I(Q) view state: its elements, zoom and one request queue per dataset (`a`, `b`).
-// The 3-D view and I(Q) share the fourth place in the layouts; `slot` is the one shown.
-let powder = null, slot = '3d', powderScale = 'linear';
-const SLOT_VIEWS = ['3d', 'iq'];
+// I(Q) and line cut views: their elements, zoom and one request queue per dataset (`a`, `b`).
+// The 3-D view, I(Q) and the cut share the fourth place in the layouts; `slot` is the one shown.
+let powder = null, cut = null, slot = '3d', powderScale = 'linear', cutScale = 'linear';
+const SLOT_VIEWS = ['3d', 'iq', 'cut'];
 // Counts mask rebuilds, so I(Q) is recomputed after each.
 let maskVersion = 0;
 // Second dataset (B) for comparison, with its own worker, index maps and mask.
@@ -410,6 +411,7 @@ const handlers = {
     panels.forEach((p) => request(p, 'a'));
     requestIso();
     requestPowder();
+    requestCut();
     describe();
   },
   'mask-error': ({ message }) => {
@@ -452,6 +454,9 @@ const handlers = {
   'progress-powder': (msg) => powderProgress('a', msg),
   powder: (msg) => powderResult('a', msg),
   'powder-error': ({ message }) => powderResult('a', null, message),
+  'progress-cut': (msg) => cutProgress('a', msg),
+  cut: (msg) => cutResult('a', msg),
+  'cut-error': ({ message }) => cutResult('a', null, message),
 };
 
 /** Ask for the panel's slice of dataset 'a', 'b' or 'both' (B only when it is loaded). */
@@ -469,6 +474,8 @@ function request(p, which = 'both') {
     p.b.wanted = { center, thickness };
     if (!p.b.busy) sendB(p);
   }
+  // The cut lies in its slice and follows it.
+  if (which === 'both' && cutPanel() === p) requestCut();
 }
 
 // One request in flight per panel; slider drags coalesce to the latest value.
@@ -513,6 +520,22 @@ function showCaption(p) {
 const symmetryNote = (data) => (data.order > 1 ? ` · ${data.symmetry} (${data.order} ops)` : '');
 const stemOf = (name) => name.replace(/\.[^.]+$/, '');
 const stem = () => stemOf(sourceName);
+
+/**
+ * Two file stems as one name: the words they share once, and the ones that
+ * differ as "A_vs_B" (demo_300K and demo_10K give demo_300K_vs_10K).
+ */
+function pairStem(a, b) {
+  const words = (s) => s.match(/[^_\-. ]+|[_\-. ]+/g) ?? [];
+  const trim = (parts) => parts.join('').replace(/^[_\-. ]+|[_\-. ]+$/g, '');
+  const wa = words(a), wb = words(b);
+  let head = 0, tail = 0;
+  while (head < Math.min(wa.length, wb.length) && wa[head] === wb[head]) head++;
+  while (tail < Math.min(wa.length, wb.length) - head && wa[wa.length - 1 - tail] === wb[wb.length - 1 - tail]) tail++;
+  const midA = trim(wa.slice(head, wa.length - tail)), midB = trim(wb.slice(head, wb.length - tail));
+  if (!midA || !midB) return `${a}_vs_${b}`;
+  return [trim(wa.slice(0, head)), `${midA}_vs_${midB}`, trim(wa.slice(wa.length - tail))].filter(Boolean).join('_');
+}
 
 // ---- Viewer setup -------------------------------------------------------------
 
@@ -629,14 +652,16 @@ function viewShell(key, badge, title) {
   $('workspace').append(section);
   const actions = section.querySelector('.view-actions');
   const focusBtn = document.createElement('button'), maxBtn = document.createElement('button');
-  focusBtn.className = maxBtn.className = 'icon-btn';
+  focusBtn.className = maxBtn.className = 'icon-btn layout-btn';
   focusBtn.type = maxBtn.type = 'button';
   focusBtn.onclick = () => setLayout(layout === 'focus' && primary === key ? 'quad' : 'focus', key);
   maxBtn.onclick = () => setLayout(layout === 'single' && primary === key ? lastMulti : 'single', key);
   section.querySelector('.view-head').ondblclick = (e) => { if (!e.target.closest('button')) maxBtn.click(); };
   section.querySelector('.slot-switch')?.addEventListener('click', (e) => {
     const button = e.target.closest('button');
-    if (button && !button.classList.contains('on')) setSlot(button.dataset.value);
+    if (!button || button.classList.contains('on')) return;
+    if (button.dataset.value === 'iq') powder.requested = true;
+    setSlot(button.dataset.value);
   });
   // In the focus layout the small views are thumbnails: a click (outside their buttons) shows one large.
   const enlarge = () => section.classList.contains('thumb');
@@ -651,9 +676,9 @@ function viewShell(key, badge, title) {
   return { section, actions, focusBtn, maxBtn, q: (sel) => section.querySelector(sel) };
 }
 
-/** The badge of the 3-D view and I(Q), which share the fourth place: a switch between them, `key` on. */
+/** The badge of the 3-D view, I(Q) and the cut, which share the fourth place: a switch between them, `key` on. */
 const slotSwitch = (key) => `<div class="segmented slot-switch" role="group" aria-label="Fourth view">${
-  [['3d', '3D', 'Show the 3-D isosurface here'], ['iq', 'I(Q)', 'Show I(Q), the powder average, here']].map(([k, label, title]) =>
+  [['3d', '3D', 'Show the 3-D isosurface here'], ['iq', 'I(Q)', 'Show I(Q), the powder average, here'], ['cut', 'Cut', 'Show the line cut here']].map(([k, label, title]) =>
     `<button type="button" data-value="${k}"${k === key ? ' class="on"' : ` title="${title}"`}>${label}</button>`).join('')}</div>`;
 
 function setupViewer() {
@@ -699,7 +724,7 @@ function setupViewer() {
     shell.section.append(foot);
     const q = shell.q;
     const p = {
-      fixed, x, y, step, lo, hi, version: 0, key, section: shell.section, zoom: null, drag: null, b: newLayer(),
+      fixed, x, y, step, lo, hi, version: 0, key, section: shell.section, zoom: null, drag: null, pinch: null, cutDrag: null, pointers: new Map(), b: newLayer(),
       zoomReset: q('.zoom-reset'), slider: q('.slider'), center: q('.center'), wslider: q('.wslider'), width: q('.width'),
       caption: q('.view-caption'), pos: q('.view-pos'), angle: q('.view-angle'), canvas: q('canvas'), hover: q('.overlay-chip'),
     };
@@ -713,10 +738,36 @@ function setupViewer() {
     p.center.oninput = () => { p.slider.value = p.center.value; paint(p.slider); request(p); };
     p.wslider.oninput = () => { p.width.value = p.wslider.value; request(p); };
     p.width.oninput = () => { p.wslider.value = p.width.value; paint(p.wslider); request(p); };
-    p.canvas.onpointerdown = (ev) => startBox(p, ev);
-    p.canvas.onpointermove = (ev) => { hover(p, ev); moveBox(p, ev); };
-    p.canvas.onpointerup = (ev) => endBox(p, ev);
-    p.canvas.onpointercancel = () => { p.drag = null; p.canvas.classList.remove('panning'); redraw(); };
+    // One pointer clicks or drags (by the click mode); two fingers pinch and pan.
+    p.canvas.onpointerdown = (ev) => {
+      if (ev.pointerType === 'touch') p.pointers.set(ev.pointerId, localPoint(p, ev));
+      if (p.pointers.size === 2) startPinch(p, ev);
+      else if (p.pointers.size < 2) (clickMode === 'cut' ? startCutDrag : startBox)(p, ev);
+    };
+    p.canvas.onpointermove = (ev) => {
+      if (p.pointers.has(ev.pointerId)) p.pointers.set(ev.pointerId, localPoint(p, ev));
+      if (p.pinch) movePinch(p);
+      else {
+        hover(p, ev);
+        // A mouse released outside the page leaves no pointerup here.
+        if (p.cutDrag && ev.pointerType === 'mouse' && !(ev.buttons & 1)) p.cutDrag = null;
+        if (p.cutDrag) moveCutDrag(p, ev);
+        else moveBox(p, ev);
+      }
+    };
+    p.canvas.onpointerup = (ev) => {
+      p.pointers.delete(ev.pointerId);
+      // The finger left after a pinch does nothing until it lifts.
+      if (p.pinch) { if (p.pointers.size < 2) p.pinch = null; }
+      else if (p.cutDrag) p.cutDrag = null;
+      else endBox(p, ev);
+    };
+    p.canvas.onpointercancel = (ev) => {
+      p.pointers.delete(ev.pointerId);
+      p.drag = p.pinch = p.cutDrag = null;
+      p.canvas.classList.remove('panning');
+      redraw();
+    };
     p.canvas.onpointerleave = () => { p.hover.hidden = true; };
     p.canvas.ondblclick = () => { clearTimeout(p.clickTimer); setZoom(p, null); };
     p.zoomReset.onclick = () => setZoom(p, null);
@@ -737,7 +788,7 @@ function setupViewer() {
   foot.innerHTML = `
     <span class="label">Level</span>
     <input class="iso-slider foot-grow" type="range" min="0" max="1000" aria-label="Isosurface level (log scale)">
-    <input class="iso-level num" type="number" step="any" style="width: 76px" aria-label="Isosurface level">
+    <input class="iso-level num" type="number" step="any" style="width: 7.6rem" aria-label="Isosurface level">
     <span class="foot-sep"></span>
     <span class="label">Surface</span><input class="iso-opacity foot-fixed short" type="range" min="0.05" max="1" step="0.05" value="0.6" aria-label="Surface opacity">
     <span class="label">Slices</span><input class="slice-opacity foot-fixed short" type="range" min="0.05" max="1" step="0.05" value="1" aria-label="Slice opacity">`;
@@ -751,6 +802,7 @@ function setupViewer() {
   setSegmented($('iso-grid'), '100');
   $('iso-slices').checked = true;
   setupPowder();
+  setupCut();
 
   setLayout(layout, primary);
   paintAll();
@@ -766,7 +818,8 @@ function setupPowder() {
     <button type="button" class="icon-btn data" title="Download I(Q) as text: Q, I, σ, coverage and voxels per shell">${ICONS.download}</button>
     <button type="button" class="icon-btn save" title="Save PNG">${ICONS.save}</button>`;
   shell.actions.append(shell.focusBtn, shell.maxBtn);
-  shell.q('.view-body').innerHTML = '<canvas class="plot" role="img" aria-label="I(Q), the powder average of the volume"></canvas><span class="overlay-chip" hidden></span>';
+  shell.q('.view-body').innerHTML = `<canvas class="plot" role="img" aria-label="I(Q), the powder average of the volume"></canvas><span class="overlay-chip" hidden></span>
+    <button type="button" class="btn btn-primary view-cta" title="Reduce the masked, symmetrized volume to I(Q)">Compute I(Q)</button>`;
   const foot = document.createElement('footer');
   foot.className = 'view-foot';
   const binsHelp = 'Q bins as Mantid Rebin parameters: a width in Å⁻¹ (0.05), a negative step for logarithmic bins (−0.01: ΔQ/Q = 1%), '
@@ -785,8 +838,34 @@ function setupPowder() {
   const q = shell.q;
   powder = {
     canvas: q('canvas'), hover: q('.overlay-chip'), caption: q('.view-caption'), zoomReset: q('.zoom-reset'),
-    slider: q('.pq-slider'), bins: q('.pq-bins'), qmin: q('.pq-qmin'), qmax: q('.pq-qmax'), a: newPowderLayer(), b: newPowderLayer(),
-    stale: true, download: false, plan: null, zoom: null, drag: null, view: null, at: null, step: null,
+    slider: q('.pq-slider'), bins: q('.pq-bins'), qmin: q('.pq-qmin'), qmax: q('.pq-qmax'), a: newCurveLayer(), b: newCurveLayer(),
+    compute: q('.view-cta'), requested: false, stale: true, download: false, plan: null, zoom: null, drag: null, view: null, at: null, step: null,
+    // As a plot (see drawCurves()):
+    xMin: 0, title: 'I(Q)',
+    log: () => powderScale === 'log', band: () => $('iq-band').checked, cover: () => $('iq-coverage').checked,
+    end: powderEnd, xLabel: () => 'Q (Å⁻¹)', yLabel: (log) => (log ? 'I(Q), log scale' : 'I(Q)'),
+    empty: () => {
+      // Before it is asked for, the view holds only its Compute button.
+      if (!powder.compute.hidden) return null;
+      const busy = powder.a.busy || powder.b.busy, failed = compareShown() === 'b' ? powder.b.error : powder.a.error;
+      return { text: busy ? 'Computing I(Q)…' : failed || 'I(Q) appears here once computed.', error: !busy && !!failed };
+    },
+    extras: (data) => [binsLabel(powder.plan.bins), `voxels split ${data.split}³`, data.order > 1 ? data.symmetry : 'no symmetry',
+      data.masked && mask ? `mask ${pct((mask.edge + mask.outlier) / mask.measured)}` : 'no mask'],
+    // The shell: Q, d = 2π/Q, and I ± σ with the coverage for each dataset.
+    readout: (b, layers) => {
+      const value = (d) => (Number.isFinite(d.intensity[b])
+        ? `${fmtValue(d.intensity[b])}${Number.isFinite(d.sigma[b]) ? ` ± ${fmtValue(d.sigma[b])}` : ''} (${pct(d.coverage[b])} covered)`
+        : 'no data');
+      const Q = shellMid(layers[0].data, b);
+      return `Q ${fmt(Q)} Å⁻¹  d ${fmt(2 * Math.PI / Q, 3)} Å  →  ${layers.map((l) => `${layers.length > 1 ? `${l.letter} ` : ''}${value(l.data)}`).join(' · ')}`;
+    },
+  };
+  powder.compute.onclick = () => {
+    powder.requested = true;
+    showPowder();
+    updatePowder();
+    drawPlot(powder);
   };
   try {
     powder.step = qExtent(meta.dims, meta.lattice).step;
@@ -799,32 +878,25 @@ function setupPowder() {
   segmented(q('.pq-scale'), (value) => {
     powderScale = value;
     // The intensity axis changes, so a zoom keeps its Q range only.
-    if (powder.zoom) setPowderZoom(powder.zoom.x ? { x: powder.zoom.x, y: null } : null);
+    if (powder.zoom) setCurveZoom(powder, powder.zoom.x ? { x: powder.zoom.x, y: null } : null);
     persist();
-    drawPowderView();
+    drawPlot(powder);
   });
   // The slider recomputes as it moves (one request in flight, the latest one next); typed values apply on Enter or leaving the field.
   powder.slider.oninput = slideBins;
   powder.bins.onchange = () => { syncBinsSlider(); requestPowder(); };
   powder.qmin.onchange = powder.qmax.onchange = () => requestPowder();
   for (const input of [powder.bins, powder.qmin, powder.qmax]) input.onkeydown = (e) => { if (e.key === 'Enter') input.blur(); };
-  powder.canvas.onpointerdown = startPowderDrag;
-  powder.canvas.onpointermove = (e) => { hoverPowder(e); movePowderDrag(e); };
-  powder.canvas.onpointerup = endPowderDrag;
-  powder.canvas.onpointercancel = () => { powder.drag = null; powder.canvas.classList.remove('panning'); drawPowderView(); };
-  powder.canvas.onpointerleave = () => { powder.hover.hidden = true; powder.at = null; drawPowderView(); };
-  powder.canvas.ondblclick = () => { clearTimeout(powder.clickTimer); setPowderZoom(null); };
-  powder.zoomReset.onclick = () => setPowderZoom(null);
+  wirePlot(powder);
   q('.data').onclick = downloadPowder;
-  q('.save').onclick = savePowderPNG;
-  resized.observe(powder.canvas);
+  q('.save').onclick = () => savePlotPNG(powder, `${shownStem()}_IQ.png`);
   showPowder();
 }
 
 // ---- Layout ------------------------------------------------------------------------
 
-// Below this size the views stack in one column and the layouts do not apply.
-const compactLayout = matchMedia('(max-width: 1000px), (max-height: 640px)');
+// Below this width the views stack, before the panel, and the layouts do not apply.
+const compactLayout = matchMedia('(max-width: 1000px)');
 compactLayout.addEventListener('change', () => { if (views.hk) setLayout(layout, primary); });
 
 function setLayout(mode, key = primary) {
@@ -855,9 +927,10 @@ function setLayout(mode, key = primary) {
   }
   try { localStorage.setItem('nxv-layout', JSON.stringify({ mode: lastMulti, key, slot })); } catch { /* storage unavailable */ }
   updatePowder();
+  updateCut();
 }
 
-/** Show the 3-D view or I(Q) (`key`) in the fourth place. */
+/** Show the 3-D view, I(Q) or the cut (`key`) in the fourth place. */
 function setSlot(key) {
   slot = key;
   setLayout(layout, SLOT_VIEWS.includes(primary) ? key : primary);
@@ -869,14 +942,15 @@ let resizeQueued = false;
 const resized = new ResizeObserver(() => {
   if (resizeQueued) return;
   resizeQueued = true;
-  requestAnimationFrame(() => { resizeQueued = false; redraw(); updatePowder(); });
+  requestAnimationFrame(() => { resizeQueued = false; redraw(); updatePowder(); updateCut(); });
 });
 
 // ---- Box zoom and clicks -------------------------------------------------------------
 
+/** The pointer in the plot's drawing coordinates (CSS px over the UI scale). */
 function localPoint(p, e) {
-  const box = p.canvas.getBoundingClientRect();
-  return [e.clientX - box.left, e.clientY - box.top];
+  const box = p.canvas.getBoundingClientRect(), s = uiScale();
+  return [(e.clientX - box.left) / s, (e.clientY - box.top) / s];
 }
 
 function startBox(p, e) {
@@ -892,6 +966,12 @@ function setClickMode(mode) {
   clickMode = mode;
   setSegmented($('click-mode'), mode);
   $('workspace').dataset.click = mode;
+  // The cut shows on its slice in Cut mode, and its empty view says what to do.
+  if (!cut) return;
+  showCut();
+  drawPlot(cut);
+  const p = cutPanel();
+  if (p) drawPanel(p);
 }
 
 // Navigate mode: dragging keeps moving the other slices. Zoom mode: dragging
@@ -937,6 +1017,42 @@ function endBox(p, e) {
   const { clientX, clientY } = e;
   clearTimeout(p.clickTimer);
   p.clickTimer = setTimeout(() => (clickMode === 'zoom' ? zoomAt : navigate)(p, { clientX, clientY }), 250);
+}
+
+/** A second finger: drop the click or drag of the first, and pinch from here. */
+function startPinch(p, e) {
+  if (!p.inverse) return;
+  clearTimeout(p.clickTimer);
+  p.drag = p.cutDrag = null;
+  p.canvas.classList.remove('panning');
+  try { p.canvas.setPointerCapture(e.pointerId); } catch { /* synthetic or already released pointer */ }
+  const [a, b] = [...p.pointers.values()];
+  p.pinch = { a, b, view: p.view, inverse: p.inverse };
+  drawPanel(p);
+}
+
+/**
+ * Scale the window by the change in finger spread and keep the data point that
+ * was under their midpoint under it, with the mapping from the start of the pinch:
+ * the window center maps to the plot center, so a window k times larger, centered
+ * at m - k (inverse(mid) - center), puts m under mid.
+ */
+function movePinch(p) {
+  const d = p.pinch, [a, b] = [...p.pointers.values()];
+  const spread = (s, t) => Math.hypot(t[0] - s[0], t[1] - s[1]);
+  const middle = (s, t) => [(s[0] + t[0]) / 2, (s[1] + t[1]) / 2];
+  if (!b || spread(a, b) < 1) return;
+  const [u0, u1, v0, v1] = d.view, X = meta.dims[p.x], Y = meta.dims[p.y];
+  const ex = [X.edges[0], X.edges[X.edges.length - 1]], ey = [Y.edges[0], Y.edges[Y.edges.length - 1]];
+  // At least two bins across, and at most the whole grid, on both axes.
+  const least = Math.max(2 * (ex[1] - ex[0]) / (X.edges.length - 1) / (u1 - u0), 2 * (ey[1] - ey[0]) / (Y.edges.length - 1) / (v1 - v0));
+  const most = Math.min((ex[1] - ex[0]) / (u1 - u0), (ey[1] - ey[0]) / (v1 - v0));
+  const k = clamp(spread(d.a, d.b) / spread(a, b), Math.min(least, most), most);
+  const [mu, mv] = d.inverse(...middle(d.a, d.b)), [nu, nv] = d.inverse(...middle(a, b));
+  const cu = mu - k * (nu - (u0 + u1) / 2), cv = mv - k * (nv - (v0 + v1) / 2);
+  const hu = k * (u1 - u0) / 2, hv = k * (v1 - v0) / 2;
+  const fit = (c, h, [lo, hi]) => { const m = clamp(c, lo, hi); return [m - h, m + h]; };
+  setZoom(p, { u: fit(cu, hu, ex), v: fit(cv, hv, ey) });
 }
 
 /** Zoom in by `factor` around the clicked point, keeping the window inside the data. */
@@ -1231,6 +1347,7 @@ function draw(p, canvas, w, h, dpr, exporting = false) {
     if (shown !== 'b') datasetTag(c, 'A', sourceName, corners[0], corners[1], corners[3], room, false);
     if (shown !== 'a') datasetTag(c, 'B', compare.name, corners[2], corners[3], corners[1], room, true);
   }
+  if (!exporting) drawCutOverlay(c, p, corners);
 
   // Axes, ticks and labels.
   c.strokeStyle = AXIS;
@@ -1344,10 +1461,17 @@ function datasetTag(c, letter, name, at, along, side, room, flip) {
   c.restore();
 }
 
+/**
+ * The UI scale: 1 rem over 10 CSS px, above 1 on large screens at 100% (set in
+ * index.html). Plots are drawn at this scale, so their text grows with the page's.
+ */
+const uiScale = () => parseFloat(getComputedStyle(document.documentElement).fontSize) / 10 || 1;
+
 /** Redraw one panel, with the zoom box being dragged (as its u-v parallelogram). */
 function drawPanel(p) {
   if (!settings) return;
-  draw(p, p.canvas, p.canvas.clientWidth, p.canvas.clientHeight, devicePixelRatio || 1);
+  const s = uiScale();
+  draw(p, p.canvas, p.canvas.clientWidth / s, p.canvas.clientHeight / s, s * (devicePixelRatio || 1));
   const d = p.drag;
   if (!d?.moved || !p.project || clickMode !== 'zoom') return;
   const corners = [[d.x0, d.y0], [d.x1, d.y0], [d.x1, d.y1], [d.x0, d.y1]].map(([x, y]) => p.inverse(x, y));
@@ -1369,7 +1493,8 @@ function drawPanel(p) {
 
 function redraw() {
   if (!meta || !panels.length) return;
-  drawPowderView();
+  drawPlot(powder);
+  drawPlot(cut);
   try {
     settings = readSettings();
     error('');
@@ -1394,8 +1519,7 @@ function redraw() {
 
 function pointAt(p, e) {
   if (!p.data || !p.inverse) return null;
-  const box = p.canvas.getBoundingClientRect();
-  const [u, v] = p.inverse(e.clientX - box.left, e.clientY - box.top);
+  const [u, v] = p.inverse(...localPoint(p, e));
   const [u0, u1, v0, v1] = p.view;
   return u >= u0 && u <= u1 && v >= v0 && v <= v1 ? [u, v] : null;
 }
@@ -1444,15 +1568,15 @@ function navigate(p, e) {
 
 function savePNG(p) {
   if (!p.data) return;
-  const out = document.createElement('canvas');
-  draw(p, out, Math.max(p.canvas.clientWidth, 480), Math.max(p.canvas.clientHeight, 360) + 24, 3, true);
+  const out = document.createElement('canvas'), s = uiScale();
+  draw(p, out, Math.max(p.canvas.clientWidth / s, 480), Math.max(p.canvas.clientHeight / s, 360) + 24, 3, true);
   const X = meta.dims[p.x], Y = meta.dims[p.y], F = meta.dims[p.fixed];
   out.toBlob((blob) => download(blob, `${shownStem()}_${X.label}${Y.label}_${F.label}=${p.data.center}.png`));
 }
 
-/** File names of what the views show: A, B, or A_vs_B. */
+/** File names of what the views show: A, B, or both (see pairStem). */
 function shownStem() {
-  const names = { a: stem(), b: stemOf(compare?.name ?? ''), split: `${stem()}_vs_${stemOf(compare?.name ?? '')}` };
+  const names = { a: stem(), b: stemOf(compare?.name ?? ''), split: pairStem(stem(), stemOf(compare?.name ?? '')) };
   return names[compareShown() ?? 'a'];
 }
 
@@ -1908,11 +2032,12 @@ function openDemo() {
 
 // Curve colors of datasets A and B: the accent and the H-axis hue.
 const CURVE = { A: '#2f74e6', B: '#d98a0b' };
-const newPowderLayer = () => ({ data: null, key: '', busy: false, wanted: null, error: '', progress: null });
-/** Whether the I(Q) view is on screen. */
-const powderShown = () => !!powder && powder.canvas.clientWidth > 0;
+const newCurveLayer = () => ({ data: null, key: '', busy: false, wanted: null, error: '', progress: null });
 
-/** Recompute I(Q): now if its view is shown or a download waits, otherwise once it is shown. */
+/**
+ * Recompute I(Q): now if a download waits, or if it was asked for (Show I(Q), the
+ * I(Q) switch or Compute) and its view is shown; otherwise once that holds.
+ */
 function requestPowder() {
   if (!powder) return;
   powder.stale = true;
@@ -1924,7 +2049,7 @@ function requestPowder() {
  * reach the farther of the two grids; its mask is built first.
  */
 function updatePowder() {
-  if (!powder?.stale || !(powderShown() || powder.download)) return;
+  if (!powder?.stale || !((powder.requested && plotShown(powder)) || powder.download)) return;
   powder.stale = false;
   const read = (input, zero = false) => {
     const text = input.value.trim(), x = Number(text);
@@ -1953,7 +2078,7 @@ function updatePowder() {
     powder.plan = null;
     powder.download = false;
     showPowder();
-    drawPowderView();
+    drawPlot(powder);
     return;
   }
   powder.plan = plan;
@@ -2062,7 +2187,7 @@ function powderResult(which, msg, message = '') {
   if (layer.wanted) sendPowder(layer, which === 'a' ? worker : compare.worker);
   else endJob(`iq-${which}`);
   showPowder();
-  drawPowderView();
+  drawPlot(powder);
   finishPowderDownload();
 }
 
@@ -2084,6 +2209,7 @@ function showPowder() {
   };
   const layers = [['A', powder.a], ...(compare?.ready ? [['B', powder.b]] : [])];
   const working = layers.filter(([, l]) => l.busy);
+  powder.compute.hidden = powder.requested || !!powder.a.error;
   if (working.length) {
     const fraction = working.reduce((s, [, l]) => s + (l.progress?.fraction ?? 0), 0) / working.length;
     const label = working.find(([, l]) => l.progress)?.[1].progress.label ?? 'Starting';
@@ -2098,7 +2224,8 @@ function showPowder() {
   if (!A) {
     state('', powder.a.error ? 'unavailable' : 'off');
     statusEl.className = powder.a.error ? 'note error' : 'note';
-    statusEl.textContent = powder.a.error || 'Computed when its view is shown: choose Show I(Q), or I(Q) in the header of the 3-D view.';
+    statusEl.textContent = powder.a.error
+      || (powder.requested ? 'Computed when its view is shown.' : 'Not computed yet: choose Show I(Q), or I(Q) in the header of the 3-D view.');
     powder.caption.textContent = powder.a.error ? 'unavailable' : '';
     powder.caption.title = powder.a.error;
     return;
@@ -2124,6 +2251,7 @@ function showPowder() {
 /** Show the I(Q) view: in the fourth place, or as the single view. */
 function showPowderView() {
   if (!powder) return;
+  powder.requested = true;
   if (layout === 'single') setLayout('single', 'iq');
   else setSlot('iq');
   views.iq.section.scrollIntoView({ block: 'nearest', behavior: 'smooth' });
@@ -2132,7 +2260,7 @@ function showPowderView() {
 /** Save I(Q) as text, computing it first if needed. */
 function downloadPowder() {
   if (!powder) return;
-  powder.download = true;
+  powder.requested = powder.download = true;
   updatePowder();
   finishPowderDownload();
 }
@@ -2143,7 +2271,7 @@ function finishPowderDownload() {
   powder.download = false;
   if (!powder.a.data) return;
   const both = compare?.ready && powder.b.data;
-  download(new Blob([powderText()], { type: 'text/plain' }), `${both ? `${stem()}_vs_${stemOf(compare.name)}` : stem()}_IQ.dat`);
+  download(new Blob([powderText()], { type: 'text/plain' }), `${both ? pairStem(stem(), stemOf(compare.name)) : stem()}_IQ.dat`);
 }
 
 /** I(Q) as text: a commented header, then Q and, per dataset, I, σ, coverage and voxels. */
@@ -2182,22 +2310,38 @@ function powderText() {
   return `${lines.join('\n')}\n`;
 }
 
-/** The curves shown: A, and B when comparing (following A / Split / B). */
-function powderLayers() {
+// ---- 1-D plots: I(Q) and the line cut -----------------------------------------------------
+//
+// Both are drawn, read and zoomed by the functions below from a plot object:
+// its canvas, hover chip and Reset zoom button, its `a` and `b` layers (one per
+// dataset, each with `data` = { edges, intensity, sigma }), the window of the
+// last drawing (`view`), the zoom, a drag and the bin under the cursor (`at`), and
+//   log(), band(), cover()   the intensity scale, the ±σ band and the coverage
+//                            line on a right-hand axis (I(Q) only)
+//   end(data)                where the x range ends: the last bin with data
+//   xMin                     the smallest x a click zoom may start at
+//   xLabel(), yLabel(log)    the axis titles
+//   empty()                  what a plot without curves says, { text, error }, or null
+//   title, extras(data)      an export's title and its line of settings
+//   readout(b, layers)       the hover text for bin b
+//   onHover()                optional: called when `at` changes
+
+/** The curves of a plot shown: A, and B when comparing (following A / Split / B). */
+function shownLayers(plot) {
   const shown = compareShown(), out = [];
-  if (powder.a.data && shown !== 'b') out.push({ letter: 'A', name: sourceName, data: powder.a.data, color: CURVE.A });
-  if (shown && shown !== 'a' && powder.b.data) out.push({ letter: 'B', name: compare.name, data: powder.b.data, color: CURVE.B });
+  if (plot.a.data && shown !== 'b') out.push({ letter: 'A', name: sourceName, data: plot.a.data, color: CURVE.A });
+  if (shown && shown !== 'a' && plot.b.data) out.push({ letter: 'B', name: compare.name, data: plot.b.data, color: CURVE.B });
   return out;
 }
 
 /**
- * The plot window: the zoom, or all shells with data and the range of the
+ * The plot window: the zoom, or all bins with data and the range of the
  * curves (and bands) over them. Intensities are in plot units: log10(I) on a
  * log scale.
  */
-function powderWindow(layers, log, band) {
-  const [x0, x1] = powder.zoom?.x ?? [Math.min(...layers.map((l) => l.data.edges[0])), Math.max(...layers.map((l) => powderEnd(l.data)))];
-  if (powder.zoom?.y) return { x0, x1, y0: powder.zoom.y[0], y1: powder.zoom.y[1] };
+function curveWindow(plot, layers, log, band) {
+  const [x0, x1] = plot.zoom?.x ?? [Math.min(...layers.map((l) => l.data.edges[0])), Math.max(...layers.map((l) => plot.end(l.data)))];
+  if (plot.zoom?.y) return { x0, x1, y0: plot.zoom.y[0], y1: plot.zoom.y[1] };
   let lo = Infinity, hi = -Infinity;
   for (const { data } of layers) {
     for (let b = 0; b < data.intensity.length; b++) {
@@ -2245,16 +2389,26 @@ function wrapText(c, text, x, y, width, lineHeight) {
   lines.forEach((line, i) => c.fillText(line, x, y + (i - (lines.length - 1) / 2) * lineHeight));
 }
 
-function drawPowderView() {
-  if (!powderShown()) return;
-  drawPowder(powder.canvas, powder.canvas.clientWidth, powder.canvas.clientHeight, devicePixelRatio || 1);
+/** Whether a plot's view is on screen. */
+const plotShown = (plot) => !!plot && plot.canvas.clientWidth > 0;
+
+function drawPlot(plot) {
+  if (!plotShown(plot)) return;
+  const s = uiScale();
+  drawCurves(plot, plot.canvas, plot.canvas.clientWidth / s, plot.canvas.clientHeight / s, s * (devicePixelRatio || 1));
+}
+
+/** The pointer on a plot's canvas, in its drawing coordinates. */
+function plotLocal(plot, e) {
+  const r = plot.canvas.getBoundingClientRect(), s = uiScale();
+  return [(e.clientX - r.left) / s, (e.clientY - r.top) / s];
 }
 
 /**
- * Draw I(Q) into `canvas` (w × h CSS px): curves with ±σ bands, and the shell
- * coverage on the right-hand axis. Exports add a title and a legend.
+ * Draw a plot into `canvas` (w × h CSS px): curves with ±σ bands, and for I(Q)
+ * the shell coverage on the right-hand axis. Exports add a title and a legend.
  */
-function drawPowder(canvas, w, h, dpr, exporting = false) {
+function drawCurves(plot, canvas, w, h, dpr, exporting = false) {
   canvas.width = Math.round(w * dpr);
   canvas.height = Math.round(h * dpr);
   const c = canvas.getContext('2d');
@@ -2262,19 +2416,20 @@ function drawPowder(canvas, w, h, dpr, exporting = false) {
   c.fillStyle = '#ffffff';
   c.fillRect(0, 0, w, h);
   if (w < 80 || h < 60) return;
-  const layers = powderLayers();
+  const layers = shownLayers(plot);
   if (!layers.length) {
-    const busy = powder.a.busy || powder.b.busy, failed = compareShown() === 'b' ? powder.b.error : powder.a.error;
-    c.fillStyle = !busy && failed ? '#d64545' : INK2;
+    if (!exporting) plot.view = null;
+    const note = plot.empty();
+    if (!note) return;
+    c.fillStyle = note.error ? '#d64545' : INK2;
     c.font = `12.5px ${SANS}`;
     c.textAlign = 'center';
     c.textBaseline = 'middle';
-    wrapText(c, busy ? 'Computing I(Q)…' : failed || 'I(Q) appears here once computed.', w / 2, h / 2, Math.min(w - 40, 420), 18);
-    if (!exporting) powder.view = null;
+    wrapText(c, note.text, w / 2, h / 2, Math.min(w - 40, 420), 18);
     return;
   }
-  const log = powderScale === 'log', band = $('iq-band').checked, cover = $('iq-coverage').checked;
-  const { x0, x1, y0, y1 } = powderWindow(layers, log, band);
+  const log = plot.log(), band = plot.band(), cover = plot.cover();
+  const { x0, x1, y0, y1 } = curveWindow(plot, layers, log, band);
   const pad = { l: 62, r: cover ? 52 : 18, t: exporting ? 46 : 14, b: 44 };
   const aw = Math.max(10, w - pad.l - pad.r), ah = Math.max(10, h - pad.t - pad.b), bottom = pad.t + ah;
   const X = (q) => pad.l + ((q - x0) / (x1 - x0)) * aw;
@@ -2282,7 +2437,7 @@ function drawPowder(canvas, w, h, dpr, exporting = false) {
   const Y = (v) => T(log ? Math.log10(v) : v);
   // Coverage: 0 at the bottom, 100% a little below the top.
   const C = (f) => bottom - (f / 1.08) * ah;
-  if (!exporting) powder.view = { x0, x1, y0, y1, pad, aw, ah };
+  if (!exporting) plot.view = { x0, x1, y0, y1, pad, aw, ah };
   const xt = niceTicks(x0, x1, Math.max(2, Math.round(aw / 80)));
   const yt = log ? logTicks(y0, y1) : niceTicks(y0, y1, Math.max(2, Math.round(ah / 55)));
   c.strokeStyle = '#eef1f4';
@@ -2296,7 +2451,7 @@ function drawPowder(canvas, w, h, dpr, exporting = false) {
   c.beginPath();
   c.rect(pad.l, pad.t, aw, ah);
   c.clip();
-  // Shells with data, in runs: a shell without data breaks the curve.
+  // Bins with data, in runs: a bin without data breaks the curve.
   const runs = (data) => {
     const out = [];
     let run = null;
@@ -2347,7 +2502,7 @@ function drawPowder(canvas, w, h, dpr, exporting = false) {
     }
     c.globalAlpha = 1;
   }
-  // Markers when the shells are far enough apart to see them.
+  // Markers when the bins are far enough apart to see them.
   const visible = layers[0].data.edges.filter((e, b, all) => b + 1 < all.length && (e + all[b + 1]) / 2 >= x0 && (e + all[b + 1]) / 2 <= x1).length;
   const markers = visible < aw / 6;
   for (const { data, color } of layers) {
@@ -2366,16 +2521,16 @@ function drawPowder(canvas, w, h, dpr, exporting = false) {
       }
     }
   }
-  if (!exporting && powder.at !== null) {
-    // The shell under the cursor.
-    const x = at(layers[0].data, powder.at);
+  if (!exporting && plot.at !== null) {
+    // The bin under the cursor.
+    const x = at(layers[0].data, plot.at);
     c.strokeStyle = 'rgba(18, 24, 33, 0.35)';
     c.lineWidth = 1;
     c.setLineDash([4, 4]);
     c.beginPath(); c.moveTo(x, pad.t); c.lineTo(x, bottom); c.stroke();
     c.setLineDash([]);
     for (const { data, color } of layers) {
-      const v = data.intensity[powder.at];
+      const v = data.intensity[plot.at];
       if (!Number.isFinite(v) || (log && v <= 0)) continue;
       c.fillStyle = '#ffffff';
       c.strokeStyle = color;
@@ -2383,9 +2538,9 @@ function drawPowder(canvas, w, h, dpr, exporting = false) {
       c.beginPath(); c.arc(x, Y(v), 4, 0, 2 * Math.PI); c.fill(); c.stroke();
     }
   }
-  const d = powder.drag;
+  const d = plot.drag;
   if (!exporting && d?.moved && clickMode !== 'move') {
-    // The zoom box being dragged; a flat one zooms Q only and spans the height.
+    // The zoom box being dragged; a flat one zooms x only and spans the height.
     const flat = Math.abs(d.py1 - d.py) < 12;
     const xa = Math.min(d.px, d.px1), ya = flat ? pad.t : Math.min(d.py, d.py1);
     const bw = Math.abs(d.px1 - d.px), bh = flat ? ah : Math.abs(d.py1 - d.py);
@@ -2438,7 +2593,7 @@ function drawPowder(canvas, w, h, dpr, exporting = false) {
   c.font = `600 11.5px ${SANS}`;
   c.textAlign = 'center';
   c.textBaseline = 'alphabetic';
-  c.fillText('Q (Å⁻¹)', pad.l + aw / 2, bottom + 36);
+  c.fillText(plot.xLabel(), pad.l + aw / 2, bottom + 36);
   const vertical = (text, x) => {
     c.save();
     c.translate(x, pad.t + ah / 2);
@@ -2446,7 +2601,7 @@ function drawPowder(canvas, w, h, dpr, exporting = false) {
     c.fillText(text, 0, 0);
     c.restore();
   };
-  vertical(log ? 'I(Q), log scale' : 'I(Q)', 16);
+  vertical(plot.yLabel(log), 16);
   if (cover) {
     c.fillStyle = INK2;
     c.font = `11px ${SANS}`;
@@ -2479,110 +2634,569 @@ function drawPowder(canvas, w, h, dpr, exporting = false) {
   }
 
   if (!exporting) return;
-  const data = layers[0].data;
   c.textAlign = 'left';
   c.textBaseline = 'alphabetic';
   c.fillStyle = INK;
   c.font = `650 14px ${SANS}`;
-  c.fillText('I(Q)', 10, 24);
-  const titleWidth = c.measureText('I(Q)').width;
+  c.fillText(plot.title, 10, 24);
+  const titleWidth = c.measureText(plot.title).width;
   c.font = `11px ${MONO}`;
   c.fillStyle = INK2;
-  const extras = [binsLabel(powder.plan.bins), `voxels split ${data.split}³`, data.order > 1 ? data.symmetry : 'no symmetry', data.masked && mask ? `mask ${pct((mask.edge + mask.outlier) / mask.measured)}` : 'no mask'];
-  c.fillText(extras.join(' · '), 20 + titleWidth, 24);
+  c.fillText(plot.extras(layers[0].data).join(' · '), 20 + titleWidth, 24);
 }
 
-/** The pointer in plot coordinates: q (Å⁻¹) and t (intensity, or log10 of it). */
-function powderPoint(e) {
-  const v = powder.view;
+/** The pointer in plot coordinates: x and t (intensity, or log10 of it). */
+function curvePoint(plot, e) {
+  const v = plot.view;
   if (!v) return null;
-  const r = powder.canvas.getBoundingClientRect(), px = e.clientX - r.left, py = e.clientY - r.top;
+  const [px, py] = plotLocal(plot, e);
   return {
     px, py,
-    q: v.x0 + ((px - v.pad.l) / v.aw) * (v.x1 - v.x0),
+    x: v.x0 + ((px - v.pad.l) / v.aw) * (v.x1 - v.x0),
     t: v.y0 + ((v.pad.t + v.ah - py) / v.ah) * (v.y1 - v.y0),
     inside: px >= v.pad.l && px <= v.pad.l + v.aw && py >= v.pad.t && py <= v.pad.t + v.ah,
   };
 }
 
-/** Read the shell under the pointer: Q, d = 2π/Q, and I ± σ with the coverage for each dataset. */
-function hoverPowder(e) {
-  const pt = powderPoint(e), layers = powderLayers(), first = layers[0]?.data;
-  const b = pt?.inside && first ? shellAt(first.edges, pt.q) : -1;
-  if (b < 0 || b >= (first?.intensity.length ?? 0)) {
-    powder.hover.hidden = true;
-    if (powder.at !== null) { powder.at = null; drawPowderView(); }
-    return;
-  }
-  const value = (d) => (Number.isFinite(d.intensity[b])
-    ? `${fmtValue(d.intensity[b])}${Number.isFinite(d.sigma[b]) ? ` ± ${fmtValue(d.sigma[b])}` : ''} (${pct(d.coverage[b])} covered)`
-    : 'no data');
-  const q = shellMid(first, b);
-  powder.hover.textContent = `Q ${fmt(q)} Å⁻¹  d ${fmt(2 * Math.PI / q, 3)} Å  →  ${layers.map((l) => `${layers.length > 1 ? `${l.letter} ` : ''}${value(l.data)}`).join(' · ')}`;
-  powder.hover.hidden = false;
-  if (powder.at !== b) {
-    powder.at = b;
-    drawPowderView();
-  }
+/** Mark the bin under the pointer and read it in the hover chip; null clears it. */
+function hoverCurve(plot, e) {
+  const pt = e && curvePoint(plot, e), layers = shownLayers(plot), first = layers[0]?.data;
+  const b = pt?.inside && first ? shellAt(first.edges, pt.x) : -1;
+  const at = b >= 0 && b < first.intensity.length ? b : null;
+  plot.hover.hidden = at === null;
+  if (at !== null) plot.hover.textContent = plot.readout(at, layers);
+  if (plot.at === at) return;
+  plot.at = at;
+  drawPlot(plot);
+  plot.onHover?.();
 }
 
-// Dragging on I(Q): a box zooms (a flat one Q only), and in Move mode the plot pans.
-function startPowderDrag(e) {
-  const pt = powderPoint(e);
+// Dragging on a plot: a box zooms (a flat one x only), and in Move mode the plot pans.
+function startCurveDrag(plot, e) {
+  const pt = curvePoint(plot, e);
   if (e.button !== 0 || !pt?.inside) return;
-  powder.drag = { px: pt.px, py: pt.py, px1: pt.px, py1: pt.py, q: pt.q, view: { ...powder.view }, moved: false };
-  try { powder.canvas.setPointerCapture(e.pointerId); } catch { /* synthetic or already released pointer */ }
-  if (clickMode === 'move') powder.canvas.classList.add('panning');
+  plot.drag = { px: pt.px, py: pt.py, px1: pt.px, py1: pt.py, x: pt.x, view: { ...plot.view }, moved: false };
+  try { plot.canvas.setPointerCapture(e.pointerId); } catch { /* synthetic or already released pointer */ }
+  if (clickMode === 'move') plot.canvas.classList.add('panning');
 }
 
-function movePowderDrag(e) {
-  const d = powder.drag;
+function moveCurveDrag(plot, e) {
+  const d = plot.drag;
   if (!d) return;
-  const r = powder.canvas.getBoundingClientRect();
-  d.px1 = e.clientX - r.left;
-  d.py1 = e.clientY - r.top;
+  [d.px1, d.py1] = plotLocal(plot, e);
   d.moved ||= Math.hypot(d.px1 - d.px, d.py1 - d.py) > (clickMode === 'move' ? 1 : 5);
   if (!d.moved) return;
-  if (clickMode !== 'move') { drawPowderView(); return; }
-  const v = d.view, sq = ((d.px1 - d.px) / v.aw) * (v.x1 - v.x0), st = ((d.py1 - d.py) / v.ah) * (v.y1 - v.y0);
-  setPowderZoom({ x: [v.x0 - sq, v.x1 - sq], y: powder.zoom?.y ? [v.y0 + st, v.y1 + st] : null });
+  if (clickMode !== 'move') { drawPlot(plot); return; }
+  const v = d.view, sx = ((d.px1 - d.px) / v.aw) * (v.x1 - v.x0), st = ((d.py1 - d.py) / v.ah) * (v.y1 - v.y0);
+  setCurveZoom(plot, { x: [v.x0 - sx, v.x1 - sx], y: plot.zoom?.y ? [v.y0 + st, v.y1 + st] : null });
 }
 
-function endPowderDrag() {
-  const d = powder.drag;
-  powder.drag = null;
-  powder.canvas.classList.remove('panning');
+function endCurveDrag(plot) {
+  const d = plot.drag;
+  plot.drag = null;
+  plot.canvas.classList.remove('panning');
   if (!d || clickMode === 'move') return;
-  // The width of the shell where the drag started: zooms keep at least two such shells across.
-  const v = d.view, edges = powderLayers()[0]?.data.edges ?? [0, 0], s = Math.max(0, shellAt(edges, d.q)), dq = edges[s + 1] - edges[s];
+  // The width of the bin where the drag started: zooms keep at least two such bins across.
+  const v = d.view, edges = shownLayers(plot)[0]?.data.edges ?? [0, 0], s = Math.max(0, shellAt(edges, d.x)), dx = edges[s + 1] - edges[s];
   if (!d.moved) {
-    // A click in Zoom mode zooms into Q 2×, after a pause so a double-click (full range) does not also zoom.
+    // A click in Zoom mode zooms into x 2×, after a pause so a double-click (full range) does not also zoom.
     if (clickMode !== 'zoom') return;
-    clearTimeout(powder.clickTimer);
-    powder.clickTimer = setTimeout(() => {
-      const half = Math.max((v.x1 - v.x0) / 4, dq);
-      setPowderZoom({ x: [Math.max(0, d.q - half), Math.max(0, d.q - half) + 2 * half], y: null });
+    clearTimeout(plot.clickTimer);
+    plot.clickTimer = setTimeout(() => {
+      const half = Math.max((v.x1 - v.x0) / 4, dx), start = Math.max(plot.xMin, d.x - half);
+      setCurveZoom(plot, { x: [start, start + 2 * half], y: null });
     }, 250);
     return;
   }
-  const q = (px) => v.x0 + ((px - v.pad.l) / v.aw) * (v.x1 - v.x0), t = (py) => v.y0 + ((v.pad.t + v.ah - py) / v.ah) * (v.y1 - v.y0);
-  const x = [q(Math.min(d.px, d.px1)), q(Math.max(d.px, d.px1))];
-  // At least two shells across.
-  if (x[1] - x[0] < 2 * dq) { drawPowderView(); return; }
-  setPowderZoom({ x, y: Math.abs(d.py1 - d.py) < 12 ? null : [t(Math.max(d.py, d.py1)), t(Math.min(d.py, d.py1))] });
+  const x = (px) => v.x0 + ((px - v.pad.l) / v.aw) * (v.x1 - v.x0), t = (py) => v.y0 + ((v.pad.t + v.ah - py) / v.ah) * (v.y1 - v.y0);
+  const range = [x(Math.min(d.px, d.px1)), x(Math.max(d.px, d.px1))];
+  // At least two bins across.
+  if (range[1] - range[0] < 2 * dx) { drawPlot(plot); return; }
+  setCurveZoom(plot, { x: range, y: Math.abs(d.py1 - d.py) < 12 ? null : [t(Math.max(d.py, d.py1)), t(Math.min(d.py, d.py1))] });
 }
 
-function setPowderZoom(zoom) {
-  powder.zoom = zoom;
-  powder.zoomReset.hidden = !zoom;
-  drawPowderView();
+function setCurveZoom(plot, zoom) {
+  plot.zoom = zoom;
+  plot.zoomReset.hidden = !zoom;
+  drawPlot(plot);
 }
 
-function savePowderPNG() {
-  if (!powderLayers().length) return;
-  const out = document.createElement('canvas');
-  drawPowder(out, Math.max(powder.canvas.clientWidth, 560), Math.max(powder.canvas.clientHeight, 360) + 32, 3, true);
-  out.toBlob((blob) => download(blob, `${shownStem()}_IQ.png`));
+/** Hover, zoom and pan on a plot's canvas, and its redraw on resizes. */
+function wirePlot(plot) {
+  plot.canvas.onpointerdown = (e) => startCurveDrag(plot, e);
+  plot.canvas.onpointermove = (e) => { hoverCurve(plot, e); moveCurveDrag(plot, e); };
+  plot.canvas.onpointerup = () => endCurveDrag(plot);
+  plot.canvas.onpointercancel = () => { plot.drag = null; plot.canvas.classList.remove('panning'); drawPlot(plot); };
+  plot.canvas.onpointerleave = () => hoverCurve(plot, null);
+  plot.canvas.ondblclick = () => { clearTimeout(plot.clickTimer); setCurveZoom(plot, null); };
+  plot.zoomReset.onclick = () => setCurveZoom(plot, null);
+  resized.observe(plot.canvas);
+}
+
+/** Save a plot as a PNG at 3×, with its title and legend. */
+function savePlotPNG(plot, name) {
+  if (!shownLayers(plot).length) return;
+  const out = document.createElement('canvas'), s = uiScale();
+  drawCurves(plot, out, Math.max(plot.canvas.clientWidth / s, 560), Math.max(plot.canvas.clientHeight / s, 360) + 32, 3, true);
+  out.toBlob((blob) => download(blob, name));
+}
+
+// ---- Line cut -----------------------------------------------------------------------------------
+
+// Directions a cut keeps to with Shift: small whole steps along the plane's axes.
+const CUT_DIRECTIONS = [[1, 0], [0, 1], [1, 1], [1, -1], [1, 2], [2, 1], [1, -2], [2, -1]];
+// A drag in Cut mode that starts this close (px) to an end of the cut moves that end.
+const CUT_GRAB = 10;
+
+/** The line cut view: its plot (see drawCurves()), header and footer. */
+function setupCut() {
+  const shell = viewShell('cut', slotSwitch('cut'), 'Line cut');
+  shell.actions.innerHTML = `
+    <button type="button" class="btn btn-ghost btn-xs zoom-reset" hidden title="Back to the full range (or double-click the plot)">Reset zoom</button>
+    <div class="segmented sm cut-scale" role="group" aria-label="Intensity scale"><button type="button" data-value="linear" title="Linear intensity scale">Lin</button><button type="button" data-value="log" title="Logarithmic intensity scale">Log</button></div>
+    <button type="button" class="icon-btn" title="Line cut options" aria-haspopup="dialog" aria-expanded="false" data-pop="pop-cut">${ICONS.gear}</button>
+    <button type="button" class="icon-btn data" title="Download the cut as text: position, coordinates, I, σ and voxels per point">${ICONS.download}</button>
+    <button type="button" class="icon-btn save" title="Save PNG">${ICONS.save}</button>`;
+  shell.actions.append(shell.focusBtn, shell.maxBtn);
+  shell.q('.view-body').innerHTML = `<canvas class="plot" role="img" aria-label="Line cut: the intensity along a line in a slice"></canvas><span class="overlay-chip" hidden></span>
+    <button type="button" class="btn btn-primary view-cta" title="Switch the click mode to Cut, then drag across a slice">Draw a cut</button>`;
+  const foot = document.createElement('footer');
+  foot.className = 'view-foot';
+  const labels = meta.dims.map((d) => d.label).join(', ');
+  // Each label stays with its field when the footer wraps.
+  foot.innerHTML = `
+    <span class="foot-group"><span class="label">From</span>
+      <input class="cut-from cut-end mono" type="text" spellcheck="false" autocomplete="off" aria-label="Cut start"
+        title="Where the cut starts (${labels}). From and To share one coordinate: the slice the cut lies in"></span>
+    <span class="foot-group"><span class="label">To</span>
+      <input class="cut-to cut-end mono" type="text" spellcheck="false" autocomplete="off" aria-label="Cut end" title="Where the cut ends (${labels})"></span>
+    <span class="foot-group grow"><span class="label" title="Full width of the band across the line whose voxels each point averages">W</span>
+      <input class="cut-wslider foot-grow" type="range" min="0" max="1000" aria-label="Cut width (log scale)">
+      <input class="cut-width num" type="number" min="0" step="any" aria-label="Cut width" title="Full width across the line; empty for three voxels">
+      <span class="unit cut-unit"></span></span>`;
+  shell.section.append(foot);
+  const q = shell.q;
+  cut = {
+    canvas: q('canvas'), hover: q('.overlay-chip'), caption: q('.view-caption'), zoomReset: q('.zoom-reset'), cta: q('.view-cta'),
+    from: q('.cut-from'), to: q('.cut-to'), width: q('.cut-width'), wslider: q('.cut-wslider'), unit: q('.cut-unit'),
+    a: newCurveLayer(), b: newCurveLayer(), line: null, stale: false, download: false, zoom: null, drag: null, view: null, at: null,
+    // As a plot (see drawCurves()):
+    xMin: -Infinity, title: 'Line cut',
+    log: () => cutScale === 'log', band: () => $('cut-band').checked, cover: () => false,
+    end: (data) => data.edges[data.edges.length - 1],
+    xLabel: () => { const { axis, path } = cutPath(); return `${withUnits(axis)} along ${path}`; },
+    yLabel: (log) => (log ? 'Intensity, log scale' : 'Intensity'),
+    empty: () => {
+      if (!cut.line) return clickMode === 'cut' ? { text: 'Drag across a slice to draw a cut.' } : null;
+      const busy = cut.a.busy || cut.b.busy, failed = compareShown() === 'b' ? cut.b.error : cut.a.error;
+      return { text: busy ? 'Computing the cut…' : failed || 'The cut appears here.', error: !busy && !!failed };
+    },
+    extras: (data) => {
+      const p = cutPanel(), { unit, scale } = cutWidthUnit(p), F = meta.dims[p.fixed];
+      return [`${F.label} = ${fmt(Number(p.center.value))}`, `W ${fmt(cutSpec().half * 2 * scale)} ${unit}`,
+        data.order > 1 ? data.symmetry : 'no symmetry', data.masked && mask ? `mask ${pct((mask.edge + mask.outlier) / mask.measured)}` : 'no mask'];
+    },
+    // The point: its coordinates, and I ± σ with the voxels pooled for each dataset.
+    readout: (b, layers) => {
+      const value = (d) => (Number.isFinite(d.intensity[b])
+        ? `${fmtValue(d.intensity[b])}${Number.isFinite(d.sigma[b]) ? ` ± ${fmtValue(d.sigma[b])}` : ''} (${d.voxels[b]} vox)`
+        : 'no data');
+      const at = cutPoint(cutAt(shellMid(layers[0].data, b)));
+      return `(${at.map((x) => fmt(x)).join(', ')})  →  ${layers.map((l) => `${layers.length > 1 ? `${l.letter} ` : ''}${value(l.data)}`).join(' · ')}`;
+    },
+    // The point read here is marked on the slice.
+    onHover: () => { const p = cutPanel(); if (p) drawPanel(p); },
+  };
+  cut.cta.onclick = () => { setClickMode('cut'); persist(); };
+  setSegmented(q('.cut-scale'), cutScale);
+  segmented(q('.cut-scale'), (value) => {
+    cutScale = value;
+    if (cut.zoom) setCurveZoom(cut, cut.zoom.x ? { x: cut.zoom.x, y: null } : null);
+    persist();
+    drawPlot(cut);
+  });
+  // Typed ends and widths apply on Enter or leaving the field; the width slider as it moves.
+  cut.from.onchange = cut.to.onchange = typeCutEnds;
+  cut.width.onchange = () => { syncWidthSlider(); changeCutWidth(); };
+  cut.wslider.oninput = () => {
+    const [lo, hi] = widthRange();
+    cut.width.value = sig(lo * (hi / lo) ** (Number(cut.wslider.value) / 1000), 2);
+    changeCutWidth();
+  };
+  for (const input of [cut.from, cut.to, cut.width]) input.onkeydown = (e) => { if (e.key === 'Enter') input.blur(); };
+  wirePlot(cut);
+  q('.data').onclick = downloadCut;
+  q('.save').onclick = () => savePlotPNG(cut, `${shownStem()}_cut_${cutFileName()}.png`);
+  showCut();
+}
+
+/** The slice the cut lies in, or null without a cut. */
+const cutPanel = () => (cut?.line ? panels.find((p) => p.key === cut.line.key) : null);
+
+/** Bin width of a display dimension (uniform bins). */
+const binWidth = (dim) => (dim.edges[dim.edges.length - 1] - dim.edges[0]) / (dim.edges.length - 1);
+
+/** A positive number typed in `input`, or null when it is empty (automatic). */
+function typedPositive(input) {
+  const text = input.value.trim(), x = Number(text);
+  if (text === '') return null;
+  if (!(x > 0)) throw new Error(`${input.getAttribute('aria-label')} must be a positive number, or empty for automatic.`);
+  return x;
+}
+
+/**
+ * How widths are given in slice p: in Å⁻¹ (with 2π) on a lattice plane and in
+ * the axes' unit otherwise. `scale` turns the plane's lengths (planeGeometry())
+ * into that unit, and `auto` is three voxels.
+ */
+function cutWidthUnit(p) {
+  const g = geometry(p), scale = g.lattice ? 2 * Math.PI : 1, X = meta.dims[p.x], Y = meta.dims[p.y];
+  return { g, scale, unit: g.lattice ? 'Å⁻¹' : X.units || '', auto: sig(3 * Math.max(g.lx * binWidth(X), g.ly * binWidth(Y)) * scale) };
+}
+
+/** The cut's geometry for lineCut() (see cut.js); throws when its step or width cannot be read. */
+function cutSpec() {
+  const p = cutPanel(), { a, b } = cut.line, dom = cutAxis(a, b);
+  const { g, scale, auto } = cutWidthUnit(p);
+  const step = typedPositive($('cut-step')) ?? binWidth(meta.dims[dom ? p.y : p.x]);
+  const width = typedPositive(cut.width) ?? auto;
+  return {
+    fixed: p.fixed, x: p.x, y: p.y, center: Number(p.center.value), thickness: Number(p.width.value), a, b, dom,
+    edges: cutEdges(a, b, dom, step), half: width / scale / 2, geometry: { lx: g.lx, ly: g.ly, cos: g.cos },
+  };
+}
+
+/** The point of the cut's line (in its plane) where its axis has the value s. */
+function cutAt(s) {
+  const { a, b } = cut.line, dom = cutAxis(a, b), t = (s - a[dom]) / (b[dom] - a[dom]);
+  return [a[0] + t * (b[0] - a[0]), a[1] + t * (b[1] - a[1])];
+}
+
+/** A point of the cut's plane in all three display coordinates. */
+function cutPoint([u, v]) {
+  const p = cutPanel(), out = [0, 0, 0];
+  out[p.fixed] = Number(p.center.value);
+  out[p.x] = u;
+  out[p.y] = v;
+  return out;
+}
+
+const pointText = (pt) => pt.map((x) => String(Number(x.toFixed(4)))).join(', ');
+
+/** The cut's axis, and its path as a function of that axis: (H, 0, 1), (H, H, 0) or (H, 0.5H+1, 0). */
+function cutPath() {
+  const p = cutPanel(), { a, b } = cut.line, dom = cutAxis(a, b), axis = meta.dims[dom ? p.y : p.x], other = dom ? p.x : p.y;
+  const slope = (b[1 - dom] - a[1 - dom]) / (b[dom] - a[dom]), offset = a[1 - dom] - slope * a[dom];
+  const term = (d) => {
+    if (d === p.fixed) return fmt(Number(p.center.value));
+    if (d !== other) return axis.label;
+    if (Math.abs(slope) < 1e-9) return fmt(offset);
+    const k = Math.abs(slope - 1) < 1e-9 ? '' : Math.abs(slope + 1) < 1e-9 ? '−' : fmt(slope);
+    return `${k}${axis.label}${Math.abs(offset) < 1e-9 ? '' : `${offset > 0 ? '+' : '−'}${fmt(Math.abs(offset))}`}`;
+  };
+  return { axis, path: `(${[0, 1, 2].map(term).join(', ')})` };
+}
+
+/** The cut's path for file names: H_0_1, H_-H+1_0. */
+const cutFileName = () => cutPath().path.replace(/[()\s]/g, '').replace(/−/g, '-').replace(/,/g, '_');
+
+/** Snap a point of slice p to the nearest voxel centre on each axis. */
+function snapToVoxel(p, [u, v]) {
+  const snap = (dim, x) => {
+    const w = binWidth(dim), e0 = dim.edges[0];
+    return Number((e0 + (Math.round((x - e0) / w - 0.5) + 0.5) * w).toFixed(6));
+  };
+  return [snap(meta.dims[p.x], u), snap(meta.dims[p.y], v)];
+}
+
+/**
+ * The end of a cut from `from` toward `to` along the nearest of CUT_DIRECTIONS
+ * (in the drawn geometry), a whole number of voxels along its axis.
+ */
+function snapDirection(p, from, to) {
+  const g = geometry(p), sin = Math.sqrt(Math.max(0, 1 - g.cos * g.cos));
+  const cart = ([u, v]) => [g.lx * u + g.ly * g.cos * v, g.ly * sin * v];
+  const [dx, dy] = cart([to[0] - from[0], to[1] - from[1]]);
+  let best = null;
+  for (const dir of CUT_DIRECTIONS) {
+    const [cx, cy] = cart(dir), t = (dx * cx + dy * cy) / (cx * cx + cy * cy), off = Math.hypot(dx - t * cx, dy - t * cy);
+    if (!best || off < best.off) best = { dir, t, off };
+  }
+  const { dir, t } = best, dom = cutAxis([0, 0], dir), w = binWidth(meta.dims[dom ? p.y : p.x]) / Math.abs(dir[dom]);
+  const k = Math.round(t / w) * w;
+  return [from[0] + k * dir[0], from[1] + k * dir[1]].map((x) => Number(x.toFixed(6)));
+}
+
+/** Make the cut run between points P and Q of slice p (either way round), and show it. */
+function setCutLine(p, P, Q) {
+  if (P[0] === Q[0] && P[1] === Q[1]) return;
+  const dom = cutAxis(P, Q), [a, b] = P[dom] <= Q[dom] ? [P, Q] : [Q, P];
+  const before = cutPanel();
+  cut.line = { key: p.key, a, b };
+  if (before && before !== p) drawPanel(before);
+  if (slot !== 'cut') setSlot('cut');
+  syncWidthSlider();
+  requestCut();
+  drawPanel(p);
+}
+
+// Cut mode on a slice: a drag from an end of the cut moves that end, and one
+// from elsewhere draws a new cut. Ends snap to voxel centres, or with Shift to
+// a lattice direction from the other end.
+function startCutDrag(p, e) {
+  if (e.button !== 0 || !p.inverse) return;
+  const [x, y] = localPoint(p, e), ends = cut.line?.key === p.key ? [cut.line.a, cut.line.b] : [];
+  const grabbed = ends.findIndex((end) => { const [ex, ey] = p.project(...end); return Math.hypot(ex - x, ey - y) < CUT_GRAB; });
+  p.cutDrag = { x0: x, y0: y, moved: false, fresh: grabbed < 0, anchor: grabbed < 0 ? snapToVoxel(p, p.inverse(x, y)) : ends[1 - grabbed] };
+  try { p.canvas.setPointerCapture(e.pointerId); } catch { /* synthetic or already released pointer */ }
+}
+
+function moveCutDrag(p, e) {
+  const d = p.cutDrag, [x, y] = localPoint(p, e);
+  if (!d.moved) {
+    if (Math.hypot(x - d.x0, y - d.y0) <= 5) return;
+    d.moved = true;
+    // A new cut starts at the full range.
+    if (d.fresh) setCurveZoom(cut, null);
+  }
+  const to = p.inverse(x, y);
+  setCutLine(p, d.anchor, e.shiftKey ? snapDirection(p, d.anchor, to) : snapToVoxel(p, to));
+}
+
+/** Apply typed ends: the cut lies in the slice through the coordinate they share, which moves there. */
+function typeCutEnds() {
+  const read = (input) => {
+    const values = input.value.replace(/[()[\]]/g, ' ').trim().split(/[\s,]+/).filter(Boolean).map(Number);
+    if (values.length !== 3 || !values.every(Number.isFinite)) {
+      throw new Error(`Write the cut's ends as three numbers (${meta.dims.map((d) => d.label).join(', ')}), like 1, 0, 0.`);
+    }
+    return values;
+  };
+  let P, Q;
+  try {
+    [P, Q] = [read(cut.from), read(cut.to)];
+  } catch (err) {
+    error(err.message);
+    return;
+  }
+  const p = [cutPanel(), ...panels].find((q) => q && Math.abs(P[q.fixed] - Q[q.fixed]) < 1e-9);
+  if (!p) {
+    error(`From and To must share one coordinate (${meta.dims.map((d) => d.label).join(', ')}): the cut lies in the slice through it.`);
+    return;
+  }
+  error('');
+  if (Math.abs(Number(p.center.value) - P[p.fixed]) > 1e-9) {
+    p.center.value = p.slider.value = P[p.fixed];
+    paint(p.slider);
+    request(p);
+  }
+  setCutLine(p, [P[p.x], P[p.y]], [Q[p.x], Q[p.y]]);
+}
+
+// The width slider sets W on a log scale, from half a voxel to 30 voxels.
+function widthRange() {
+  const { auto } = cutWidthUnit(cutPanel());
+  return [auto / 6, auto * 10];
+}
+
+function syncWidthSlider() {
+  cut.wslider.disabled = !cut.line;
+  if (!cut.line) return;
+  const [lo, hi] = widthRange(), w = Number(cut.width.value) || cutWidthUnit(cutPanel()).auto;
+  cut.wslider.value = 1000 * clamp(Math.log(w / lo) / Math.log(hi / lo), 0, 1);
+  paint(cut.wslider);
+}
+
+function changeCutWidth() {
+  requestCut();
+  const p = cutPanel();
+  if (p) drawPanel(p);
+}
+
+/**
+ * Recompute the cut after a change to its line, its slice, the processing or
+ * its settings: now if its view is shown, otherwise once it is.
+ */
+function requestCut() {
+  if (!cut) return;
+  cut.stale = true;
+  updateCut();
+  showCut();
+}
+
+/** Send the cut requests when they are due: to A's worker, and B's once its mask is built. */
+function updateCut() {
+  if (!cut?.stale || !cut.line || !plotShown(cut)) return;
+  cut.stale = false;
+  let spec;
+  try {
+    spec = cutSpec();
+  } catch (err) {
+    Object.assign(cut.a, { data: null, error: err.message });
+    cut.b.data = null;
+    showCut();
+    drawPlot(cut);
+    return;
+  }
+  const removed = $('mask-removed').checked;
+  queueCut(cut.a, worker, { cut: spec, maps: symmetry.maps, symmetry: symmetry.name, removed });
+  if (compare?.ready && !compare.maskBusy) {
+    queueCut(cut.b, compare.worker, { cut: spec, maps: compare.maps, symmetry: compare.maps.length > 1 ? symmetry.name : '1', removed });
+  }
+}
+
+/** Ask a dataset's worker for the cut; one request in flight per dataset, the latest one next. */
+function queueCut(layer, w, request) {
+  layer.wanted = request;
+  if (!layer.busy) sendCut(layer, w);
+}
+
+function sendCut(layer, w) {
+  const q = layer.wanted;
+  layer.wanted = null;
+  layer.busy = true;
+  w.postMessage({ type: 'cut', id: ++requestId, ...q });
+}
+
+/** The cut of dataset `which` ('a' or 'b') has arrived, or failed with `message`. */
+function cutResult(which, msg, message = '') {
+  const layer = cut?.[which];
+  if (!layer) return;
+  layer.busy = false;
+  Object.assign(layer, msg ? { data: msg, error: '' } : { data: null, error: message });
+  if (layer.wanted) sendCut(layer, which === 'a' ? worker : compare.worker);
+  else endJob(`cut-${which}`);
+  showCut();
+  drawPlot(cut);
+  finishCutDownload();
+}
+
+/** The first cut of a file reads its uncertainties, which takes a moment on large files. */
+function cutProgress(which, { label, fraction }) {
+  if (cut?.[which]?.busy) setJob(`cut-${which}`, which === 'a' ? 'Cut' : 'Cut B', label, fraction);
+}
+
+/** The cut view's header, fields and button. */
+function showCut() {
+  if (!cut) return;
+  const p = cutPanel();
+  cut.cta.hidden = !!p || clickMode === 'cut';
+  syncWidthSlider();
+  if (!p) {
+    cut.caption.textContent = clickMode === 'cut' ? 'drag across a slice' : '';
+    cut.unit.textContent = '';
+    return;
+  }
+  const { unit, auto, scale } = cutWidthUnit(p), dom = cutAxis(cut.line.a, cut.line.b);
+  cut.unit.textContent = unit;
+  cut.width.placeholder = String(auto);
+  $('cut-step').placeholder = String(sig(binWidth(meta.dims[dom ? p.y : p.x]), 3));
+  if (document.activeElement !== cut.from) cut.from.value = pointText(cutPoint(cut.line.a));
+  if (document.activeElement !== cut.to) cut.to.value = pointText(cutPoint(cut.line.b));
+  const X = meta.dims[p.x], Y = meta.dims[p.y], F = meta.dims[p.fixed], d = cut.a.data, { path } = cutPath();
+  let width = auto;
+  try { width = cutSpec().half * 2 * scale; } catch { /* the field says why */ }
+  if (cut.a.busy || cut.b.busy) {
+    cut.caption.textContent = 'computing…';
+  } else if (cut.a.error || !d) {
+    cut.caption.textContent = cut.a.error || '';
+  } else {
+    cut.caption.textContent = `${X.label}${Y.label} · ${F.label} = ${fmt(Number(p.center.value))} · W ${fmt(width)} ${unit}`
+      + `${d.order > 1 ? ` · ${d.symmetry}` : ''}${d.masked ? ' · masked' : ''}${d.removed ? ' · removed only' : ''}${d.errors ? ' · ±σ' : ''}`;
+  }
+  cut.caption.title = `Along ${path} from (${cut.from.value}) to (${cut.to.value}), ${fmt(width)} ${unit} wide`
+    + `${d ? `, through ${F.label} ∈ [${fmt(d.slab[0])}, ${fmt(d.slab[1])}] (${d.bins} bin${d.bins === 1 ? '' : 's'}); ${d.intensity.length} points in ${d.seconds.toFixed(2)} s` : ''}`
+    + `${compare?.ready && cut.b.error ? `\nB: ${cut.b.error}` : ''}`;
+}
+
+/** The cut on its slice: the band it averages, its line and ends, and the point read on its plot. */
+function drawCutOverlay(c, p, corners) {
+  if (cutPanel() !== p || !(plotShown(cut) || clickMode === 'cut')) return;
+  let spec;
+  try { spec = cutSpec(); } catch { return; }
+  const [A, B] = [spec.a, spec.b].map(([u, v]) => p.project(u, v));
+  c.save();
+  c.beginPath();
+  corners.forEach(([x, y], i) => (i ? c.lineTo(x, y) : c.moveTo(x, y)));
+  c.closePath();
+  c.clip();
+  c.beginPath();
+  cutBand(spec).map(([u, v]) => p.project(u, v)).forEach(([x, y], i) => (i ? c.lineTo(x, y) : c.moveTo(x, y)));
+  c.closePath();
+  c.fillStyle = 'rgba(255, 255, 255, 0.16)';
+  c.fill();
+  c.setLineDash([4, 3]);
+  c.lineWidth = 1;
+  c.strokeStyle = 'rgba(255, 255, 255, 0.85)';
+  c.stroke();
+  c.setLineDash([]);
+  // A white line on a dark one, so it shows on dark and bright colors alike.
+  c.lineCap = 'round';
+  for (const [color, width] of [['rgba(18, 24, 33, 0.6)', 4], ['#ffffff', 2]]) {
+    c.strokeStyle = color;
+    c.lineWidth = width;
+    c.beginPath(); c.moveTo(...A); c.lineTo(...B); c.stroke();
+  }
+  c.restore();
+  c.save();
+  for (const [x, y] of [A, B]) {
+    c.beginPath(); c.arc(x, y, 4.5, 0, 2 * Math.PI);
+    c.fillStyle = '#ffffff'; c.fill();
+    c.lineWidth = 1.5; c.strokeStyle = INK; c.stroke();
+  }
+  const data = cut.at !== null && shownLayers(cut)[0]?.data;
+  if (data) {
+    const [x, y] = p.project(...cutAt(shellMid(data, cut.at)));
+    c.beginPath(); c.arc(x, y, 5.5, 0, 2 * Math.PI);
+    c.lineWidth = 2.5; c.strokeStyle = '#ffffff'; c.stroke();
+    c.lineWidth = 1.5; c.strokeStyle = CURVE.A; c.stroke();
+  }
+  c.restore();
+}
+
+/** Save the cut as text, once it is computed. */
+function downloadCut() {
+  if (!cut?.line) return;
+  cut.download = true;
+  updateCut();
+  finishCutDownload();
+}
+
+function finishCutDownload() {
+  if (!cut?.download || cut.stale || [cut.a, ...(compare?.ready ? [cut.b] : [])].some((l) => l.busy || l.wanted)) return;
+  cut.download = false;
+  if (!cut.a.data) return;
+  const both = compare?.ready && cut.b.data;
+  download(new Blob([cutText()], { type: 'text/plain' }), `${both ? pairStem(stem(), stemOf(compare.name)) : stem()}_cut_${cutFileName()}.dat`);
+}
+
+/** The cut as text: a commented header, then per point its position, coordinates, and I, σ and voxels of each dataset. */
+function cutText() {
+  const sets = [['A', sourceName, cut.a.data]];
+  if (compare?.ready && cut.b.data) sets.push(['B', compare.name, cut.b.data]);
+  const both = sets.length > 1, data = sets[0][2], p = cutPanel(), spec = cutSpec(), { axis, path } = cutPath(), { unit, scale } = cutWidthUnit(p);
+  const X = meta.dims[p.x], Y = meta.dims[p.y], F = meta.dims[p.fixed], step = (data.edges[data.edges.length - 1] - data.edges[0]) / data.intensity.length;
+  const num = (x) => (Number.isFinite(x) ? String(Number(x.toPrecision(7))) : 'nan');
+  const columns = both ? sets.flatMap(([k]) => [`I_${k}`, `sigma_${k}`, `voxels_${k}`]) : ['I', 'sigma', 'voxels'];
+  const lines = [
+    `# Line cut along ${path} of ${sets.map(([k, name]) => (both ? `${k} = ${name}` : name)).join(' and ')}`,
+    `# Written by NeXus Viewer (https://drthyang.github.io/neutron-nexus-viewer/) on ${new Date().toISOString()}`,
+    `# From (${pointText(cutPoint(spec.a))}) to (${pointText(cutPoint(spec.b))}) in the ${X.label}-${Y.label} slice, ${F.label} in [${num(data.slab[0])}, ${num(data.slab[1])}] (${data.bins} bins)`,
+    `# Points every ${num(step)} in ${axis.label}; each averages the voxels whose centres lie within ${num(spec.half * scale)} ${unit || 'units'} of the line`,
+    `#   (full width ${num(2 * spec.half * scale)}) and project within ±${num(step / 2)} ${axis.label} of the point.`,
+    `# Symmetry: ${symmetry.ops.length > 1 ? `${symmetry.name} (${symmetry.ops.length} operations), equivalent voxels pooled` : 'none'}`,
+    `# Mask: ${mask ? `coverage-edge erosion ${mask.radius}${mask.k ? `, outlier cut ${mask.k} sigma` : ''}${both ? ', built for each dataset' : ''}` : 'none'}${data.removed ? ' (removed voxels only)' : ''}`,
+    '# I: the equal-weight mean of the distinct measured, unmasked voxels in the union of the symmetry orbits of the voxels at the point, as in the slices',
+    `# sigma: ${sets.map(([k, , d]) => `${both ? `${k} ` : ''}${d.errors ? `propagated from ${d.errors}, voxels independent` : 'nan, no uncertainties in the file'}`).join('; ')}`,
+    '# voxels: the number of distinct voxels with data pooled at the point',
+    `# ${axis.label} ${meta.dims.map((d) => d.label).join(' ')} ${columns.join(' ')}`,
+  ];
+  data.intensity.forEach((_, k) => {
+    const s = shellMid(data, k), cells = [num(s), ...cutPoint(cutAt(s)).map(num)];
+    for (const [, , d] of sets) cells.push(num(d.intensity[k]), num(d.sigma[k]), num(d.voxels[k]));
+    lines.push(cells.join(' '));
+  });
+  return `${lines.join('\n')}\n`;
 }
 
 // ---- Comparing two datasets ---------------------------------------------------------------
@@ -2631,14 +3245,16 @@ async function openCompareURL(url) {
 function closeCompare() {
   compare?.worker?.terminate();
   compare = null;
-  endJob('open-b', 'mask-b', 'iq-b');
+  endJob('open-b', 'mask-b', 'iq-b', 'cut-b');
   for (const p of panels) {
     p.b = newLayer();
     showCaption(p);
   }
   showCompare();
   if (meta && panels.length) {
-    powder.b = newPowderLayer();
+    powder.b = newCurveLayer();
+    cut.b = newCurveLayer();
+    showCut();
     requestPowder();
     describe();
     redraw();
@@ -2678,8 +3294,10 @@ const compareHandlers = {
     else panels.forEach((p) => request(p, 'b'));
     if (compare.maskBusy) showCompare('Building mask', 0);
     else showCompare();
-    powder.b = newPowderLayer();
+    powder.b = newCurveLayer();
+    cut.b = newCurveLayer();
     requestPowder();
+    requestCut();
     describe();
     redraw();
   },
@@ -2718,6 +3336,7 @@ const compareHandlers = {
     describe();
     panels.forEach((p) => request(p, 'b'));
     requestPowder();
+    requestCut();
   },
   'mask-error': ({ message }) => {
     compare.maskBusy = false;
@@ -2726,10 +3345,14 @@ const compareHandlers = {
     showCompare();
     panels.forEach((p) => request(p, 'b'));
     requestPowder();
+    requestCut();
   },
   'progress-powder': (msg) => powderProgress('b', msg),
   powder: (msg) => powderResult('b', msg),
   'powder-error': ({ message }) => powderResult('b', null, message),
+  'progress-cut': (msg) => cutProgress('b', msg),
+  cut: (msg) => cutResult('b', msg),
+  'cut-error': ({ message }) => cutResult('b', null, message),
 };
 
 /**
@@ -2778,11 +3401,13 @@ function restore() {
   if (typeof saved.angles === 'boolean') $('angles').checked = saved.angles;
   if (typeof saved.guides === 'boolean') $('guides').checked = saved.guides;
   if (typeof saved.grid === 'boolean') $('grid').checked = saved.grid;
-  setClickMode(['zoom', 'move'].includes(saved.clickMode) ? saved.clickMode : 'navigate');
+  setClickMode(['zoom', 'move', 'cut'].includes(saved.clickMode) ? saved.clickMode : 'navigate');
   if (['linear', 'log'].includes(saved.iqScale)) powderScale = saved.iqScale;
   if (['1', '2', '3'].includes(saved.iqSplit)) setSegmented($('iq-split'), saved.iqSplit);
   if (typeof saved.iqBand === 'boolean') $('iq-band').checked = saved.iqBand;
   if (typeof saved.iqCoverage === 'boolean') $('iq-coverage').checked = saved.iqCoverage;
+  if (['linear', 'log'].includes(saved.cutScale)) cutScale = saved.cutScale;
+  if (typeof saved.cutBand === 'boolean') $('cut-band').checked = saved.cutBand;
   try {
     const l = JSON.parse(localStorage.getItem('nxv-layout'));
     if (['quad', 'focus'].includes(l?.mode)) lastMulti = layout = l.mode;
@@ -2796,6 +3421,7 @@ function persist() {
   const values = {
     cmap: $('cmap').value, scale: $('scale').dataset.value, angles: $('angles').checked, guides: $('guides').checked, grid: $('grid').checked, clickMode,
     iqScale: powderScale, iqSplit: $('iq-split').dataset.value, iqBand: $('iq-band').checked, iqCoverage: $('iq-coverage').checked,
+    cutScale, cutBand: $('cut-band').checked,
   };
   try { localStorage.setItem('nxv-settings', JSON.stringify(values)); } catch { /* storage unavailable */ }
 }
@@ -2823,7 +3449,7 @@ $('error-close').onclick = () => error('');
 for (const id of ['cmap', 'vmin', 'vmax', 'soft', 'limit', 'angles', 'guides', 'grid']) $(id).addEventListener('input', redraw);
 for (const id of ['cmap', 'angles', 'guides', 'grid']) $(id).addEventListener('change', persist);
 for (const id of ['vmin', 'vmax', 'soft']) $(id).addEventListener('input', () => { rangeIsAuto = false; });
-$('angles').addEventListener('change', () => { if (meta) describe(); });
+$('angles').addEventListener('change', () => { if (meta) { describe(); requestCut(); } });
 $('cmap').addEventListener('input', paintColorbar);
 segmented($('click-mode'), (mode) => { setClickMode(mode); persist(); });
 segmented($('layout'), (mode) => setLayout(mode, primary));
@@ -2888,7 +3514,10 @@ $('export-open').onclick = openInNebula;
 $('powder-show').onclick = showPowderView;
 $('powder-download').onclick = downloadPowder;
 segmented($('iq-split'), () => { persist(); requestPowder(); });
-for (const id of ['iq-band', 'iq-coverage']) $(id).onchange = () => { persist(); drawPowderView(); };
+for (const id of ['iq-band', 'iq-coverage']) $(id).onchange = () => { persist(); drawPlot(powder); };
+$('cut-band').onchange = () => { persist(); drawPlot(cut); };
+$('cut-step').onchange = changeCutWidth;
+$('cut-step').onkeydown = (e) => { if (e.key === 'Enter') e.target.blur(); };
 
 // Dropping a file opens it, or opens it as dataset B over B's chip or the Compare button.
 const dropsOnB = (e) => panels.length > 0 && !!e.target.closest?.('#dataset-b, #compare-open');
