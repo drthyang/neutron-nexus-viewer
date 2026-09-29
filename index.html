@@ -62,6 +62,7 @@ button { font: inherit; color: inherit; }
 code, .mono { font-family: var(--font-mono); }
 code { font-size: 0.92em; }
 a { color: var(--accent-hi); }
+a.btn { text-decoration: none; }
 svg { flex: none; }
 
 /* ---- controls ----------------------------------------------------------------- */
@@ -411,9 +412,9 @@ body.dragging.drop-b::after { content: "Drop to compare as dataset B"; }
     <p>Open a Mantid <code>MDHistoWorkspace</code> written by <code>SaveMD</code>, or any NeXus/HDF5 file whose <code>NXdata</code> group holds a 3-D histogram.</p>
     <div class="hero-actions">
       <button id="open-intro" class="btn btn-primary btn-lg" type="button">Open .nxs file…</button>
-      <button id="open-example" class="btn btn-ghost btn-lg" type="button" title="A small synthetic hexagonal dataset (1.3 MB) with coverage gaps and detector-edge artifacts">Try example data</button>
+      <button id="open-example" class="btn btn-ghost btn-lg" type="button" title="Two synthetic datasets (3 MB): the same crystal at 300 K and 10 K, symmetrized, masked and compared in split view">Try the example</button>
     </div>
-    <p class="hero-alt">Or <button id="open-compare-example" class="linklike" type="button" title="The example, and a low-temperature variant with superlattice peaks (2.6 MB)">compare two example datasets</button>, each slice split along its diagonal.</p>
+    <p class="hero-alt">The example compares one crystal at 300 K and 10 K: short-range order above the transition, long-range order below.</p>
     <ul class="features">
       <li><svg width="16" height="16" viewBox="0 0 18 18" fill="currentColor" aria-hidden="true"><circle cx="3.5" cy="3.5" r="1.3"/><circle cx="9" cy="3.5" r="1.3"/><circle cx="14.5" cy="3.5" r="1.3"/><circle cx="3.5" cy="9" r="1.3"/><circle cx="9" cy="9" r="2"/><circle cx="14.5" cy="9" r="1.3"/><circle cx="3.5" cy="14.5" r="1.3"/><circle cx="9" cy="14.5" r="1.3"/><circle cx="14.5" cy="14.5" r="1.3"/></svg>
         <div><b>Orthogonal slices</b><span>HK, HL and KL cuts in the true lattice geometry, linked by clicking.</span></div></li>
@@ -510,6 +511,17 @@ body.dragging.drop-b::after { content: "Drop to compare as dataset B"; }
             <label class="switch" title="Average only the removed voxels, to check what the mask takes out"><input id="mask-removed" type="checkbox" disabled><span class="switch-track"></span><span class="switch-label">Show removed voxels</span></label>
             <button id="mask-download" class="btn btn-ghost btn-xs" type="button" disabled title="Gzipped .npy in signal order: 1 = edge, 2 = outlier">Download</button>
           </div>
+        </div>
+
+        <div id="export" class="sub">
+          <div class="sub-head">
+            <svg width="16" height="16" viewBox="0 0 18 18" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M9 11V2.5M5.5 6 9 2.5 12.5 6"/><path d="M3 10.5v3.5a1.5 1.5 0 0 0 1.5 1.5h9a1.5 1.5 0 0 0 1.5-1.5v-3.5"/></svg>
+            <span class="sub-title">Export for NEBULA3D</span><span id="export-state" class="state">3D-ΔPDF</span>
+          </div>
+          <p class="sub-hint">Saves the masked, symmetrized volume as an input file for NEBULA3D's 3D-ΔPDF pipeline.</p>
+          <p id="export-status" class="note"></p>
+          <div id="export-progress" class="boot-bar" hidden><div id="export-bar" class="boot-fill"></div></div>
+          <span class="inline"><button id="export-run" class="btn btn-primary" type="button" style="flex: 1">Export volume</button><a class="btn btn-ghost" href="https://drthyang.github.io/nebula3d/" target="_blank" rel="noopener noreferrer" title="Open NEBULA3D; load the file there with Load volume…">Open NEBULA3D ↗</a></span>
         </div>
       </div>
     </section>

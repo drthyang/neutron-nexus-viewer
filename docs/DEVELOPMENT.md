@@ -30,6 +30,7 @@ CI runs the same tests on every push (`.github/workflows/test.yml`).
 | `js/symmetry.js` | Parsing operations, group closure, metric check and integer index maps |
 | `js/mask.js` | Coverage-edge erosion and symmetry-outlier masks |
 | `js/iso.js` | Origin-aligned coarse binning, orbit means and surface nets |
+| `js/export.js` | NEBULA3D export: grid plan and padding, full-volume symmetrization, HDF5 writer |
 | `js/view3d.js` | three.js scene, loaded when the 3-D view opens |
 | `js/colormaps.js` | Colormap lookup tables (generated) |
 
@@ -38,10 +39,10 @@ CI runs the same tests on every push (`.github/workflows/test.yml`).
 These scripts need numpy and h5py, and matplotlib for the colormaps:
 
 - `tools/make_fixtures.py` writes `tests/fixtures/` and their expected slices, computed by a verbatim copy of the reference `average_slab()`.
-- `tools/make_example.py` writes `examples/demo_hexagonal.nxs`, a 101³ synthetic hexagonal dataset (1.3 MB) with coverage wedges and bright edge voxels, and `examples/demo_hexagonal_lowT.nxs`, the same with superlattice peaks at the M points and weaker diffuse rods, for the comparison demo.
+- `tools/make_example.py` writes the example: `examples/demo_300K.nxs` and `examples/demo_10K.nxs`, one 101³ synthetic hexagonal crystal (about 1.5 MB each) above and below an ordering transition. Both have Bragg peaks (with thermal diffuse halos at 300 K), M-point short-range-order rods (300 K) or superlattice peaks (10 K), coverage wedges and bright edge voxels.
 - `tools/make_colormaps.py` writes `js/colormaps.js` from matplotlib.
 
-`docs/screenshot.png` is a capture of the two examples compared (`?url=examples/demo_hexagonal.nxs&compare=examples/demo_hexagonal_lowT.nxs`) with 6/mmm averaging, a mask (edge 1, 5σ) and *Auto range*, at 1440×900 and 1.5× pixel ratio.
+`docs/screenshot.png` is a capture of the example (`?demo`: 6/mmm averaging and a 1-voxel edge mask) at 1440×900 and 1.5× pixel ratio.
 
 ## Dependencies
 

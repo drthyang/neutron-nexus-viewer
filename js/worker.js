@@ -3,6 +3,7 @@
 // into a float32 volume and answers slice requests from the page.
 
 import h5wasm from 'https://cdn.jsdelivr.net/npm/h5wasm@0.10.3/dist/esm/hdf5_hl.js';
+import { symmetrizeForExport, writeNebulaFile } from './export.js';
 import { binVolume, coarseGrid, orbitMean, surfaceNets } from './iso.js';
 import { edgeMask, maskStats, outlierMask } from './mask.js';
 import { describeFile, loadVolume } from './nexus.js';
@@ -19,8 +20,9 @@ self.onmessage = async ({ data }) => {
     else if (data.type === 'iso') iso(data);
     else if (data.type === 'mask') buildMask(data);
     else if (data.type === 'mask-download') await downloadMask(data);
+    else if (data.type === 'export') await exportVolume(data);
   } catch (err) {
-    const type = { iso: 'iso-error', mask: 'mask-error', 'mask-download': 'mask-error' }[data.type] ?? 'error';
+    const type = { iso: 'iso-error', mask: 'mask-error', 'mask-download': 'mask-error', export: 'export-error' }[data.type] ?? 'error';
     self.postMessage({ type, id: data.id, fixed: data.fixed, message: err?.message ?? String(err) });
   }
 };
@@ -154,4 +156,26 @@ async function downloadMask() {
   header.set(new TextEncoder().encode(padded), 10);
   const stream = new Blob([header, mask]).stream().pipeThrough(new CompressionStream('gzip'));
   self.postMessage({ type: 'mask-file', blob: await new Response(stream).blob() });
+}
+
+// The symmetrized, masked volume as a NEBULA3D input file (see export.js):
+// `plan` from exportPlan() on the page, `maps` on its padded grid.
+async function exportVolume({ id, plan, maps, attrs }) {
+  if (!volume) throw new Error('No histogram loaded.');
+  const t0 = performance.now();
+  let last = 0;
+  const result = symmetrizeForExport(volume, info.shape, plan, maps, mask, (fraction) => {
+    const now = performance.now();
+    if (now - last > 100 || fraction === 1) {
+      last = now;
+      self.postMessage({ type: 'progress-export', label: 'Symmetrizing', fraction: 0.75 * fraction });
+    }
+  });
+  self.postMessage({ type: 'progress-export', label: 'Writing HDF5', fraction: 0.75 });
+  const { FS } = await h5wasm.ready;
+  const path = '/nebula3d-export.nxs';
+  writeNebulaFile(h5wasm, path, plan, result, attrs);
+  const blob = new Blob([FS.readFile(path)], { type: 'application/x-hdf5' });
+  FS.unlink(path);
+  self.postMessage({ type: 'export-file', id, blob, stats: result.stats, seconds: (performance.now() - t0) / 1000 });
 }

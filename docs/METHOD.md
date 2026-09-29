@@ -38,6 +38,10 @@ The volume is binned by an odd factor chosen so no axis has more than about 64, 
 
 A second dataset (B) is read by its own worker and processed independently with the same settings: the symmetry operations are converted to index maps on B's grid, and the mask is built from B's own data with the same erosion radius and outlier cut. Nothing is interpolated between the two grids. Each view draws both slices on A's axes and lattice geometry, clipped to the two triangles on either side of the view's diagonal, from (u₀, v₁) to (u₁, v₀). A point is in B's half when (u − u₀)/(u₁ − u₀) + (v − v₀)/(v₁ − v₀) > 1.
 
+## Export for NEBULA3D
+
+The export writes the input NEBULA3D's 3D-ΔPDF pipeline expects: `/entry/data` and `/entry/mask` (1 = valid) in (H, K, L) C order, bin-centre axes, and `ub_matrix` = 2π × the file's orientation matrix, or 2π × the Cholesky factor of G\* when the file has only a cell (only the metric matters for \|Q\| and the real-space axes). Each axis is padded to a grid symmetric about 0: odd with a bin centred at 0, or even when a bin edge lies at 0. Every voxel of the padded grid receives the equal-weight mean of the valid source voxels in its orbit, so the exported volume agrees with one-bin slices voxel by voxel (a test checks this for several Laue classes) and symmetry fills the padding. Orbits without a valid voxel are written as 0 with mask 0, NEBULA3D's convention for holes it backfills. Loaded in NEBULA3D, the example gives \|Q(100)\| = 1.7274 Å⁻¹ and \|Q(001)\| = 0.9240 Å⁻¹, as the cell requires, with equal intensity at 6/mmm-equivalent peaks.
+
 ## Geometry
 
 The reciprocal metric is G\* = (UB)ᵀ·UB, with no 2π, taken from the file's UB matrix, or computed from `unit_cell_*` when there is no UB. The length of each axis per r.l.u. and the angle between two axes follow from G\* and the axes' HKL basis vectors (parsed from names such as `[H,H,0]`). Drawing is an affine map of the pixel grid, so bins keep their exact shape.

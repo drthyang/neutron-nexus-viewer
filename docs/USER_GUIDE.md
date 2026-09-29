@@ -5,9 +5,8 @@
 ## Opening data
 
 - **Local file**: click the dataset button or drop a `.nxs` file anywhere on the page. The file is read in the browser and never uploaded.
-- **Example**: *Try example data* on the start page opens a small synthetic hexagonal dataset (`examples/demo_hexagonal.nxs`). It has coverage gaps, which symmetry averaging fills, and bright detector-edge voxels, which the mask removes.
-- **Remote file**: `?url=https://…/file.nxs` downloads and opens a file, and `&compare=https://…/other.nxs` adds a second file to compare. The host must allow cross-origin requests.
-- **Comparison example**: *compare two example datasets* on the start page opens the example with a low-temperature variant (`examples/demo_hexagonal_lowT.nxs`) that has superlattice peaks at the M points.
+- **Example**: *Try the example* on the start page (or `?demo`) opens one synthetic hexagonal crystal at two temperatures, compared in split view with 6/mmm averaging and a 1-voxel edge mask. At 300 K (`examples/demo_300K.nxs`), short-range order gives diffuse rods along L at the M points; at 10 K (`examples/demo_10K.nxs`), they condense into superlattice peaks at even L. Both have coverage gaps, which symmetry averaging fills, and bright detector-edge voxels, which the mask removes: set the Laue class to *None* and *Clear* the mask to see the raw data.
+- **Links**: `?url=https://…/file.nxs` downloads and opens a file, and `&compare=https://…/other.nxs` adds a second file to compare. `&sym=6/mmm` applies a Laue class, and `&mask=1` (or `&mask=1,5`) applies a mask with that erosion radius (and outlier cut). The host must allow cross-origin requests.
 
 The histogram is held in memory as float32. A 401³ volume needs about 260 MB and takes 1–2 s to read.
 
@@ -90,6 +89,14 @@ Once B is open, the Dataset section lists both files and one table for the two: 
 - **Axes**: B is drawn on A's axes and lattice geometry. Files should share the same axes (for example both `[H,0,0]`, `[0,K,0]`, `[0,0,L]`); the grids may differ. A warning under the Dataset table appears when the axis names differ.
 - **3-D view**: the isosurface is A's; the slice planes show the same split as the views.
 - **Replace** (⇄ on B's line, or the B half of the top bar) swaps in another file, and **Remove** (×) returns to a single dataset. Opening a new file as A also removes B.
+
+## Export for NEBULA3D
+
+*Export volume* in **Processing → Export for NEBULA3D** saves the processed volume as an input file for the 3D-ΔPDF pipeline of [NEBULA3D](https://github.com/drthyang/nebula3d). NEBULA3D does not symmetrize, so choose a Laue class (and a mask) first. Open the file there with *Load volume…*; *Open NEBULA3D* links to it.
+
+- **Content**: every voxel is the mean of the measured, unmasked voxels among its symmetry equivalents, as in the slices; voxels with none are written as 0 with mask 0, and NEBULA3D backfills them. When comparing, dataset A is exported.
+- **Grid**: axes must be plain H, K and L with uniform bins. Each axis is padded to be symmetric about 0 (NEBULA3D puts Q = 0 at the centre), and symmetry fills the padding where equivalents were measured.
+- **File**: HDF5 with `/entry/{data, mask, h_axis, k_axis, l_axis, ub_matrix}` in (H, K, L) order, named like `<file>_sym6mmm.nxs`, with the source file, symmetry, mask and UB source as attributes. NEBULA3D's browser build handles up to about 80 M voxels; a 401³ volume (64 M) takes about 10 s to export. See [Method → Export](METHOD.md#export-for-nebula3d).
 
 ## Layouts and export
 

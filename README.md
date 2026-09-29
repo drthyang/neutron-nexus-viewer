@@ -10,11 +10,11 @@ artifact masking, two-dataset comparison and a 3-D view, all in your browser.**
 
 **▶ Try it: [drthyang.github.io/neutron-nexus-viewer](https://drthyang.github.io/neutron-nexus-viewer/)** —
 nothing to install, and your data never leaves your machine. Open a Mantid `.nxs`
-file, the [example dataset](https://drthyang.github.io/neutron-nexus-viewer/?url=examples/demo_hexagonal.nxs), or
-[two examples compared](https://drthyang.github.io/neutron-nexus-viewer/?url=examples/demo_hexagonal.nxs&compare=examples/demo_hexagonal_lowT.nxs).
+file, or [the example](https://drthyang.github.io/neutron-nexus-viewer/?demo): one synthetic crystal at 300 K and 10 K, where
+short-range-order diffuse scattering condenses into superlattice peaks.
 
 <p align="center">
-  <img src="docs/screenshot.png" alt="NeXus Viewer comparing two hexagonal example datasets: the HK, HL and KL slices are each cut along their diagonal, with the first dataset in the lower-left half and a low-temperature variant with superlattice peaks in the upper-right half. The control panel lists both files in one Dataset table and shows the processing pipeline with 6/mmm symmetry averaging and a mask; the 3-D view shows the isosurface with the split slice planes." width="100%" />
+  <img src="docs/screenshot.png" alt="NeXus Viewer comparing the example crystal at 300 K and 10 K: the HK, HL and KL slices are each cut along their diagonal, with 300 K in the lower-left half, showing diffuse rods at the M points, and 10 K in the upper-right half, showing sharp superlattice peaks there. The control panel lists both files in one Dataset table and shows the processing pipeline with 6/mmm symmetry averaging and a mask; the 3-D view shows the isosurface with the split slice planes." width="100%" />
 </p>
 
 ## Goals
@@ -39,7 +39,8 @@ file, the [example dataset](https://drthyang.github.io/neutron-nexus-viewer/?url
 | **Artifact masking** | Removes detector-edge voxels and symmetry outliers before averaging; preview what is removed and export the mask as a NumPy array | [Masking](docs/METHOD.md#masking-detector-edge-artifacts) |
 | **Two-dataset comparison** | A second file, such as another temperature, splits every slice along its diagonal, with shared positions, processing and color scale; hover reads both values | [Comparing](docs/USER_GUIDE.md#comparing-two-datasets) |
 | **3-D view** | A transparent isosurface of the processed volume, with the current slices as planes | [3-D view](docs/USER_GUIDE.md#3-d-view) |
-| **Files and export** | Mantid `MDHistoWorkspace` (`SaveMD`) and any 3-D `NXdata`; local files or `?url=` links; PNG export with a colorbar | [Supported files](docs/USER_GUIDE.md#supported-files) |
+| **Export to NEBULA3D** | The masked, symmetrized volume as an input file for [NEBULA3D](https://github.com/drthyang/nebula3d)'s 3D-ΔPDF pipeline, padded to be symmetric about Q = 0 | [Export](docs/USER_GUIDE.md#export-for-nebula3d) |
+| **Files and links** | Mantid `MDHistoWorkspace` (`SaveMD`) and any 3-D `NXdata`; local files or links that open a file, a comparison, symmetry and mask; PNG export with a colorbar | [Opening data](docs/USER_GUIDE.md#opening-data) |
 
 ## Quick start
 
@@ -49,6 +50,8 @@ file, the [example dataset](https://drthyang.github.io/neutron-nexus-viewer/?url
 3. Click a slice to move the other two through that point. Switch the header to
    **Zoom** or **Move** to explore, and **Focus** to show one view large.
 4. To compare, open a second file under **Dataset → Compare two datasets**.
+5. For a 3D-ΔPDF, choose **Export volume** under **Processing → Export for NEBULA3D**
+   and load the file in [NEBULA3D](https://drthyang.github.io/nebula3d/).
 
 ## Run locally
 
@@ -68,7 +71,7 @@ Tests (`npm install && npm test`), the code layout and deployment are covered in
 | Document | What it covers |
 | --- | --- |
 | [User guide](docs/USER_GUIDE.md) | The interface, every control, comparison, layouts, export, remote files and supported formats |
-| [Method](docs/METHOD.md) | How slices, symmetry averaging, masking, comparison and the 3-D view are computed, and how they are validated |
+| [Method](docs/METHOD.md) | How slices, symmetry averaging, masking, comparison, the 3-D view and the NEBULA3D export are computed, and how they are validated |
 | [Development](docs/DEVELOPMENT.md) | Code layout, tests and fixtures, example data, dependencies and deployment |
 
 ## License

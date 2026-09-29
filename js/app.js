@@ -1,4 +1,5 @@
 import { COLORMAPS } from './colormaps.js';
+import { exportPlan } from './export.js';
 import { cartesianBasis, nominalCell, planeGeometry, reciprocalMetric } from './nexus.js';
 import { IDENTITY_MAP } from './slab.js';
 import { closeGroup, formatOp, indexMaps, metricChange, parseOps, PRESETS } from './symmetry.js';
@@ -39,8 +40,13 @@ let view3d = null, iso = null;
 // Second dataset (B) for comparison, with its own worker, index maps and mask.
 // `compareView` is what the slices show: 'split' (A below the diagonal, B above), 'a' or 'b'.
 let compare = null, compareView = 'split', pendingCompare = null;
+// Symmetry and mask to apply once the next file opens (?sym= and ?mask=, or the demo).
+let pendingProcessing = null;
+const DEMO = { url: 'examples/demo_300K.nxs', compare: 'examples/demo_10K.nxs', sym: '6/mmm', mask: '1' };
 // True while the color range is the automatic one (not edited by hand).
 let rangeIsAuto = false;
+// The export for NEBULA3D in progress: { name }.
+let exportJob = null;
 const newLayer = () => ({ data: null, version: 0, busy: false, wanted: null, image: null, imageKey: null, error: '' });
 const compareShown = () => (compare?.ready ? compareView : null);
 
@@ -218,6 +224,7 @@ function openFile(file) {
   worker?.terminate();
   compare?.worker?.terminate();
   compare = null;
+  exportJob = null;
   showCompare();
   closePopovers();
   meta = null;
@@ -293,6 +300,7 @@ const handlers = {
     setup3D();
     if (pendingCompare) openCompareURL(pendingCompare);
     pendingCompare = null;
+    applyPendingProcessing();
   },
   slice: (msg) => {
     const p = panels.find((q) => q.fixed === msg.fixed);
@@ -342,6 +350,8 @@ const handlers = {
     status('ok', 'ready');
     $('mask-apply').disabled = false;
     mask = stats ? { ...stats, radius, k, group } : null;
+    // B may have opened while this mask was being built.
+    if (compare?.ready && compare.maskRequested !== `${radius},${k}`) sendCompareMask(radius, k);
     $('mask-clear').disabled = $('mask-download').disabled = $('mask-removed').disabled = !mask;
     if (!mask) $('mask-removed').checked = false;
     showMask(seconds);
@@ -357,6 +367,26 @@ const handlers = {
     updateStates();
   },
   'mask-file': ({ blob }) => download(blob, `${stem()}_mask.npy.gz`),
+  'progress-export': ({ label, fraction }) => showExportProgress(label, fraction),
+  'export-file': ({ blob, stats, seconds }) => {
+    const { name } = exportJob;
+    exportJob = null;
+    download(blob, name);
+    status('ok', 'ready');
+    showExport();
+    $('export-state').textContent = 'saved';
+    $('export-state').className = 'state ok';
+    $('export-status').className = 'note ok';
+    $('export-status').textContent = `Saved ${name} (${mb(blob.size)}, ${pct(stats.valid / stats.total)} of voxels valid) in ${seconds.toFixed(1)} s. `
+      + 'In NEBULA3D, open it with Load volume…';
+  },
+  'export-error': ({ message }) => {
+    exportJob = null;
+    status('ok', 'ready');
+    showExport();
+    $('export-status').className = 'note error';
+    $('export-status').textContent = message;
+  },
 };
 
 /** Ask for the panel's slice of dataset 'a', 'b' or 'both' (B only when it is loaded). */
@@ -470,6 +500,7 @@ function describe() {
   }
   $('info-meta').innerHTML = items.map(([k, v]) => `<dt>${escapeHTML(k)}</dt><dd>${escapeHTML(v).replace(/\n/g, '<br>')}</dd>`).join('');
   updateStates();
+  showExport();
 }
 
 /** Reciprocal lengths (Å⁻¹, no 2π) and angles (α*, β*, γ*) of a cell, or null. */
@@ -1356,6 +1387,82 @@ function showMask(seconds) {
   statusEl.textContent = `Removed ${pct((edge + outlier) / measured)} of measured voxels: ${parts.join(', ')}${seconds ? ` (${seconds.toFixed(1)} s)` : ''}.`;
 }
 
+// ---- Export for NEBULA3D ----------------------------------------------------------------
+
+/** The Export card: what would be exported, or why it cannot be. */
+function showExport() {
+  if (exportJob || !meta) return;
+  const statusEl = $('export-status'), state = $('export-state');
+  $('export-progress').hidden = true;
+  let plan;
+  try {
+    plan = exportPlan(meta.dims, meta.lattice);
+  } catch (err) {
+    $('export-run').disabled = true;
+    state.textContent = 'unavailable';
+    state.className = 'state';
+    statusEl.className = 'note error';
+    statusEl.textContent = err.message;
+    return;
+  }
+  $('export-run').disabled = false;
+  state.textContent = '3D-ΔPDF';
+  state.className = 'state';
+  const sym = symmetry.ops.length > 1, voxels = plan.shape.reduce((a, b) => a * b);
+  const parts = [
+    `${plan.shape.join(' × ')} (H × K × L)${plan.padded ? ', padded to be symmetric about 0' : ''}`,
+    sym ? `${symmetry.name} averaged` : 'not symmetrized',
+    mask ? `mask ${pct((mask.edge + mask.outlier) / mask.measured)}` : 'no mask',
+  ];
+  if (compare?.ready) parts.push('dataset A');
+  const warnings = [];
+  if (!sym) warnings.push('NEBULA3D expects a symmetrized volume: choose a Laue class first.');
+  if (voxels > 80e6) warnings.push(`NEBULA3D in the browser handles up to about 80 M voxels; this is ${Math.round(voxels / 1e6)} M, so use its desktop app.`);
+  statusEl.className = warnings.length ? 'note warn' : 'note';
+  statusEl.textContent = `${parts.join(' · ')}.${warnings.length ? ` ${warnings.join(' ')}` : ''}`;
+}
+
+function showExportProgress(label, fraction) {
+  $('export-progress').hidden = false;
+  $('export-bar').style.width = `${Math.round(100 * clamp(fraction, 0, 1))}%`;
+  $('export-status').className = 'note';
+  $('export-status').textContent = `${label}… ${Math.round(100 * fraction)}%`;
+}
+
+function runExport() {
+  if (!panels.length || exportJob) return;
+  let plan, maps;
+  try {
+    plan = exportPlan(meta.dims, meta.lattice);
+    maps = symmetry.ops.length > 1 ? indexMaps(symmetry.ops, plan.paddedDims) : [IDENTITY_MAP];
+  } catch (err) {
+    $('export-status').className = 'note error';
+    $('export-status').textContent = err.message;
+    return;
+  }
+  const sym = symmetry.ops.length > 1;
+  exportJob = { name: `${stem()}_${sym ? `sym${symmetry.name.replace(/\//g, '')}` : 'unsym'}.nxs` };
+  $('export-run').disabled = true;
+  $('export-state').textContent = 'working…';
+  $('export-state').className = 'state busy';
+  status('busy', 'exporting');
+  showExportProgress('Symmetrizing', 0);
+  const { order, lo, size, shape, centers, ub, padded } = plan;
+  worker.postMessage({
+    type: 'export', id: ++requestId, plan: { order, lo, size, shape, centers, ub }, maps,
+    attrs: {
+      source_file: sourceName,
+      symmetry: sym ? symmetry.name : 'none',
+      symmetry_ops: symmetry.ops.map(formatOp).join('; '),
+      mask: mask ? `coverage-edge erosion ${mask.radius}, outlier cut ${mask.k} sigma, ${pct((mask.edge + mask.outlier) / mask.measured)} of measured voxels removed` : 'none',
+      ub_source: meta.lattice.source,
+      padded: padded ? 'yes' : 'no',
+      created_by: 'NeXus Viewer, https://drthyang.github.io/neutron-nexus-viewer/',
+      created: new Date().toISOString(),
+    },
+  });
+}
+
 // ---- 3-D view ---------------------------------------------------------------------------
 
 async function setup3D() {
@@ -1479,6 +1586,31 @@ function sliceTexture(p, s, u, v) {
   return { image: canvas, key };
 }
 
+/** Apply the symmetry (a Laue class name) and mask ("r" or "r,k") requested for this file. */
+function applyPendingProcessing() {
+  const p = pendingProcessing;
+  pendingProcessing = null;
+  const preset = p?.sym && PRESETS.find(([name]) => name === p.sym);
+  if (preset) {
+    $('sym-preset').value = preset[0];
+    $('sym-ops').value = preset[0] === '1' ? '' : preset[1];
+    applySymmetry();
+  }
+  if (p?.mask) {
+    const [radius = 0, k = 0] = p.mask.split(',').map(Number);
+    $('mask-erode').value = radius;
+    $('mask-k').value = k;
+    applyMask();
+  }
+}
+
+/** The example: a synthetic crystal at 300 K (A) and 10 K (B), symmetrized and masked. */
+function openDemo() {
+  pendingCompare = DEMO.compare;
+  pendingProcessing = { sym: DEMO.sym, mask: DEMO.mask };
+  openURL(DEMO.url);
+}
+
 // ---- Comparing two datasets ---------------------------------------------------------------
 
 /** Open a second file (B) in its own worker; its slices follow A's positions and processing. */
@@ -1544,6 +1676,7 @@ function sendCompareMask(radius, k) {
   const kb = compare.maps.length >= 3 ? k : 0;
   compare.maskNote = k && !kb ? 'Outlier cut not applied to B: it needs a symmetry of at least 3 operations that fits B\'s grid.' : '';
   compare.maskBusy = true;
+  compare.maskRequested = `${radius},${k}`;
   compare.worker.postMessage({ type: 'mask', id: ++requestId, radius, k: kb, maps: compare.maps, symmetry: symmetry.name });
   showCompare('Building mask', 0);
 }
@@ -1689,9 +1822,14 @@ restore();
 show('intro');
 status('', 'no file');
 $('open').onclick = $('open-intro').onclick = () => $('file').click();
-$('open-example').onclick = () => { pendingCompare = null; openURL('examples/demo_hexagonal.nxs'); };
-$('open-compare-example').onclick = () => { pendingCompare = 'examples/demo_hexagonal_lowT.nxs'; openURL('examples/demo_hexagonal.nxs'); };
-$('file').onchange = () => { if ($('file').files[0]) { pendingCompare = null; openFile($('file').files[0]); } $('file').value = ''; };
+$('open-example').onclick = openDemo;
+$('file').onchange = () => {
+  if ($('file').files[0]) {
+    pendingCompare = pendingProcessing = null;
+    openFile($('file').files[0]);
+  }
+  $('file').value = '';
+};
 $('compare-open').onclick = $('compare-replace').onclick = $('compare-button').onclick = () => $('file-b').click();
 $('file-b').onchange = () => { if ($('file-b').files[0]) openCompare($('file-b').files[0]); $('file-b').value = ''; };
 $('compare-close').onclick = $('compare-cancel').onclick = closeCompare;
@@ -1764,6 +1902,7 @@ $('mask-clear').onclick = () => applyMask(true);
 for (const id of ['mask-erode', 'mask-k']) $(id).onkeydown = (e) => { if (e.key === 'Enter') applyMask(); };
 $('mask-removed').onchange = () => { updateStates(); panels.forEach(request); };
 $('mask-download').onclick = () => worker.postMessage({ type: 'mask-download' });
+$('export-run').onclick = runExport;
 
 // Dropping a file opens it, or opens it as dataset B over the Compare card or the B button.
 const dropsOnB = (e) => panels.length > 0 && !!e.target.closest?.('#compare, #compare-button, #data-files');
@@ -1780,12 +1919,18 @@ document.addEventListener('drop', (e) => {
   if (!file) return;
   if (dropsOnB(e)) openCompare(file);
   else {
-    pendingCompare = null;
+    pendingCompare = pendingProcessing = null;
     openFile(file);
   }
 });
 
-// ?url= opens a remote file, and ?compare= a second one as dataset B.
+// ?url= opens a remote file, ?compare= a second one as dataset B, and ?sym=
+// (a Laue class, such as 6/mmm) and ?mask= (erosion radius, optionally ",k"
+// for the outlier cut) process them. ?demo opens the example.
 const params = new URLSearchParams(location.search), remote = params.get('url');
-pendingCompare = params.get('compare');
-if (remote) openURL(remote);
+if (params.has('demo')) openDemo();
+else if (remote) {
+  pendingCompare = params.get('compare');
+  pendingProcessing = { sym: params.get('sym'), mask: params.get('mask') };
+  openURL(remote);
+}
