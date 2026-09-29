@@ -194,7 +194,7 @@ function powder({ id, plan, maps, symmetry }) {
   const result = powderAverage(volume, info.shape, plan, maps, mask, variance, progress('Averaging shells', start, 1));
   const errors = variance ? info.errors.path.split('/').pop() : null;
   self.postMessage({
-    type: 'powder', id, ...result, dq: plan.dq, split: plan.split, frame: plan.frame, symmetry, order: maps.length,
+    type: 'powder', id, ...result, bins: plan.bins, split: plan.split, frame: plan.frame, symmetry, order: maps.length,
     masked: !!mask, errors, errorsNote: varianceNote, seconds: (performance.now() - t0) / 1000,
   }, [result.edges.buffer, result.intensity.buffer, result.sigma.buffer, result.voxels.buffer, result.coverage.buffer]);
 }

@@ -305,6 +305,9 @@ body.panel-collapsed .panel { visibility: hidden; }
 .segmented.sm button { padding: 0 8px; font-size: 11.5px; }
 .slot-switch { height: 24px; }
 .slot-switch button { padding: 0 7px; font-family: var(--font-mono); font-size: 10.5px; font-weight: 700; }
+.view-foot input.pq-bins { flex: none; width: 104px; height: 26px; font-size: 11.5px; }
+.view-foot input.pq-qmin, .view-foot input.pq-qmax { width: 52px; }
+.view-foot input:disabled { opacity: 0.45; cursor: default; }
 
 /* ---- popovers ---------------------------------------------------------------------- */
 .popover {
@@ -643,6 +646,8 @@ body.dragging.drop-b::after { content: "Drop to compare as dataset B"; }
 <div id="pop-iq" class="popover" role="dialog" aria-label="I(Q) options" hidden style="width: 320px">
   <div class="pop-head"><span class="pop-title">I(Q)</span></div>
   <div class="pop-body">
+    <div class="field"><span class="label">Q bins (ΔQ field)</span>
+      <p class="note"><code>0.05</code>: shells of 0.05 Å⁻¹ from Q min to Q max. <code>-0.01</code>: logarithmic shells, ΔQ/Q = 1%. <code>0.5, 0.02, 3, 0.05, 10</code>: 0.02 Å⁻¹ from 0.5 to 3, then 0.05 to 10. As in Mantid's Rebin, a range ends with a bin of 0.25 to 1.25 steps. The slider changes a single step and recomputes as it moves.</p></div>
     <div class="field"><span class="label">Split voxels</span>
       <div id="iq-split" class="segmented fill" data-value="2"><button type="button" data-value="1">Centres</button><button type="button" data-value="2" class="on">2³</button><button type="button" data-value="3">3³</button></div></div>
     <p class="note">Each voxel is divided into n³ sub-cells, binned by their own |Q|, so a voxel is shared between the shells it overlaps. Binning whole voxels by their centres aliases when ΔQ is close to the voxel size; 3³ takes about twice as long as 2³.</p>

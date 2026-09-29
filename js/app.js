@@ -1,7 +1,7 @@
 import { COLORMAPS } from './colormaps.js';
 import { exportPlan } from './export.js';
 import { cartesianBasis, nominalCell, planeGeometry, reciprocalMetric } from './nexus.js';
-import { powderPlan } from './powder.js';
+import { parseBins, powderPlan, qExtent } from './powder.js';
 import { IDENTITY_MAP } from './slab.js';
 import { closeGroup, formatOp, indexMaps, metricChange, parseOps, PRESETS } from './symmetry.js';
 
@@ -736,28 +736,33 @@ function setupPowder() {
   shell.q('.view-body').innerHTML = '<canvas class="plot" role="img" aria-label="I(Q), the powder average of the volume"></canvas><span class="overlay-chip" hidden></span>';
   const foot = document.createElement('footer');
   foot.className = 'view-foot';
+  const binsHelp = 'Q bins as Mantid Rebin parameters: a width in Å⁻¹ (0.05), a negative step for logarithmic bins (−0.01: ΔQ/Q = 1%), '
+    + 'or ranges with their own steps (0.5, 0.02, 3, 0.05, 10). Empty for the shortest bin step in |Q|.';
   foot.innerHTML = `
-    <span class="label" title="Shell width">ΔQ</span>
-    <input class="pq-dq num" type="number" min="0" step="any" aria-label="Shell width ΔQ" title="Shell width in Å⁻¹; empty for the shortest bin step">
-    <span class="unit">Å⁻¹</span>
+    <span class="label" title="${binsHelp}">ΔQ</span>
+    <input class="pq-slider foot-grow" type="range" min="0" max="1000" aria-label="Q bin width">
+    <input class="pq-bins mono" type="text" spellcheck="false" autocomplete="off" aria-label="Q bins" title="${binsHelp}">
     <span class="foot-sep"></span>
-    <span class="label">Q max</span>
+    <span class="label">Q</span>
+    <input class="pq-qmin num" type="number" min="0" step="any" aria-label="Q min" title="Smallest |Q| in Å⁻¹; empty for 0 (the shortest bin step for logarithmic bins)">
+    <span class="unit">–</span>
     <input class="pq-qmax num" type="number" min="0" step="any" placeholder="all" aria-label="Q max" title="Largest |Q| in Å⁻¹; empty for all the data">
     <span class="unit">Å⁻¹</span>
-    <span class="spacer"></span>
-    <div class="segmented sm pq-scale" role="group" aria-label="Intensity scale"><button type="button" data-value="linear">Lin</button><button type="button" data-value="log">Log</button></div>`;
+    <div class="segmented sm pq-scale" role="group" aria-label="Intensity scale" title="Intensity scale"><button type="button" data-value="linear">Lin</button><button type="button" data-value="log">Log</button></div>`;
   shell.section.append(foot);
   const q = shell.q;
   powder = {
     canvas: q('canvas'), hover: q('.overlay-chip'), caption: q('.view-caption'), pos: q('.view-pos'), zoomReset: q('.zoom-reset'),
-    dq: q('.pq-dq'), qmax: q('.pq-qmax'), a: newPowderLayer(), b: newPowderLayer(),
-    stale: true, download: false, plan: null, zoom: null, drag: null, view: null, at: null,
+    slider: q('.pq-slider'), bins: q('.pq-bins'), qmin: q('.pq-qmin'), qmax: q('.pq-qmax'), a: newPowderLayer(), b: newPowderLayer(),
+    stale: true, download: false, plan: null, zoom: null, drag: null, view: null, at: null, step: null,
   };
   try {
-    powder.dq.placeholder = fmt(powderPlan(meta.dims, meta.lattice).dq, 4);
+    powder.step = qExtent(meta.dims, meta.lattice).step;
+    powder.bins.placeholder = String(Number(powder.step.toPrecision(1)));
   } catch (err) {
     powder.a.error = err.message;
   }
+  syncBinsSlider();
   setSegmented(q('.pq-scale'), powderScale);
   segmented(q('.pq-scale'), (value) => {
     powderScale = value;
@@ -766,8 +771,11 @@ function setupPowder() {
     persist();
     drawPowderView();
   });
-  powder.dq.onchange = powder.qmax.onchange = () => requestPowder();
-  for (const input of [powder.dq, powder.qmax]) input.onkeydown = (e) => { if (e.key === 'Enter') input.blur(); };
+  // The slider recomputes as it moves (one request in flight, the latest one next); typed values apply on Enter or leaving the field.
+  powder.slider.oninput = slideBins;
+  powder.bins.onchange = () => { syncBinsSlider(); requestPowder(); };
+  powder.qmin.onchange = powder.qmax.onchange = () => requestPowder();
+  for (const input of [powder.bins, powder.qmin, powder.qmax]) input.onkeydown = (e) => { if (e.key === 'Enter') input.blur(); };
   powder.canvas.onpointerdown = startPowderDrag;
   powder.canvas.onpointermove = (e) => { hoverPowder(e); movePowderDrag(e); };
   powder.canvas.onpointerup = endPowderDrag;
@@ -1882,34 +1890,37 @@ function requestPowder() {
 }
 
 /**
- * Send the I(Q) requests when they are due. B gets A's shells, reaching the
- * farther of the two grids unless Q max is set; its mask is built first.
+ * Send the I(Q) requests when they are due. B gets A's shells, which by default
+ * reach the farther of the two grids; its mask is built first.
  */
 function updatePowder() {
   if (!powder?.stale || !(powderShown() || powder.download)) return;
   powder.stale = false;
-  const read = (input) => {
+  const read = (input, zero = false) => {
     const text = input.value.trim(), x = Number(text);
     if (text === '') return null;
-    if (!(x > 0)) throw new Error(`${input.getAttribute('aria-label')} must be a positive number, or empty for automatic.`);
+    if (!(x > 0 || (zero && x === 0))) throw new Error(`${input.getAttribute('aria-label')} must be a positive number, or empty for automatic.`);
     return x;
   };
   const split = Number($('iq-split').dataset.value);
-  let plan, planB = null, errorB = '';
+  let plan, planB = null, errorB = '', shells;
   try {
-    const dq = read(powder.dq), qmax = read(powder.qmax);
-    plan = powderPlan(meta.dims, meta.lattice, { dq, qmax, split });
+    const bins = parseBins(powder.bins.value), qmin = read(powder.qmin, true), qmax = read(powder.qmax);
+    let top = qExtent(meta.dims, meta.lattice).top, extentB = null;
     if (compare?.ready) {
       try {
-        const topB = powderPlan(compare.meta.dims, compare.meta.lattice, { dq: plan.dq, split }).top;
-        planB = powderPlan(compare.meta.dims, compare.meta.lattice, { dq: plan.dq, qmax: qmax ?? Math.max(plan.top, topB), split });
-        plan = powderPlan(meta.dims, meta.lattice, { dq: plan.dq, qmax: planB.qmax, split });
+        extentB = qExtent(compare.meta.dims, compare.meta.lattice);
+        top = Math.max(top, extentB.top);
       } catch (err) {
         errorB = err.message;
       }
     }
+    plan = powderPlan(meta.dims, meta.lattice, { bins, qmin, qmax: qmax ?? top, split });
+    shells = JSON.stringify([plan.bins, qmin, qmax ?? top, split]);
+    if (extentB) planB = powderPlan(compare.meta.dims, compare.meta.lattice, { edges: plan.edges, split });
   } catch (err) {
     Object.assign(powder.a, { data: null, error: err.message, key: '' });
+    powder.plan = null;
     powder.download = false;
     showPowder();
     drawPowderView();
@@ -1917,15 +1928,81 @@ function updatePowder() {
   }
   powder.plan = plan;
   const group = groupKey(symmetry.ops);
-  queuePowder(powder.a, worker, { plan, maps: symmetry.maps, symmetry: symmetry.name }, `${JSON.stringify(plan)}|${group}|${maskVersion}`);
+  queuePowder(powder.a, worker, { plan, maps: symmetry.maps, symmetry: symmetry.name }, `${shells}|${group}|${maskVersion}`);
   if (planB && !compare.maskBusy) {
     queuePowder(powder.b, compare.worker, { plan: planB, maps: compare.maps, symmetry: compare.maps.length > 1 ? symmetry.name : '1' },
-      `${JSON.stringify(planB)}|${group}|${compare.maps.length}|${compare.maskVersion ?? 0}`);
+      `${shells}|${group}|${compare.maps.length}|${compare.maskVersion ?? 0}`);
   } else if (errorB) {
     Object.assign(powder.b, { data: null, error: errorB, key: '' });
   }
   showPowder();
   finishPowderDownload();
+}
+
+// The ΔQ slider sets a single step on a log scale: a width from a tenth of the
+// shortest bin step in |Q| to 20 times it, or ΔQ/Q from 0.1% to 20% when the
+// step is negative (logarithmic bins). Ranges with their own steps are typed.
+const binsRange = (log) => (log ? [0.001, 0.2] : [powder.step / 10, powder.step * 20]);
+
+/** The Rebin parameters in the ΔQ field, or the automatic step; null while the field cannot be read. */
+function currentBins() {
+  try {
+    return parseBins(powder.bins.value) ?? [Number(powder.step.toPrecision(1))];
+  } catch {
+    return null;
+  }
+}
+
+/** Place the slider at the typed step; with ranges, Q min and Q max come from the field and the slider rests. */
+function syncBinsSlider() {
+  const bins = powder.step ? currentBins() : null, single = bins?.length === 1;
+  powder.slider.disabled = !single;
+  powder.qmin.disabled = powder.qmax.disabled = bins?.length > 1;
+  powder.qmin.placeholder = single && bins[0] < 0 ? String(Number(powder.step.toPrecision(2))) : '0';
+  if (!single) {
+    powder.slider.title = bins ? 'These bins have ranges with their own steps: edit them in the field' : '';
+    return;
+  }
+  const log = bins[0] < 0, [lo, hi] = binsRange(log);
+  powder.slider.value = 1000 * clamp(Math.log(Math.abs(bins[0]) / lo) / Math.log(hi / lo), 0, 1);
+  powder.slider.title = `${binsLabel(bins)}: drag to change it, recomputing as you go`;
+  paint(powder.slider);
+}
+
+function slideBins() {
+  const bins = currentBins(), log = bins?.length === 1 && bins[0] < 0, [lo, hi] = binsRange(log);
+  const step = sig(lo * (hi / lo) ** (Number(powder.slider.value) / 1000), 2);
+  powder.bins.value = String(log ? -step : step);
+  powder.slider.title = `${binsLabel([log ? -step : step])}: drag to change it, recomputing as you go`;
+  requestPowder();
+}
+
+/** Q bins in words: "ΔQ 0.05 Å⁻¹", "ΔQ/Q 1%", or the Rebin parameters of ranges. */
+function binsLabel(bins) {
+  if (bins.length > 1) return `bins ${bins.join(', ')}`;
+  return bins[0] > 0 ? `ΔQ ${fmt(bins[0], 4)} Å⁻¹` : `ΔQ/Q ${sig(-100 * bins[0], 2)}%`;
+}
+
+/** The last shell with data, and the |Q| where it ends. */
+function lastShell(data) {
+  let b = data.voxels.length - 1;
+  while (b > 0 && !(data.voxels[b] > 0)) b--;
+  return b;
+}
+const powderEnd = (data) => data.edges[lastShell(data) + 1];
+/** The centre of shell b (the midpoint of its edges). */
+const shellMid = (data, b) => (data.edges[b] + data.edges[b + 1]) / 2;
+
+/** The shell of `edges` that holds q, or -1. */
+function shellAt(edges, q) {
+  if (!(q >= edges[0] && q < edges[edges.length - 1])) return -1;
+  let b = 0, e = edges.length - 1;
+  while (e - b > 1) {
+    const m = (b + e) >> 1;
+    if (q >= edges[m]) b = m;
+    else e = m;
+  }
+  return b;
 }
 
 /** Ask a dataset's worker for I(Q), unless it has (or is computing) the same `key`. One request in flight per dataset. */
@@ -1975,7 +2052,7 @@ function showPowder() {
   const layers = [['A', powder.a], ...(compare?.ready ? [['B', powder.b]] : [])];
   const working = layers.filter(([, l]) => l.busy);
   $('powder-progress').hidden = !working.length;
-  powder.pos.textContent = powder.plan ? `ΔQ ${fmt(powder.plan.dq, 4)} Å⁻¹` : '';
+  powder.pos.textContent = powder.plan ? binsLabel(powder.plan.bins) : '';
   if (working.length) {
     const fraction = working.reduce((s, [, l]) => s + (l.progress?.fraction ?? 0), 0) / working.length;
     const label = working.find(([, l]) => l.progress)?.[1].progress.label ?? 'Starting';
@@ -1997,10 +2074,10 @@ function showPowder() {
     return;
   }
   const sets = layers.filter(([, l]) => l.data);
-  const end = Math.max(...sets.map(([, l]) => powderEnd(l.data)));
+  const last = Math.max(...sets.map(([, l]) => lastShell(l.data))), end = A.edges[last + 1];
   const errors = sets.map(([k, l]) => [k, l.data.errors ? `σ from ${l.data.errors}` : l.data.errorsNote || 'no uncertainties in the file']);
   const facts = [
-    `${Math.round(end / A.dq)} shells of ${fmt(A.dq, 4)} Å⁻¹ to ${fmt(end, 2)} Å⁻¹`,
+    `${last + 1} shells (${binsLabel(powder.plan.bins)}) from ${fmt(A.edges[0], 3)} to ${fmt(end, 2)} Å⁻¹`,
     A.order > 1 ? `${A.symmetry} averaged` : 'not symmetrized',
     A.masked && mask ? `mask ${pct((mask.edge + mask.outlier) / mask.measured)}` : 'no mask',
     ...(errors.every(([, t]) => t === errors[0][1]) ? [errors[0][1].replace('the file', sets.length > 1 ? 'the files' : 'the file')] : errors.map(([k, t]) => `${k}: ${t}`)),
@@ -2043,8 +2120,10 @@ function finishPowderDownload() {
 function powderText() {
   const sets = [['A', sourceName, powder.a.data]];
   if (compare?.ready && powder.b.data) sets.push(['B', compare.name, powder.b.data]);
-  const both = sets.length > 1, { dq, split, frame } = sets[0][2], l = meta.lattice;
-  const rows = Math.round(Math.max(...sets.map(([, , d]) => powderEnd(d))) / dq);
+  const both = sets.length > 1, { edges, split, frame } = sets[0][2], l = meta.lattice, bins = powder.plan.bins;
+  const rows = Math.max(...sets.map(([, , d]) => lastShell(d))) + 1;
+  // The same shells as Rebin parameters, with a single step's range written out.
+  const rebin = bins.length > 1 ? bins : [edges[0], bins[0], edges[edges.length - 1]];
   const num = (x) => (Number.isFinite(x) ? String(Number(x.toPrecision(7))) : 'nan');
   const columns = both ? sets.flatMap(([k]) => [`I_${k}`, `sigma_${k}`, `coverage_${k}`, `voxels_${k}`]) : ['I', 'sigma', 'coverage', 'voxels'];
   const lines = [
@@ -2053,17 +2132,20 @@ function powderText() {
     frame === 'HKL'
       ? `# |Q| in 1/Angstrom, with 2*pi, from the cell (${l.source}): a b c = ${[l.a, l.b, l.c].map((x) => x.toFixed(4)).join(' ')} Angstrom, alpha beta gamma = ${[l.alpha, l.beta, l.gamma].map((x) => x.toFixed(3)).join(' ')} deg`
       : '# |Q| in 1/Angstrom, from the Q axes',
-    `# Shells of dQ = ${dq} 1/Angstrom from Q = 0 (Q is the shell centre); voxels split into ${split}^3 sub-cells, each binned by its own |Q|`,
+    `# Shells: ${binsLabel(bins).replace('Å⁻¹', '1/Angstrom')}; as Mantid Rebin parameters ${rebin.map((x) => Number(x.toPrecision(10))).join(', ')}`,
+    `#   (a negative step is logarithmic; a range ends with a bin of 0.25 to 1.25 steps). Q is the shell centre, the midpoint of its edges.`,
+    `# Voxels split into ${split}^3 sub-cells, each binned by its own |Q|`,
     `# Symmetry: ${symmetry.ops.length > 1 ? `${symmetry.name} (${symmetry.ops.length} operations), equivalent voxels pooled` : 'none'}`,
     `# Mask: ${mask ? `coverage-edge erosion ${mask.radius}${mask.k ? `, outlier cut ${mask.k} sigma` : ''}${both ? ', built for each dataset' : `, ${pct((mask.edge + mask.outlier) / mask.measured)} of measured voxels removed`}` : 'none'}`,
-    '# I: mean intensity over the part of the shell with data. Unmeasured and masked voxels are left out, not',
-    '#    counted as zero, and each symmetry orbit counts with its multiplicity',
+    '# I: the intensity integrated over the part of the shell with data, divided by the volume of that part',
+    '#    (unmeasured and masked voxels are left out, not counted as zero; each symmetry orbit counts with its',
+    '#    multiplicity). I * coverage is the same integral divided by the volume of the whole shell.',
     `# sigma: ${sets.map(([k, , d]) => `${both ? `${k} ` : ''}${d.errors ? `propagated from ${d.errors}` : 'nan, no uncertainties in the file'}`).join('; ')}`,
     '# coverage: fraction of the shell volume with data; voxels: number of voxels with data in the shell',
     `# Q ${columns.join(' ')}`,
   ];
   for (let b = 0; b < rows; b++) {
-    const cells = [((b + 0.5) * dq).toFixed(6)];
+    const cells = [((edges[b] + edges[b + 1]) / 2).toFixed(6)];
     for (const [, , d] of sets) cells.push(num(d.intensity[b]), num(d.sigma[b]), d.coverage[b].toFixed(5), num(d.voxels[b]));
     lines.push(cells.join(' '));
   }
@@ -2078,25 +2160,18 @@ function powderLayers() {
   return out;
 }
 
-/** |Q| at the end of the last shell with data. */
-function powderEnd(data) {
-  let b = data.voxels.length - 1;
-  while (b > 0 && !(data.voxels[b] > 0)) b--;
-  return data.edges[b + 1];
-}
-
 /**
  * The plot window: the zoom, or all shells with data and the range of the
  * curves (and bands) over them. Intensities are in plot units: log10(I) on a
  * log scale.
  */
 function powderWindow(layers, log, band) {
-  const [x0, x1] = powder.zoom?.x ?? [0, Math.max(...layers.map((l) => powderEnd(l.data)))];
+  const [x0, x1] = powder.zoom?.x ?? [Math.min(...layers.map((l) => l.data.edges[0])), Math.max(...layers.map((l) => powderEnd(l.data)))];
   if (powder.zoom?.y) return { x0, x1, y0: powder.zoom.y[0], y1: powder.zoom.y[1] };
   let lo = Infinity, hi = -Infinity;
   for (const { data } of layers) {
     for (let b = 0; b < data.intensity.length; b++) {
-      const q = (b + 0.5) * data.dq, v = data.intensity[b], s = band && Number.isFinite(data.sigma[b]) ? data.sigma[b] : 0;
+      const q = shellMid(data, b), v = data.intensity[b], s = band && Number.isFinite(data.sigma[b]) ? data.sigma[b] : 0;
       if (q < x0 || q > x1 || !Number.isFinite(v) || (log && v <= 0)) continue;
       lo = Math.min(lo, log && v - s <= 0 ? v : v - s);
       hi = Math.max(hi, v + s);
@@ -2202,7 +2277,7 @@ function drawPowder(canvas, w, h, dpr, exporting = false) {
     if (run) out.push(run);
     return out;
   };
-  const at = (data, b) => X((b + 0.5) * data.dq);
+  const at = (data, b) => X(shellMid(data, b));
   if (cover) {
     c.setLineDash([3, 3]);
     c.lineWidth = 1;
@@ -2243,7 +2318,8 @@ function drawPowder(canvas, w, h, dpr, exporting = false) {
     c.globalAlpha = 1;
   }
   // Markers when the shells are far enough apart to see them.
-  const markers = (x1 - x0) / layers[0].data.dq < aw / 6;
+  const visible = layers[0].data.edges.filter((e, b, all) => b + 1 < all.length && (e + all[b + 1]) / 2 >= x0 && (e + all[b + 1]) / 2 <= x1).length;
+  const markers = visible < aw / 6;
   for (const { data, color } of layers) {
     c.strokeStyle = c.fillStyle = color;
     c.lineWidth = 1.6;
@@ -2382,7 +2458,7 @@ function drawPowder(canvas, w, h, dpr, exporting = false) {
   const titleWidth = c.measureText('I(Q)').width;
   c.font = `11px ${MONO}`;
   c.fillStyle = INK2;
-  const extras = [`ΔQ ${fmt(data.dq, 4)} Å⁻¹`, `voxels split ${data.split}³`, data.order > 1 ? data.symmetry : 'no symmetry', data.masked && mask ? `mask ${pct((mask.edge + mask.outlier) / mask.measured)}` : 'no mask'];
+  const extras = [binsLabel(powder.plan.bins), `voxels split ${data.split}³`, data.order > 1 ? data.symmetry : 'no symmetry', data.masked && mask ? `mask ${pct((mask.edge + mask.outlier) / mask.measured)}` : 'no mask'];
   c.fillText(extras.join(' · '), 20 + titleWidth, 24);
 }
 
@@ -2402,7 +2478,7 @@ function powderPoint(e) {
 /** Read the shell under the pointer: Q, d = 2π/Q, and I ± σ with the coverage for each dataset. */
 function hoverPowder(e) {
   const pt = powderPoint(e), layers = powderLayers(), first = layers[0]?.data;
-  const b = pt?.inside && first ? Math.floor(pt.q / first.dq) : -1;
+  const b = pt?.inside && first ? shellAt(first.edges, pt.q) : -1;
   if (b < 0 || b >= (first?.intensity.length ?? 0)) {
     powder.hover.hidden = true;
     if (powder.at !== null) { powder.at = null; drawPowderView(); }
@@ -2411,7 +2487,7 @@ function hoverPowder(e) {
   const value = (d) => (Number.isFinite(d.intensity[b])
     ? `${fmtValue(d.intensity[b])}${Number.isFinite(d.sigma[b]) ? ` ± ${fmtValue(d.sigma[b])}` : ''} (${pct(d.coverage[b])} covered)`
     : 'no data');
-  const q = (b + 0.5) * first.dq;
+  const q = shellMid(first, b);
   powder.hover.textContent = `Q ${fmt(q)} Å⁻¹  d ${fmt(2 * Math.PI / q, 3)} Å  →  ${layers.map((l) => `${layers.length > 1 ? `${l.letter} ` : ''}${value(l.data)}`).join(' · ')}`;
   powder.hover.hidden = false;
   if (powder.at !== b) {
@@ -2447,7 +2523,8 @@ function endPowderDrag() {
   powder.drag = null;
   powder.canvas.classList.remove('panning');
   if (!d || clickMode === 'move') return;
-  const v = d.view, dq = powderLayers()[0]?.data.dq ?? 0;
+  // The width of the shell where the drag started: zooms keep at least two such shells across.
+  const v = d.view, edges = powderLayers()[0]?.data.edges ?? [0, 0], s = Math.max(0, shellAt(edges, d.q)), dq = edges[s + 1] - edges[s];
   if (!d.moved) {
     // A click in Zoom mode zooms into Q 2×, after a pause so a double-click (full range) does not also zoom.
     if (clickMode !== 'zoom') return;

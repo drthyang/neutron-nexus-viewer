@@ -4,10 +4,13 @@
 // average over a shell Q ≤ |Q| < Q + ΔQ is the volume-weighted mean of the
 // voxels in it, over the voxels that have data:
 //
-//   I(Q) = Σ_v f_v I_v / Σ_v f_v,   f_v = the part of voxel v inside the shell.
+//   I(Q) = Σ_v f_v I_v / Σ_v f_v,   f_v = the part of voxel v inside the shell,
 //
-// Unmeasured and masked voxels are left out of both sums rather than counted
-// as zero, so incomplete coverage costs precision, not intensity. With a
+// that is, the integral of I over the part of the shell with data divided by
+// the volume of that part, not by the volume of the whole shell (their ratio is
+// the reported coverage). Unmeasured and masked voxels are left out of both
+// sums rather than counted as zero, so incomplete coverage costs precision,
+// not intensity. Shells are bounded by arbitrary edges (see shellEdges()). With a
 // symmetry group, an orbit's intensity is the equal-weight mean of its measured
 // members (as in the slices), and every distinct member of the orbit counts
 // with its own |Q| and volume, measured or not, inside the grid or beyond it.
@@ -52,11 +55,11 @@ export function qMetric(dims, lattice) {
 }
 
 /**
- * The shells and sampling for powderAverage(): shells of width `dq` from 0 to
- * `qmax` (Å⁻¹), and voxels split into `split`³ sub-cells. By default ΔQ is the
- * shortest bin step in |Q| and the shells reach the farthest grid corner (`top`).
+ * The grid in |Q|: its metric, bin widths, the largest |Q| on it (`top`, at a
+ * grid corner) and its shortest bin step in |Q| (`step`). Throws when |Q|
+ * cannot be computed or the bins are not uniform.
  */
-export function powderPlan(dims, lattice, { dq = null, qmax = null, split = 2 } = {}) {
+export function qExtent(dims, lattice) {
   const { G, frame } = qMetric(dims, lattice);
   const n = dims.map((d) => d.edges.length - 1);
   const w = dims.map((d, i) => (d.edges[n[i]] - d.edges[0]) / n[i]);
@@ -69,15 +72,67 @@ export function powderPlan(dims, lattice, { dq = null, qmax = null, split = 2 } 
   // |Q| is convex, so its largest value on the grid is at a corner.
   const top = Math.max(...Array.from({ length: 8 }, (_, c) => qOf(dims.map((d, i) => d.edges[(c >> i) & 1 ? n[i] : 0]))));
   const step = Math.min(...w.map((wi, i) => wi * Math.sqrt(G[4 * i])));
-  const width = dq ?? Number(step.toPrecision(1));
-  const reach = qmax ?? top;
-  if (!(width > 0) || !Number.isFinite(width)) throw new Error('ΔQ must be positive.');
-  if (!(reach > 0)) throw new Error('Q max must be positive.');
-  const count = Math.max(1, Math.ceil(reach / width - 1e-9));
-  if (count > MAX_SHELLS) throw new Error(`ΔQ = ${width} Å⁻¹ gives ${count} shells up to ${reach.toFixed(2)} Å⁻¹; use at most ${MAX_SHELLS}.`);
+  return { G, frame, w, top, step };
+}
+
+/**
+ * Read shell boundaries written as Mantid Rebin parameters: one step ("0.05";
+ * negative for logarithmic bins, "-0.01" for ΔQ/Q = 1%) or ranges
+ * "Q1, step1, Q2, step2, Q3 …". Commas or spaces separate the values; empty
+ * text gives null (automatic).
+ */
+export function parseBins(text) {
+  const values = String(text ?? '').trim().split(/[\s,]+/).filter(Boolean).map(Number);
+  if (!values.length) return null;
+  const hint = 'like 0.05, -0.01 (logarithmic, ΔQ/Q = 1%) or 0.5, 0.02, 3, 0.05, 10';
+  if (!values.every(Number.isFinite)) throw new Error(`Write the Q bins as numbers, ${hint}.`);
+  if (values.length % 2 === 0) throw new Error(`Give one step, or ranges as Q1, step, Q2 (, step, Q3 …), ${hint}.`);
+  for (let i = values.length === 1 ? 0 : 1; i < values.length; i += 2) if (values[i] === 0) throw new Error('A Q bin step cannot be 0.');
+  for (let i = 2; i < values.length; i += 2) if (!(values[i] > values[i - 2])) throw new Error('The Q bin boundaries must increase.');
+  if (values.length > 1 && values[0] < 0) throw new Error('The Q bins start at |Q| = 0 or above.');
+  return values;
+}
+
+/**
+ * Shell edges from Rebin parameters (see parseBins()); a single step spans
+ * `start` to `end`. A positive step gives bins of that width, a negative one
+ * logarithmic bins, each (1 + |step|) times the previous edge. As in Mantid, a
+ * range stops at its boundary: its last bin is 0.25 to 1.25 steps wide.
+ */
+export function shellEdges(params, start = 0, end = Infinity) {
+  const p = params.length === 1 ? [start, params[0], end] : params;
+  if (!(p[p.length - 1] > p[0]) || !Number.isFinite(p[p.length - 1])) throw new Error(`Q max (${p[p.length - 1]}) must be above Q min (${p[0]}).`);
+  const edges = [p[0]];
+  for (let i = 1; i + 1 < p.length; i += 2) {
+    const step = p[i], stop = p[i + 1], from = edges[edges.length - 1];
+    if (step < 0 && !(from > 0)) throw new Error(`Logarithmic Q bins need a start above 0 (Q min, or the first value); this range starts at ${from}.`);
+    // Uniform edges are counted from the range's start, so they do not drift.
+    for (let k = 1, x = from; ; k++) {
+      const width = step > 0 ? step : -step * x;
+      if (x + 1.25 * width > stop) break;
+      x = step > 0 ? from + k * step : x + width;
+      edges.push(x);
+      if (edges.length > MAX_SHELLS) throw new Error(`These Q bins give more than ${MAX_SHELLS} shells; use a larger step or a shorter range.`);
+    }
+    edges.push(stop);
+  }
+  return Float64Array.from(edges);
+}
+
+/**
+ * The shells and sampling for powderAverage(). The shells come from `edges`,
+ * or from Rebin parameters `bins` (see parseBins()) with a single step running
+ * from `qmin` (0; the shortest bin step for logarithmic bins) to `qmax` (the
+ * farthest grid corner); by default ΔQ is the shortest bin step in |Q|. Voxels
+ * are split into `split`³ sub-cells.
+ */
+export function powderPlan(dims, lattice, { bins = null, qmin = null, qmax = null, edges = null, split = 2 } = {}) {
+  const { G, frame, w, top, step } = qExtent(dims, lattice);
+  const params = bins ?? [Number(step.toPrecision(1))];
+  const shells = edges ? Float64Array.from(edges) : shellEdges(params, qmin ?? (params[0] < 0 ? Number(step.toPrecision(2)) : 0), qmax ?? top);
   if (!(Number.isInteger(split) && split >= 1 && split <= 4)) throw new Error('Split voxels into 1 to 4 sub-cells per axis.');
   return {
-    G, frame, dq: width, qmax: count * width, count, split, top, step,
+    G, frame, edges: shells, count: shells.length - 1, bins: edges ? null : params, split, top, step,
     c0: dims.map((d, i) => d.edges[0] + w[i] / 2), w,
     // Volume of one voxel in Å⁻³.
     voxel: Math.sqrt(Math.max(0, det3(G))) * w[0] * w[1] * w[2],
@@ -95,7 +150,7 @@ export function powderPlan(dims, lattice, { dq = null, qmax = null, split = 2 } 
  */
 export function powderAverage(volume, shape, plan, maps, mask = null, variance = null, onProgress = null) {
   const n0 = shape[2], n1 = shape[1], n2 = shape[0], s1 = n0, s2 = n0 * n1;
-  const { G, c0, w, dq, count, split } = plan;
+  const { G, c0, w, edges, split } = plan, count = edges.length - 1;
   // Sub-cell offsets δ from the voxel centre along each axis (doubled, for
   // the cross term 2δᵀGx), and the constant δᵀGδ of each sub-cell.
   const S = split ** 3, off = (a, d) => ((a + 0.5) / split - 0.5) * w[d];
@@ -117,11 +172,16 @@ export function powderAverage(volume, shape, plan, maps, mask = null, variance =
   // Voxels already visited as members of an earlier orbit (one bit each).
   const seen = Ng > 1 ? new Int32Array(Math.ceil(volume.length / 32)) : null;
   const weight = new Float64Array(count), sum = new Float64Array(count), spread = new Float64Array(count);
-  // Shell bounds in |Q|², and the shells one orbit falls in with its sub-cell count in each.
-  const bound = Float64Array.from({ length: count + 1 }, (_, b) => (b * dq) ** 2);
+  // Shell edges in |Q|², padded with ±∞: slot v spans [bound[v], bound[v + 1]),
+  // slot 0 lies below the shells, slot count + 1 above them, and slot v is
+  // shell v − 1 otherwise. From 0, a rounding-negative |Q|² is in the first shell.
+  const bound = Float64Array.from({ length: count + 3 }, (_, v) => {
+    if (v === 0 || (v === 1 && edges[0] <= 0)) return -Infinity;
+    return v === count + 2 ? Infinity : edges[v - 1] ** 2;
+  });
+  // The shells one orbit falls in, with its sub-cell count in each.
   const shells = new Int32Array(Ng * S), hits = new Int32Array(Ng * S);
-  const inv = 1 / dq;
-  let orbits = 0;
+  let orbits = 0, slot = 1;
 
   for (let p2 = 0; p2 < n2; p2++) {
     for (let p1 = 0; p1 < n1; p1++) {
@@ -167,16 +227,33 @@ export function powderAverage(volume, shape, plan, maps, mask = null, variance =
               for (let c2 = 0; c2 < split; c2++, j++) {
                 const q2 = tb + ez[c2] * gz + dd[j];
                 if (!(q2 >= lo && q2 < hi)) {
-                  // sqrt of a rounding-negative |Q|² near 0 is NaN, and NaN | 0 is shell 0.
-                  const b = (Math.sqrt(q2) * inv) | 0;
-                  if (b >= count) { lo = Infinity; hi = -Infinity; continue; }
-                  lo = b === 0 ? -Infinity : bound[b];
-                  hi = bound[b + 1];
-                  k = 0;
-                  while (k < m && shells[k] !== b) k++;
-                  if (k === m) { shells[m] = b; hits[m] = 0; m++; }
+                  // Nearby sub-cells, images and orbits fall in the same or a
+                  // neighbouring shell: walk from the last one, and bisect if it is far.
+                  let v = slot, steps = 0;
+                  while (q2 < bound[v] && steps++ < 4) v--;
+                  while (q2 >= bound[v + 1] && steps++ < 4) v++;
+                  if (!(q2 >= bound[v] && q2 < bound[v + 1])) {
+                    let e = count + 2;
+                    v = 0;
+                    while (e - v > 1) {
+                      const mid = (v + e) >> 1;
+                      if (q2 >= bound[mid]) v = mid;
+                      else e = mid;
+                    }
+                  }
+                  slot = v;
+                  lo = bound[v];
+                  hi = bound[v + 1];
+                  // Below Q min or above Q max, k is -1.
+                  k = -1;
+                  if (v > 0 && v <= count) {
+                    const b = v - 1;
+                    k = 0;
+                    while (k < m && shells[k] !== b) k++;
+                    if (k === m) { shells[m] = b; hits[m] = 0; m++; }
+                  }
                 }
-                hits[k]++;
+                if (k >= 0) hits[k]++;
               }
             }
           }
@@ -196,13 +273,12 @@ export function powderAverage(volume, shape, plan, maps, mask = null, variance =
 
   const intensity = new Float64Array(count), sigma = new Float64Array(count), coverage = new Float64Array(count);
   for (let b = 0; b < count; b++) {
-    const shell = (4 * Math.PI / 3) * ((b + 1) ** 3 - b ** 3) * dq ** 3;
+    const shell = (4 * Math.PI / 3) * (edges[b + 1] ** 3 - edges[b] ** 3);
     intensity[b] = weight[b] > 0 ? sum[b] / weight[b] : NaN;
     sigma[b] = weight[b] > 0 && variance !== null ? Math.sqrt(spread[b]) / weight[b] : NaN;
     coverage[b] = weight[b] * plan.voxel / shell;
   }
-  const edges = Float64Array.from({ length: count + 1 }, (_, b) => b * dq);
-  return { edges, intensity, sigma, voxels: weight, coverage, orbits };
+  return { edges: Float64Array.from(edges), intensity, sigma, voxels: weight, coverage, orbits };
 }
 
 function det3(m) {

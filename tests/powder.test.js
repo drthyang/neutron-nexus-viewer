@@ -2,7 +2,7 @@ import assert from 'node:assert/strict';
 import test from 'node:test';
 
 import { parseBasis, reciprocalMetric } from '../js/nexus.js';
-import { powderAverage, powderPlan, qMetric } from '../js/powder.js';
+import { parseBins, powderAverage, powderPlan, qMetric, shellEdges } from '../js/powder.js';
 import { IDENTITY_MAP } from '../js/slab.js';
 import { closeGroup, indexMaps, parseOps, PRESETS } from '../js/symmetry.js';
 
@@ -38,7 +38,7 @@ function fill(dims, f) {
  * not), each distinct image split into sub-cells binned by its own |Q|.
  */
 function reference(volume, shape, plan, maps, mask, variance) {
-  const n = [shape[2], shape[1], shape[0]], { G, c0, w, dq, count, split } = plan;
+  const n = [shape[2], shape[1], shape[0]], { G, c0, w, edges, count, split } = plan;
   const inGrid = (q) => q.every((x, i) => x >= 0 && x < n[i]);
   const flat = (q) => q[0] + n[0] * (q[1] + n[1] * q[2]);
   const qOf = (x) => Math.sqrt(Math.max(0, [0, 1, 2].reduce((s, i) => s + x[i] * [0, 1, 2].reduce((t, j) => t + G[3 * i + j] * x[j], 0), 0)));
@@ -66,8 +66,8 @@ function reference(volume, shape, plan, maps, mask, variance) {
     for (const q of members.values()) {
       for (let a = 0; a < split; a++) for (let b = 0; b < split; b++) for (let c = 0; c < split; c++) {
         const x = [a, b, c].map((k, i) => c0[i] + (q[i] + (k + 0.5) / split - 0.5) * w[i]);
-        const shell = Math.floor(qOf(x) / dq);
-        if (shell < count) shells.set(shell, (shells.get(shell) ?? 0) + 1 / split ** 3);
+        const Q = qOf(x), shell = edges.findIndex((e, s) => s < count && Q >= e && Q < edges[s + 1]);
+        if (shell >= 0) shells.set(shell, (shells.get(shell) ?? 0) + 1 / split ** 3);
       }
     }
     for (const [shell, c] of shells) {
@@ -93,7 +93,7 @@ test('every Laue class matches a direct set-based implementation', () => {
   const mask = Uint8Array.from({ length: N }, (_, i) => (i % 13 === 0 ? 1 : 0));
   const rand = random(5), variance = Float32Array.from({ length: N }, () => rand());
   for (const split of [1, 2]) {
-    const plan = powderPlan(dims, hexCell, { dq: 0.05, split });
+    const plan = powderPlan(dims, hexCell, { bins: [0.05], split });
     for (const [name] of PRESETS) {
       const maps = indexMaps(group(name), dims);
       const got = powderAverage(volume, shape, plan, maps, mask, variance);
@@ -120,7 +120,7 @@ test('orbits count with their multiplicity, not their measured members', () => {
     volume[at(h, k, l)] = 1;
     variance[at(h, k, l)] = 1;
   }
-  const plan = powderPlan(dims, cubic, { dq: 1, split: 1 });
+  const plan = powderPlan(dims, cubic, { bins: [1], split: 1 });
   const shell = Math.floor(2 * Math.PI);
   const result = powderAverage(volume, [3, 3, 3], plan, indexMaps(group('mmm'), dims), null, variance);
   // The orbit of (1,0,0) stands for two voxels of the shell: (2·100 + 4·1) / 6,
@@ -154,8 +154,8 @@ test('coverage gaps and masks change the precision, not the intensity', () => {
     // 2π·2.05/c from the origin), away from the origin.
     const inner = 0.9 * 2 * Math.PI * 2.05 / 6.8;
     let checked = 0, kept = 0, all = 0, covered = 0;
-    for (let b = 3; (b + 1) * plan.dq < inner; b++, checked++) {
-      const q = (b + 0.5) * plan.dq, label = `split ${split} shell ${b}`;
+    for (let b = 3; plan.edges[b + 1] < inner; b++, checked++) {
+      const q = (plan.edges[b] + plan.edges[b + 1]) / 2, label = `split ${split} shell ${b}`;
       assert.ok(Math.abs(full.intensity[b] / (5 + 100 * Math.exp(-q * q / 8)) - 1) < 0.02, `${label}: ${full.intensity[b]}`);
       assert.ok(Math.abs(partial.intensity[b] / full.intensity[b] - 1) < 0.02, `${label}: ${partial.intensity[b]} vs ${full.intensity[b]}`);
       assert.ok(close(constant.intensity[b], 7, 1e-6), label);
@@ -177,33 +177,114 @@ test('split voxels share each voxel between shells without losing any', () => {
   const dims = [axis('H', 9, 0.1), axis('K', 9, 0.1), axis('L', 7, 0.2)];
   const volume = randomVolume(7 * 9 * 9, 17), measured = volume.filter((v) => !Number.isNaN(v)).length;
   for (const split of [1, 2, 3, 4]) {
-    const plan = powderPlan(dims, hexCell, { dq: 0.03, split });
+    const plan = powderPlan(dims, hexCell, { bins: [0.03], split });
     const { voxels } = powderAverage(volume, [7, 9, 9], plan, [IDENTITY_MAP]);
     assert.ok(Math.abs(voxels.reduce((a, b) => a + b) - measured) < 1e-9, `split ${split}`);
   }
   // A shell narrower than a voxel gets a share of it with split voxels only.
   const one = new Float32Array(7 * 9 * 9).fill(NaN);
   one[6 + 9 * (4 + 9 * 3)] = 1;
-  const coarse = powderAverage(one, [7, 9, 9], powderPlan(dims, hexCell, { dq: 0.01, split: 1 }), [IDENTITY_MAP]);
-  const fine = powderAverage(one, [7, 9, 9], powderPlan(dims, hexCell, { dq: 0.01, split: 4 }), [IDENTITY_MAP]);
+  const coarse = powderAverage(one, [7, 9, 9], powderPlan(dims, hexCell, { bins: [0.01], split: 1 }), [IDENTITY_MAP]);
+  const fine = powderAverage(one, [7, 9, 9], powderPlan(dims, hexCell, { bins: [0.01], split: 4 }), [IDENTITY_MAP]);
   assert.equal(coarse.voxels.filter((x) => x > 0).length, 1);
   assert.ok(fine.voxels.filter((x) => x > 0).length > 5);
+});
+
+test('Q bins are read as Mantid Rebin parameters', () => {
+  assert.equal(parseBins(''), null);
+  assert.equal(parseBins('  '), null);
+  assert.deepEqual(parseBins('0.05'), [0.05]);
+  assert.deepEqual(parseBins('-0.01'), [-0.01]);
+  assert.deepEqual(parseBins('0.5, 0.02, 3, 0.05, 10'), [0.5, 0.02, 3, 0.05, 10]);
+  assert.deepEqual(parseBins('0.5 0.02 3'), [0.5, 0.02, 3]);
+  assert.throws(() => parseBins('0.05 Å'), /numbers/);
+  assert.throws(() => parseBins('0.5, 0.02'), /one step, or ranges/);
+  assert.throws(() => parseBins('1, 0, 2'), /cannot be 0/);
+  assert.throws(() => parseBins('0'), /cannot be 0/);
+  assert.throws(() => parseBins('3, 0.1, 2'), /increase/);
+  assert.throws(() => parseBins('-1, 0.1, 2'), /0 or above/);
+});
+
+test('shell edges follow Mantid Rebin', () => {
+  const round = (edges) => Array.from(edges, (e) => +e.toFixed(9));
+  // Uniform edges are counted from the start, so they do not drift.
+  const tenth = shellEdges([0.1], 0, 30);
+  assert.equal(tenth.length, 301);
+  assert.ok(tenth.every((e, b) => Math.abs(e - b / 10) < 1e-12));
+  // A range ends at its boundary with a last bin of 0.25 to 1.25 steps.
+  assert.deepEqual(round(shellEdges([0.3], 0, 1)), [0, 0.3, 0.6, 0.9, 1]);
+  assert.deepEqual(round(shellEdges([0.45], 0, 1)), [0, 0.45, 1]);
+  // Logarithmic: each edge 1.1 times the previous, up to the boundary.
+  const log = shellEdges([-0.1], 1, 2);
+  assert.equal(log.at(-1), 2);
+  for (let b = 1; b < log.length - 1; b++) assert.ok(Math.abs(log[b] / log[b - 1] - 1.1) < 1e-12, `edge ${b}`);
+  assert.ok(log.at(-1) - log.at(-2) >= 0.25 * 0.1 * log.at(-2));
+  // Ranges with their own steps, uniform then logarithmic.
+  assert.deepEqual(round(shellEdges([0.5, 0.1, 1, 0.25, 2])), [0.5, 0.6, 0.7, 0.8, 0.9, 1, 1.25, 1.5, 1.75, 2]);
+  const mixed = shellEdges([0.5, 0.25, 1, -0.5, 4]);
+  assert.deepEqual(round(mixed), [0.5, 0.75, 1, 1.5, 2.25, 3.375, 4]);
+  assert.throws(() => shellEdges([-0.01], 0, 5), /start above 0/);
+  assert.throws(() => shellEdges([0.1], 2, 1), /above Q min/);
+});
+
+test('uneven shells match the direct implementation and keep every voxel', () => {
+  const dims = [axis('H', 9, 0.1), axis('K', 9, 0.1), axis('L', 7, 0.1)];
+  const shape = [7, 9, 9], N = 7 * 9 * 9;
+  const volume = randomVolume(N, 23);
+  const rand = random(29), variance = Float32Array.from({ length: N }, () => rand());
+  for (const bins of [[-0.04], [0.2, 0.03, 0.8, 0.2, 2.5], [0, 0.5, 1, -0.1, 3]]) {
+    for (const name of ['1', '6/mmm', 'm-3m']) {
+      const plan = powderPlan(dims, hexCell, { bins, split: 2 });
+      const maps = indexMaps(group(name), dims);
+      const got = powderAverage(volume, shape, plan, maps, null, variance);
+      const want = reference(volume, shape, plan, maps, null, variance);
+      for (let b = 0; b < plan.count; b++) {
+        const label = `${bins} ${name} shell ${b}`;
+        assert.ok(close(got.voxels[b], want.voxels[b]), `${label} voxels ${got.voxels[b]} vs ${want.voxels[b]}`);
+        assert.ok(close(got.intensity[b], want.intensity[b]), `${label} I`);
+        assert.ok(close(got.sigma[b], want.sigma[b]), `${label} σ`);
+      }
+    }
+  }
+  // Without symmetry, the shells from Q min to Q max hold exactly the voxels whose centres lie there.
+  const plan = powderPlan(dims, hexCell, { bins: [0.2, 0.07, 0.9, -0.2, 2], split: 1 });
+  const { voxels } = powderAverage(volume, shape, plan, [IDENTITY_MAP]);
+  const qOf = (x) => Math.sqrt(x.reduce((s, xi, i) => s + xi * x.reduce((t, xj, j) => t + plan.G[3 * i + j] * xj, 0), 0));
+  let inside = 0;
+  for (let l = 0; l < 7; l++) for (let k = 0; k < 9; k++) for (let h = 0; h < 9; h++) {
+    const q = qOf([plan.c0[0] + h * 0.1, plan.c0[1] + k * 0.1, plan.c0[2] + l * 0.1]);
+    if (!Number.isNaN(volume[h + 9 * (k + 9 * l)]) && q >= 0.2 && q < 2) inside++;
+  }
+  assert.ok(inside > 50);
+  assert.ok(Math.abs(voxels.reduce((a, b) => a + b) - inside) < 1e-9);
+  // Coverage uses each shell's own volume: shells of 0.1 and 0.2 Å⁻¹ inside a full grid are covered once.
+  const big = [axis('H', 41, 0.1), axis('K', 41, 0.1), axis('L', 41, 0.1)];
+  const flat = powderAverage(new Float32Array(41 ** 3).fill(1), [41, 41, 41], powderPlan(big, hexCell, { bins: [0.3, 0.1, 0.8, 0.2, 1.6] }), [IDENTITY_MAP]);
+  assert.ok(flat.coverage.every((f) => Math.abs(f - 1) < 0.05), Array.from(flat.coverage).join(' '));
 });
 
 test('shells, metric and refusals', () => {
   const dims = [axis('H', 101, 0.1), axis('K', 101, 0.1), axis('L', 101, 0.1)];
   const plan = powderPlan(dims, hexCell);
   // Shortest step: 0.1 r.l.u. along L, 2π/6.8 × 0.1 = 0.0924 Å⁻¹.
-  assert.equal(plan.dq, 0.09);
+  assert.deepEqual(plan.bins, [0.09]);
   assert.ok(Math.abs(plan.step - 2 * Math.PI * 0.1 / 6.8) < 1e-12);
   // Farthest corner (5.05, 5.05, ±5.05): a*²(h² + k² + hk) + c*² l², with 2π.
   const astar2 = 4 / (3 * 4.2 ** 2), top = 2 * Math.PI * Math.sqrt(astar2 * 3 * 5.05 ** 2 + 5.05 ** 2 / 6.8 ** 2);
   assert.ok(Math.abs(plan.top - top) < 1e-9);
-  assert.equal(plan.count, Math.ceil(top / 0.09));
+  // Shells of 0.09 from 0, the last one ending at the farthest corner.
+  assert.equal(plan.edges[0], 0);
+  assert.equal(plan.edges.at(-1), plan.top);
+  assert.ok(plan.edges.slice(0, -1).every((e, b) => Math.abs(e - 0.09 * b) < 1e-12));
   // One voxel is (2π)³ Δh Δk Δl / V_cell.
   const cellVolume = 4.2 * 4.2 * 6.8 * Math.sin(Math.PI / 3);
   assert.ok(Math.abs(plan.voxel * cellVolume / (8 * Math.PI ** 3 * 1e-3) - 1) < 1e-9);
-  assert.deepEqual(powderPlan(dims, hexCell, { dq: 0.2, qmax: 3.05 }).count, 16);
+  // Q min and Q max bound a single step; ranges in the bins override them.
+  assert.deepEqual(Array.from(powderPlan(dims, hexCell, { bins: [0.2], qmin: 1, qmax: 1.62 }).edges, (e) => +e.toFixed(9)), [1, 1.2, 1.4, 1.62]);
+  assert.deepEqual(Array.from(powderPlan(dims, hexCell, { bins: [1, 0.5, 2], qmin: 0, qmax: 9 }).edges), [1, 1.5, 2]);
+  // Logarithmic bins start at the shortest step by default.
+  assert.equal(powderPlan(dims, hexCell, { bins: [-0.05] }).edges[0], 0.092);
+  assert.equal(powderPlan(dims, hexCell, { edges: [0, 1, 3] }).count, 2);
 
   // Oblique axes: [H,H,0] at H = 1 is (110), |Q| = 2π√3 a* (γ* = 60°), d = a/2.
   const hh = { ...dims[0], label: '[H,H,0]', basis: parseBasis('[H,H,0]') };
@@ -220,6 +301,6 @@ test('shells, metric and refusals', () => {
   assert.throws(() => powderPlan([dims[0], dims[1], energy], hexCell), /H, K, L axes/);
   const uneven = { ...dims[2], edges: Float64Array.from(dims[2].edges, (e, i) => e + (i === 3 ? 0.03 : 0)) };
   assert.throws(() => powderPlan([dims[0], dims[1], uneven], hexCell), /non-uniform/);
-  assert.throws(() => powderPlan(dims, hexCell, { dq: 1e-5 }), /shells/);
+  assert.throws(() => powderPlan(dims, hexCell, { bins: [1e-5] }), /shells/);
   assert.throws(() => powderPlan(dims, hexCell, { split: 5 }), /sub-cells/);
 });
