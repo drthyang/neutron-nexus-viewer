@@ -474,7 +474,7 @@ function request(p, which = 'both') {
     p.b.wanted = { center, thickness };
     if (!p.b.busy) sendB(p);
   }
-  // The cut lies in its slice and follows it.
+  // The cut lies in its slice's plane and follows it.
   if (which === 'both' && cutPanel() === p) requestCut();
 }
 
@@ -1938,10 +1938,15 @@ function sendIso() {
   worker.postMessage({ type: 'iso', id: ++requestId, ...q });
 }
 
+/** Display -> Cartesian reciprocal space (see cartesianBasis()), with the cell angles drawn. */
+function displayBasis() {
+  const cell = meta.lattice && (settings.angles === 'nominal' ? nominalCell(meta.lattice) : meta.lattice);
+  return cartesianBasis(meta.dims, cell);
+}
+
 function update3D() {
   if (!view3d || !settings) return;
-  const cell = meta.lattice && (settings.angles === 'nominal' ? nominalCell(meta.lattice) : meta.lattice);
-  const { T } = cartesianBasis(meta.dims, cell);
+  const { T } = displayBasis();
   view3d.setFrame(T, meta.dims.map((d) => viewRange(d, settings.limit)), meta.dims.map((d) => d.label));
   const slices = panels.filter((p) => p.data).map((p) => {
     const X = meta.dims[p.x], Y = meta.dims[p.y], u = viewRange(X, settings.limit), v = viewRange(Y, settings.limit);
@@ -1954,7 +1959,7 @@ function update3D() {
   show3DCut();
 }
 
-/** The line cut in the 3-D view: its line through the slices and the box of voxels it averages. */
+/** The line cut in the 3-D view: its line through the slices, inside the rod of voxels it averages. */
 function show3DCut() {
   if (!view3d) return;
   const p = cutPanel();
@@ -1966,14 +1971,13 @@ function show3DCut() {
     view3d.setCut(null);
     return;
   }
-  const at = ([u, v], f) => { const out = [0, 0, 0]; out[p.fixed] = f; out[p.x] = u; out[p.y] = v; return out; };
-  const band = cutBand(spec), [lo, hi] = p.data.slab, { a, b } = spec;
-  // Where the cut passes through the other two slices, whose positions are coordinates of its plane.
+  const { a, b, dom, edges, radius } = spec, along = (s) => a.map((ad, d) => ad + ((s - a[dom]) / (b[dom] - a[dom])) * (b[d] - ad));
+  // Where the cut passes through the other two slices.
   const pierce = panels.filter((q) => q !== p && q.data).flatMap((q) => {
-    const d = q.fixed === p.x ? 0 : 1, t = (q.data.center - a[d]) / (b[d] - a[d]);
-    return t > 0 && t < 1 ? [{ at: at([a[0] + t * (b[0] - a[0]), a[1] + t * (b[1] - a[1])], spec.center), axis: q.fixed }] : [];
+    const d = q.fixed, t = (q.data.center - a[d]) / (b[d] - a[d]);
+    return t > 0 && t < 1 ? [{ at: a.map((ad, i) => ad + t * (b[i] - ad)), axis: d }] : [];
   });
-  view3d.setCut({ line: [at(a, spec.center), at(b, spec.center)], corners: [...band.map((c) => at(c, lo)), ...band.map((c) => at(c, hi))], pierce });
+  view3d.setCut({ line: [a, b], rod: [along(edges[0]), along(edges[edges.length - 1])], radius, pierce });
 }
 
 /**
@@ -2793,9 +2797,9 @@ function setupCut() {
         title="Where the cut starts (${labels}). From and To share one coordinate: the slice the cut lies in"></span>
     <span class="foot-group"><span class="label">To</span>
       <input class="cut-to cut-end mono" type="text" spellcheck="false" autocomplete="off" aria-label="Cut end" title="Where the cut ends (${labels})"></span>
-    <span class="foot-group grow"><span class="label" title="Full width of the band across the line whose voxels each point averages">W</span>
+    <span class="foot-group grow"><span class="label" title="Diameter of the rod around the line whose voxels each point averages">W</span>
       <input class="cut-wslider foot-grow" type="range" min="0" max="1000" aria-label="Cut width (log scale)">
-      <input class="cut-width num" type="number" min="0" step="any" aria-label="Cut width" title="Full width across the line; empty for three voxels">
+      <input class="cut-width num" type="number" min="0" step="any" aria-label="Cut width" title="Diameter of the rod around the line; empty for three voxels">
       <span class="unit cut-unit"></span></span>`;
   shell.section.append(foot);
   const q = shell.q;
@@ -2815,8 +2819,8 @@ function setupCut() {
       return { text: busy ? 'Computing the cut…' : failed || 'The cut appears here.', error: !busy && !!failed };
     },
     extras: (data) => {
-      const p = cutPanel(), { unit, scale } = cutWidthUnit(p), F = meta.dims[p.fixed];
-      return [`${F.label} = ${fmt(Number(p.center.value))}`, `W ${fmt(cutSpec().half * 2 * scale)} ${unit}`,
+      const p = cutPanel(), { unit, scale } = cutWidthUnit(), F = meta.dims[p.fixed];
+      return [`${F.label} = ${fmt(Number(p.center.value))}`, `W ${fmt(cutSpec().radius * 2 * scale)} ${unit}`,
         data.order > 1 ? data.symmetry : 'no symmetry', data.masked && mask ? `mask ${pct((mask.edge + mask.outlier) / mask.measured)}` : 'no mask'];
     },
     // The point: its coordinates, and I ± σ with the voxels pooled for each dataset.
@@ -2867,25 +2871,23 @@ function typedPositive(input) {
 }
 
 /**
- * How widths are given in slice p: in Å⁻¹ (with 2π) on a lattice plane and in
- * the axes' unit otherwise. `scale` turns the plane's lengths (planeGeometry())
- * into that unit, and `auto` is three voxels.
+ * How the cut's width W, the diameter of its rod, is given: in Å⁻¹ (with 2π)
+ * with a lattice and in the axes' unit otherwise. `scale` turns lengths in
+ * displayBasis() into that unit, and `auto` is three voxels across.
  */
-function cutWidthUnit(p) {
-  const g = geometry(p), scale = g.lattice ? 2 * Math.PI : 1, X = meta.dims[p.x], Y = meta.dims[p.y];
-  return { g, scale, unit: g.lattice ? 'Å⁻¹' : X.units || '', auto: sig(3 * Math.max(g.lx * binWidth(X), g.ly * binWidth(Y)) * scale) };
+function cutWidthUnit() {
+  const { T, lattice } = displayBasis(), scale = lattice ? 2 * Math.PI : 1, units = meta.dims[0].units;
+  const voxel = Math.max(...meta.dims.map((d, i) => binWidth(d) * Math.hypot(T[i], T[3 + i], T[6 + i])));
+  return { T, scale, unit: lattice ? 'Å⁻¹' : meta.dims.every((d) => d.units === units) ? units || '' : '', auto: sig(3 * voxel * scale) };
 }
 
-/** The cut's geometry for lineCut() (see cut.js); throws when its step or width cannot be read. */
+/** The cut's geometry for lineCut() (see cut.js), in display coordinates; throws when its step or width cannot be read. */
 function cutSpec() {
-  const p = cutPanel(), { a, b } = cut.line, dom = cutAxis(a, b);
-  const { g, scale, auto } = cutWidthUnit(p);
-  const step = typedPositive($('cut-step')) ?? binWidth(meta.dims[dom ? p.y : p.x]);
+  const a = cutPoint(cut.line.a), b = cutPoint(cut.line.b), dom = cutAxis(a, b);
+  const { T, scale, auto } = cutWidthUnit();
+  const step = typedPositive($('cut-step')) ?? binWidth(meta.dims[dom]);
   const width = typedPositive(cut.width) ?? auto;
-  return {
-    fixed: p.fixed, x: p.x, y: p.y, center: Number(p.center.value), thickness: Number(p.width.value), a, b, dom,
-    edges: cutEdges(a, b, dom, step), half: width / scale / 2, geometry: { lx: g.lx, ly: g.ly, cos: g.cos },
-  };
+  return { a, b, dom, edges: cutEdges(a, b, dom, step), radius: width / scale / 2, T };
 }
 
 /** The point of the cut's line (in its plane) where its axis has the value s. */
@@ -3022,14 +3024,14 @@ function typeCutEnds() {
 
 // The width slider sets W on a log scale, from half a voxel to 30 voxels.
 function widthRange() {
-  const { auto } = cutWidthUnit(cutPanel());
+  const { auto } = cutWidthUnit();
   return [auto / 6, auto * 10];
 }
 
 function syncWidthSlider() {
   cut.wslider.disabled = !cut.line;
   if (!cut.line) return;
-  const [lo, hi] = widthRange(), w = Number(cut.width.value) || cutWidthUnit(cutPanel()).auto;
+  const [lo, hi] = widthRange(), w = Number(cut.width.value) || cutWidthUnit().auto;
   cut.wslider.value = 1000 * clamp(Math.log(w / lo) / Math.log(hi / lo), 0, 1);
   paint(cut.wslider);
 }
@@ -3115,7 +3117,7 @@ function showCut() {
     cut.unit.textContent = '';
     return;
   }
-  const { unit, auto, scale } = cutWidthUnit(p), dom = cutAxis(cut.line.a, cut.line.b);
+  const { unit, auto, scale } = cutWidthUnit(), dom = cutAxis(cut.line.a, cut.line.b);
   cut.unit.textContent = unit;
   cut.width.placeholder = String(auto);
   $('cut-step').placeholder = String(sig(binWidth(meta.dims[dom ? p.y : p.x]), 3));
@@ -3123,7 +3125,7 @@ function showCut() {
   if (document.activeElement !== cut.to) cut.to.value = pointText(cutPoint(cut.line.b));
   const X = meta.dims[p.x], Y = meta.dims[p.y], F = meta.dims[p.fixed], d = cut.a.data, { path } = cutPath();
   let width = auto;
-  try { width = cutSpec().half * 2 * scale; } catch { /* the field says why */ }
+  try { width = cutSpec().radius * 2 * scale; } catch { /* the field says why */ }
   if (cut.a.busy || cut.b.busy) {
     cut.caption.textContent = 'computing…';
   } else if (cut.a.error || !d) {
@@ -3132,8 +3134,8 @@ function showCut() {
     cut.caption.textContent = `${X.label}${Y.label} · ${F.label} = ${fmt(Number(p.center.value))} · W ${fmt(width)} ${unit}`
       + `${d.order > 1 ? ` · ${d.symmetry}` : ''}${d.masked ? ' · masked' : ''}${d.removed ? ' · removed only' : ''}${d.errors ? ' · ±σ' : ''}`;
   }
-  cut.caption.title = `Along ${path} from (${cut.from.value}) to (${cut.to.value}), ${fmt(width)} ${unit} wide`
-    + `${d ? `, through ${F.label} ∈ [${fmt(d.slab[0])}, ${fmt(d.slab[1])}] (${d.bins} bin${d.bins === 1 ? '' : 's'}); ${d.intensity.length} points in ${d.seconds.toFixed(2)} s` : ''}`
+  cut.caption.title = `Along ${path} from (${cut.from.value}) to (${cut.to.value}), averaging a rod ${fmt(width)} ${unit} across`
+    + `${d ? `; ${d.intensity.length} points in ${d.seconds.toFixed(2)} s` : ''}`
     + `${compare?.ready && cut.b.error ? `\nB: ${cut.b.error}` : ''}`;
 }
 
@@ -3142,14 +3144,14 @@ function drawCutOverlay(c, p, corners) {
   if (cutPanel() !== p || !(plotShown(cut) || clickMode === 'cut')) return;
   let spec;
   try { spec = cutSpec(); } catch { return; }
-  const [A, B] = [spec.a, spec.b].map(([u, v]) => p.project(u, v));
+  const [A, B] = [cut.line.a, cut.line.b].map(([u, v]) => p.project(u, v));
   c.save();
   c.beginPath();
   corners.forEach(([x, y], i) => (i ? c.lineTo(x, y) : c.moveTo(x, y)));
   c.closePath();
   c.clip();
   c.beginPath();
-  cutBand(spec).map(([u, v]) => p.project(u, v)).forEach(([x, y], i) => (i ? c.lineTo(x, y) : c.moveTo(x, y)));
+  cutBand(spec, p.fixed).map((pt) => p.project(pt[p.x], pt[p.y])).forEach(([x, y], i) => (i ? c.lineTo(x, y) : c.moveTo(x, y)));
   c.closePath();
   c.fillStyle = 'rgba(255, 255, 255, 0.16)';
   c.fill();
@@ -3233,15 +3235,15 @@ function cutCSV() {
 /** The cut as text: a commented header, then per point its position, coordinates, and I, σ and voxels of each dataset. */
 function cutText() {
   const { sets, data, rows, values } = cutTable();
-  const both = sets.length > 1, p = cutPanel(), spec = cutSpec(), { axis, path } = cutPath(), { unit, scale } = cutWidthUnit(p);
+  const both = sets.length > 1, p = cutPanel(), spec = cutSpec(), { axis, path } = cutPath(), { unit, scale } = cutWidthUnit();
   const X = meta.dims[p.x], Y = meta.dims[p.y], F = meta.dims[p.fixed], step = (data.edges[data.edges.length - 1] - data.edges[0]) / data.intensity.length;
   const num = (x) => (Number.isFinite(x) ? String(Number(x.toPrecision(7))) : 'nan');
   const lines = [
     `# Line cut along ${path} of ${sets.map(([k, name]) => (both ? `${k} = ${name}` : name)).join(' and ')}`,
     `# Written by NeXus Viewer (https://drthyang.github.io/neutron-nexus-viewer/) on ${new Date().toISOString()}`,
-    `# From (${pointText(cutPoint(spec.a))}) to (${pointText(cutPoint(spec.b))}) in the ${X.label}-${Y.label} slice, ${F.label} in [${num(data.slab[0])}, ${num(data.slab[1])}] (${data.bins} bins)`,
-    `# Points every ${num(step)} in ${axis.label}; each averages the voxels whose centres lie within ${num(spec.half * scale)} ${unit || 'units'} of the line`,
-    `#   (full width ${num(2 * spec.half * scale)}) and project within ±${num(step / 2)} ${axis.label} of the point.`,
+    `# From (${pointText(spec.a)}) to (${pointText(spec.b)}), drawn in the ${X.label}-${Y.label} slice at ${F.label} = ${num(spec.a[p.fixed])}`,
+    `# Points every ${num(step)} in ${axis.label}; each averages the voxels whose centres lie in a rod of diameter ${num(2 * spec.radius * scale)} ${unit || 'units'}`,
+    `#   around the line (within ${num(spec.radius * scale)} of it, in any direction across it) and project within ±${num(step / 2)} ${axis.label} of the point.`,
     `# Symmetry: ${symmetry.ops.length > 1 ? `${symmetry.name} (${symmetry.ops.length} operations), equivalent voxels pooled` : 'none'}`,
     `# Mask: ${mask ? `coverage-edge erosion ${mask.radius}${mask.k ? `, outlier cut ${mask.k} sigma` : ''}${both ? ', built for each dataset' : ''}` : 'none'}${data.removed ? ' (removed voxels only)' : ''}`,
     '# I: the equal-weight mean of the distinct measured, unmasked voxels in the union of the symmetry orbits of the voxels at the point, as in the slices',

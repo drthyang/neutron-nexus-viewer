@@ -1,13 +1,14 @@
-// Line cuts: the 1-D profile of the volume along a line in a slice plane.
+// Line cuts: the 1-D profile of the volume along a line, averaged over a rod.
 //
-// A cut runs from a to b in the plane of the slice through display dims x and y,
-// within the slab of that slice (the bins of dim `fixed` whose centres lie within
-// thickness/2 of `center`). It is binned along its dominant axis `dom` (0: the
-// plane's x axis, 1: its y axis), the one it changes more along, so its points
-// are values of that coordinate: bin k is centred at a[dom] + k step. A voxel
-// belongs to the bin its centre projects into, if the centre lies within `half`
-// of the line, measured across it in the plane's Cartesian metric
-// (planeGeometry(): lengths lx and ly per unit coordinate, cos of their angle).
+// A cut runs from a to b in display coordinates (it is drawn in a slice, so it
+// lies in that slice's plane). It is binned along its dominant axis `dom`, the
+// display axis it changes most along, so its points are values of that
+// coordinate: bin k is centred at a[dom] + k step. A voxel belongs to bin k when
+// its centre lies within `radius` of the line, inside a rod around it, and
+// projects onto the line within step/2 of the bin centre. Distances are measured
+// in reciprocal space, x -> T x with T the display->Cartesian matrix (row-major,
+// see cartesianBasis()), so the rod is round across the line whatever the
+// lattice, and its width is the same in every direction across it.
 //
 // As in the slices, each bin is the equal-weight mean of the unique finite,
 // unmasked voxels in the union of the symmetry orbits of the voxels in it. With
@@ -17,10 +18,10 @@
 // dimension d lives on storage axis 2 - d, and symmetry maps are integer affine
 // maps i' = M i + t on display-dimension bin indices (from indexMaps()).
 
-import { IDENTITY_MAP, selectBins } from './slab.js';
+import { IDENTITY_MAP } from './slab.js';
 
-/** The axis a cut from a to b (in-plane coordinates) is binned along: 0 (x) or 1 (y). */
-export const cutAxis = (a, b) => (Math.abs(b[1] - a[1]) > Math.abs(b[0] - a[0]) ? 1 : 0);
+/** The axis a cut from a to b changes most along (the first of equals), for points of any dimension. */
+export const cutAxis = (a, b) => a.reduce((best, _, d) => (Math.abs(b[d] - a[d]) > Math.abs(b[best] - a[best]) ? d : best), 0);
 
 /**
  * Bin edges of a cut along its dominant axis: bins of width `step` centred on
@@ -33,83 +34,87 @@ export function cutEdges(a, b, dom, step, maxBins = 20000) {
   return Float64Array.from({ length: count + 1 }, (_, k) => a[dom] + (k - 0.5) * step);
 }
 
-/**
- * The plane's Cartesian metric: `cart` maps plane coordinates (u, v) to lengths,
- * `plane` maps back. Lengths per unit coordinate lx and ly, cos of their angle.
- */
-function metric({ lx, ly, cos }) {
-  const sin = Math.sqrt(Math.max(0, 1 - cos * cos));
-  return {
-    cart: (u, v) => [lx * u + ly * cos * v, ly * sin * v],
-    plane: (X, Y) => { const v = Y / (ly * sin); return [(X - ly * cos * v) / lx, v]; },
-  };
+const apply = (T, x) => [0, 1, 2].map((i) => T[3 * i] * x[0] + T[3 * i + 1] * x[1] + T[3 * i + 2] * x[2]);
+
+/** Inverse of a row-major 3×3 matrix. */
+function inverse(T) {
+  const [a, b, c, d, e, f, g, h, i] = T;
+  const A = e * i - f * h, B = f * g - d * i, C = d * h - e * g, det = a * A + b * B + c * C;
+  return [A, c * h - b * i, b * f - c * e, B, a * i - c * g, c * d - a * f, C, b * g - a * h, a * e - b * d].map((v) => v / det);
 }
 
 /**
- * The corners of a cut's band in plane coordinates: along the line from its
- * first bin edge to its last, `half` to either side, in drawing order.
+ * The axis of a cut's rod: its start A and unit direction in reciprocal space,
+ * the change of its axis coordinate per unit length (`rate`), and the display
+ * point at a value s of that coordinate.
  */
-export function cutBand({ a, b, dom, edges, half, geometry }) {
-  const { cart, plane } = metric(geometry);
-  const [ax, ay] = cart(a[0], a[1]), [bx, by] = cart(b[0], b[1]);
-  const length = Math.hypot(bx - ax, by - ay), tx = (bx - ax) / length, ty = (by - ay) / length;
-  const rate = (b[dom] - a[dom]) / length, t0 = (edges[0] - a[dom]) / rate, t1 = (edges[edges.length - 1] - a[dom]) / rate;
-  return [[t0, -half], [t1, -half], [t1, half], [t0, half]].map(([t, side]) => plane(ax + t * tx - side * ty, ay + t * ty + side * tx));
+function rodAxis({ a, b, dom, T }) {
+  const A = apply(T, a), B = apply(T, b), D = B.map((v, i) => v - A[i]), length = Math.hypot(...D);
+  if (!(length > 0)) throw new Error('The cut has no length.');
+  const rate = (b[dom] - a[dom]) / length;
+  if (!(rate > 0)) throw new Error('A cut must run toward larger values of its axis.');
+  const at = (s) => a.map((ad, d) => ad + ((s - a[dom]) / (b[dom] - a[dom])) * (b[d] - ad));
+  return { A, dir: D.map((v) => v / length), rate, at };
 }
 
 /**
- * The line cut `cut` = { fixed, x, y, center, thickness, a, b, dom, edges, half,
- * geometry: { lx, ly, cos } } of `volume`, whose axes are `dims`. Returns per
- * bin the intensity, σ (NaN without variances) and the number of distinct voxels
- * with data, and the number of slab bins used.
+ * Where a cut's rod meets the plane through its line normal to display axis
+ * `fixed` (its slice): the corners of that band, along the line from its first
+ * bin edge to its last and `radius` to either side, in display coordinates and
+ * drawing order.
+ */
+export function cutBand(cut, fixed) {
+  const { a, dom, edges, radius, T } = cut, { A, dir, rate } = rodAxis(cut), Ti = inverse(T);
+  // Across the line within the plane: normal to the line and to the gradient of the fixed coordinate.
+  const g = [Ti[3 * fixed], Ti[3 * fixed + 1], Ti[3 * fixed + 2]];
+  const cross = [g[1] * dir[2] - g[2] * dir[1], g[2] * dir[0] - g[0] * dir[2], g[0] * dir[1] - g[1] * dir[0]];
+  const size = Math.hypot(...cross), across = cross.map((v) => v / size);
+  const t0 = (edges[0] - a[dom]) / rate, t1 = (edges[edges.length - 1] - a[dom]) / rate;
+  return [[t0, -radius], [t1, -radius], [t1, radius], [t0, radius]]
+    .map(([t, side]) => apply(Ti, A.map((v, i) => v + t * dir[i] + side * across[i])));
+}
+
+/**
+ * The line cut `cut` = { a, b, dom, edges, radius, T } of `volume`, whose axes
+ * are `dims`. Returns per bin the intensity, σ (NaN without variances) and the
+ * number of distinct voxels with data.
  */
 export function lineCut(volume, shape, dims, cut, maps = [IDENTITY_MAP], mask = null, invert = false, variance = null) {
-  const { fixed, x, y, center, thickness, a, b, dom, edges, half } = cut;
-  const ids = selectBins(dims[fixed].edges, center, thickness);
-  if (!ids.length) throw new Error('No bins selected: increase the thickness or move the center.');
+  const { a, dom, edges, radius, T } = cut, { A, dir, rate, at } = rodAxis(cut), Ti = inverse(T);
   const n = [shape[2], shape[1], shape[0]], strides = [1, n[0], n[0] * n[1]];
-  const { cart } = metric(cut.geometry);
-  const [ax, ay] = cart(a[0], a[1]), [bx, by] = cart(b[0], b[1]);
-  const length = Math.hypot(bx - ax, by - ay);
-  if (!(length > 0)) throw new Error('The cut has no length.');
-  const tx = (bx - ax) / length, ty = (by - ay) / length;
-  const count = edges.length - 1, step = (edges[count] - edges[0]) / count, rate = (b[dom] - a[dom]) / length;
-  if (!(rate > 0)) throw new Error('A cut must run toward larger values of its axis.');
-
-  // Bin centres along each in-plane axis (uniform bins), and the range of each
-  // that the band covers: its corners, one bin wider.
-  const axis = (d) => {
+  const count = edges.length - 1, step = (edges[count] - edges[0]) / count;
+  // The voxels to test: the box around the rod's axis, from its first bin edge
+  // to its last, widened on each display axis by how far the radius reaches
+  // along it (the radius times that coordinate's gradient), and one bin more.
+  const [p0, p1] = [at(edges[0]), at(edges[count])];
+  const axes = [0, 1, 2].map((d) => {
     const e = dims[d].edges, w = (e[e.length - 1] - e[0]) / (e.length - 1);
-    return { e0: e[0], w, count: e.length - 1 };
-  };
-  const U = axis(x), V = axis(y), corners = cutBand(cut);
-  const span = ({ e0, w, count: m }, values) => [
-    Math.max(0, Math.floor((Math.min(...values) - e0) / w) - 1),
-    Math.min(m - 1, Math.floor((Math.max(...values) - e0) / w) + 1),
-  ];
-  const [i0, i1] = span(U, corners.map((c) => c[0])), [j0, j1] = span(V, corners.map((c) => c[1]));
+    const reach = radius * Math.hypot(Ti[3 * d], Ti[3 * d + 1], Ti[3 * d + 2]);
+    return {
+      e0: e[0], w,
+      lo: Math.max(0, Math.floor((Math.min(p0[d], p1[d]) - reach - e[0]) / w) - 1),
+      hi: Math.min(n[d] - 1, Math.floor((Math.max(p0[d], p1[d]) + reach - e[0]) / w) + 1),
+    };
+  });
 
-  const Ng = maps.length, img = [0, 0, 0], p = [0, 0, 0];
+  const Ng = maps.length, img = [0, 0, 0], p = [0, 0, 0], x = [0, 0, 0];
   const total = new Float64Array(count), valid = new Float64Array(count), spread = new Float64Array(count);
   const seen = Array.from({ length: count }, () => new Set());
-  const tolerance = 1e-9 * Math.max(1, half);
-  for (const k0 of ids) {
-    p[fixed] = k0;
-    for (let j = j0; j <= j1; j++) {
-      p[y] = j;
-      const v = V.e0 + (j + 0.5) * V.w;
-      for (let i = i0; i <= i1; i++) {
-        const u = U.e0 + (i + 0.5) * U.w;
-        const [X, Y] = cart(u, v), rx = X - ax, ry = Y - ay;
-        if (Math.abs(ry * tx - rx * ty) > half + tolerance) continue;
-        const k = Math.floor((a[dom] + (rx * tx + ry * ty) * rate - edges[0]) / step + 1e-9);
+  const reach2 = (radius * (1 + 1e-9)) ** 2 + 1e-18;
+  for (p[2] = axes[2].lo; p[2] <= axes[2].hi; p[2]++) {
+    for (p[1] = axes[1].lo; p[1] <= axes[1].hi; p[1]++) {
+      for (p[0] = axes[0].lo; p[0] <= axes[0].hi; p[0]++) {
+        for (let d = 0; d < 3; d++) x[d] = axes[d].e0 + (p[d] + 0.5) * axes[d].w;
+        const X = apply(T, x), r = X.map((v, i) => v - A[i]);
+        const t = r[0] * dir[0] + r[1] * dir[1] + r[2] * dir[2];
+        if (r[0] * r[0] + r[1] * r[1] + r[2] * r[2] - t * t > reach2) continue;
+        const k = Math.floor((a[dom] + t * rate - edges[0]) / step + 1e-9);
         if (k < 0 || k >= count) continue;
-        p[x] = i;
         // The voxel's orbit: its smallest in-range flat index names it, and every
         // distinct member appears |stabilizer| times among the group images.
         let rep = Infinity, stab = 0, sum = 0, n0 = 0, var0 = 0;
-        for (const { M, t } of maps) {
-          for (let r = 0; r < 3; r++) img[r] = M[3 * r] * p[0] + M[3 * r + 1] * p[1] + M[3 * r + 2] * p[2] + t[r];
+        for (const { M, t: shift } of maps) {
+          for (let i = 0; i < 3; i++) img[i] = M[3 * i] * p[0] + M[3 * i + 1] * p[1] + M[3 * i + 2] * p[2] + shift[i];
           if (img[0] === p[0] && img[1] === p[1] && img[2] === p[2]) stab++;
           if (img[0] < 0 || img[1] < 0 || img[2] < 0 || img[0] >= n[0] || img[1] >= n[1] || img[2] >= n[2]) continue;
           const f = img[0] + img[1] * strides[1] + img[2] * strides[2];
@@ -137,5 +142,5 @@ export function lineCut(volume, shape, dims, cut, maps = [IDENTITY_MAP], mask = 
     intensity[k] = valid[k] ? total[k] / valid[k] : NaN;
     sigma[k] = valid[k] && variance ? Math.sqrt(spread[k]) / valid[k] : NaN;
   }
-  return { edges: Float64Array.from(edges), intensity, sigma, voxels, bins: ids.length, slab: [dims[fixed].edges[ids[0]], dims[fixed].edges[ids.at(-1) + 1]] };
+  return { edges: Float64Array.from(edges), intensity, sigma, voxels };
 }

@@ -203,11 +203,11 @@ export class View3D {
   }
 
   /**
-   * The line cut: `line`, its two ends, `corners`, the box of voxels it
-   * averages (its band at the low then the high edge of the slab, in order
-   * around the band), and `pierce`, where it passes through the other slices
-   * ({ at, axis }: a point, and the display axis normal to that slice), all in
-   * display coordinates; null hides it.
+   * The line cut: `line`, its two ends, `rod`, the ends of the rod of voxels it
+   * averages (its first and last bin edges on the line), and `pierce`, where it
+   * passes through the other slices ({ at, axis }: a point, and the display axis
+   * normal to that slice), all in display coordinates, and `radius`, the rod's
+   * radius in Cartesian units; null hides it.
    */
   setCut(cut) {
     if (cut && !this.T) return; // no frame yet
@@ -225,9 +225,11 @@ export class View3D {
       const ghost = () => new THREE.MeshBasicMaterial({ color: CUT_COLOR, transparent: true, opacity: 0.28, depthTest: false, depthWrite: false });
       // Built in Cartesian space, so they stay round under the lattice shear.
       const rod = new THREE.CylinderGeometry(1, 1, 1, 20), end = new THREE.SphereGeometry(1, 20, 14);
+      // The rod of voxels it averages: an open translucent tube with its end circles outlined.
+      const tube = new THREE.CylinderGeometry(1, 1, 1, 48, 1, true);
       this.cut = {
-        box: shape(new THREE.BufferGeometry(), new THREE.MeshBasicMaterial({ color: CUT_COLOR, transparent: true, opacity: 0.16, depthWrite: false, side: THREE.DoubleSide })),
-        edges: new THREE.LineSegments(new THREE.BufferGeometry(), new THREE.LineBasicMaterial({ color: CUT_COLOR, transparent: true, opacity: 0.55, clippingPlanes: this.clipping ?? [] })),
+        sleeve: shape(tube, new THREE.MeshBasicMaterial({ color: CUT_COLOR, transparent: true, opacity: 0.22, depthWrite: false, side: THREE.DoubleSide })),
+        rims: new THREE.LineSegments(new THREE.EdgesGeometry(tube, 15), new THREE.LineBasicMaterial({ color: CUT_COLOR, transparent: true, opacity: 0.6, clippingPlanes: this.clipping ?? [] })),
         rods: [shape(rod, solid()), shape(rod, ghost(), 10)],
         ends: [shape(end, solid()), shape(end, solid()), shape(end, ghost(), 10), shape(end, ghost(), 10)],
         // A collar where the rod passes through another slice, lifted off the plane so it does not flicker.
@@ -235,32 +237,21 @@ export class View3D {
           color: 0xffffff, side: THREE.DoubleSide, polygonOffset: true, polygonOffsetFactor: -4, polygonOffsetUnits: -4,
         }))),
       };
-      this.world.add(this.cut.box, this.cut.edges);
-      this.scene.add(...this.cut.rods, ...this.cut.ends, ...this.cut.collars);
+      this.scene.add(this.cut.sleeve, this.cut.rims, ...this.cut.rods, ...this.cut.ends, ...this.cut.collars);
     }
     for (const part of this.cutParts()) part.visible = !!cut;
     if (cut) {
-      const { box, edges, rods, ends } = this.cut, positions = cut.corners.flat();
-      const faces = [0, 1, 2, 0, 2, 3, 4, 5, 6, 4, 6, 7];
-      const lines = [];
-      for (let i = 0; i < 4; i++) {
-        const j = (i + 1) % 4;
-        faces.push(i, j, j + 4, i, j + 4, i + 4);
-        lines.push(i, j, i + 4, j + 4, i, i + 4);
-      }
-      box.geometry.dispose();
-      box.geometry = new THREE.BufferGeometry();
-      box.geometry.setAttribute('position', new THREE.Float32BufferAttribute(positions, 3));
-      box.geometry.setIndex(faces);
-      edges.geometry.dispose();
-      edges.geometry = new THREE.BufferGeometry();
-      edges.geometry.setAttribute('position', new THREE.Float32BufferAttribute(lines.flatMap((i) => cut.corners[i]), 3));
-      const [a, b] = cut.line.map((p) => this.toCartesian(p)), r = this.radius * 0.006;
-      for (const rod of rods) {
-        rod.position.copy(a).add(b).multiplyScalar(0.5);
-        rod.scale.set(r, a.distanceTo(b), r);
-        rod.quaternion.setFromUnitVectors(new THREE.Vector3(0, 1, 0), b.clone().sub(a).normalize());
-      }
+      const { sleeve, rims, rods, ends } = this.cut;
+      // A unit cylinder along y, stretched between two Cartesian points with the given radius.
+      const span = (mesh, from, to, radius) => {
+        mesh.position.copy(from).add(to).multiplyScalar(0.5);
+        mesh.scale.set(radius, from.distanceTo(to), radius);
+        mesh.quaternion.setFromUnitVectors(new THREE.Vector3(0, 1, 0), to.clone().sub(from).normalize());
+      };
+      const [a, b] = cut.line.map((p) => this.toCartesian(p)), [s0, s1] = cut.rod.map((p) => this.toCartesian(p));
+      const r = this.radius * 0.006;
+      for (const part of [sleeve, rims]) span(part, s0, s1, cut.radius);
+      for (const rod of rods) span(rod, a, b, r);
       ends.forEach((end, i) => { end.position.copy(i % 2 ? b : a); end.scale.setScalar(2.2 * r); });
       // Each collar lies in its slice: its normal is the gradient of that display coordinate.
       const inv = new THREE.Matrix3().set(...this.T).invert().elements; // column-major
@@ -278,7 +269,7 @@ export class View3D {
   }
 
   cutParts() {
-    return this.cut ? [this.cut.box, this.cut.edges, ...this.cut.rods, ...this.cut.ends, ...this.cut.collars] : [];
+    return this.cut ? [this.cut.sleeve, this.cut.rims, ...this.cut.rods, ...this.cut.ends, ...this.cut.collars] : [];
   }
 
   resize() {
