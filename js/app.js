@@ -45,8 +45,11 @@ let pendingProcessing = null;
 const DEMO = { url: 'examples/demo_300K.nxs', compare: 'examples/demo_10K.nxs', sym: '6/mmm', mask: '1' };
 // True while the color range is the automatic one (not edited by hand).
 let rangeIsAuto = false;
-// The export for NEBULA3D in progress: { name }.
-let exportJob = null;
+// The export for NEBULA3D being built: { name, send, attrs }. `handoff` is the
+// NEBULA3D tab it is sent to (Open in NEBULA3D): { id, win, origin, ready, file, sent }.
+let exportJob = null, handoff = null;
+// ?nebula3d= points Open in NEBULA3D at another deployment (a local dev server).
+const NEBULA3D_URL = new URLSearchParams(location.search).get('nebula3d') || 'https://drthyang.github.io/nebula3d/';
 const newLayer = () => ({ data: null, version: 0, busy: false, wanted: null, image: null, imageKey: null, error: '' });
 const compareShown = () => (compare?.ready ? compareView : null);
 
@@ -369,11 +372,19 @@ const handlers = {
   'mask-file': ({ blob }) => download(blob, `${stem()}_mask.npy.gz`),
   'progress-export': ({ label, fraction }) => showExportProgress(label, fraction),
   'export-file': ({ blob, stats, seconds }) => {
-    const { name } = exportJob;
+    const { name, send, attrs } = exportJob;
     exportJob = null;
-    download(blob, name);
     status('ok', 'ready');
     showExport();
+    if (send) {
+      if (!handoff) return; // the NEBULA3D tab was closed meanwhile
+      handoff.file = new File([blob], name, { type: 'application/x-hdf5' });
+      handoff.meta = attrs;
+      exportNote('busy', 'sending…', `Built ${name} (${mb(blob.size)}); waiting for NEBULA3D to start…`);
+      sendHandoff();
+      return;
+    }
+    download(blob, name);
     $('export-state').textContent = 'saved';
     $('export-state').className = 'state ok';
     $('export-status').className = 'note ok';
@@ -381,6 +392,7 @@ const handlers = {
       + 'In NEBULA3D, open it with Load volume…';
   },
   'export-error': ({ message }) => {
+    if (exportJob?.send) endHandoff(`the viewer could not build the volume: ${message}`);
     exportJob = null;
     status('ok', 'ready');
     showExport();
@@ -1398,14 +1410,14 @@ function showExport() {
   try {
     plan = exportPlan(meta.dims, meta.lattice);
   } catch (err) {
-    $('export-run').disabled = true;
+    $('export-run').disabled = $('export-open').disabled = true;
     state.textContent = 'unavailable';
     state.className = 'state';
     statusEl.className = 'note error';
     statusEl.textContent = err.message;
     return;
   }
-  $('export-run').disabled = false;
+  $('export-run').disabled = $('export-open').disabled = false;
   state.textContent = '3D-ΔPDF';
   state.className = 'state';
   const sym = symmetry.ops.length > 1, voxels = plan.shape.reduce((a, b) => a * b);
@@ -1429,8 +1441,9 @@ function showExportProgress(label, fraction) {
   $('export-status').textContent = `${label}… ${Math.round(100 * fraction)}%`;
 }
 
-function runExport() {
-  if (!panels.length || exportJob) return;
+/** Build the export in the worker: downloaded when done, or sent to NEBULA3D (`send`). */
+function runExport(send = false) {
+  if (!panels.length || exportJob) return false;
   let plan, maps;
   try {
     plan = exportPlan(meta.dims, meta.lattice);
@@ -1438,30 +1451,102 @@ function runExport() {
   } catch (err) {
     $('export-status').className = 'note error';
     $('export-status').textContent = err.message;
-    return;
+    return false;
   }
-  const sym = symmetry.ops.length > 1;
-  exportJob = { name: `${stem()}_${sym ? `sym${symmetry.name.replace(/\//g, '')}` : 'unsym'}.nxs` };
-  $('export-run').disabled = true;
+  const sym = symmetry.ops.length > 1, { order, lo, size, shape, centers, ub, padded } = plan;
+  const attrs = {
+    source_file: sourceName,
+    symmetry: sym ? symmetry.name : 'none',
+    symmetry_ops: symmetry.ops.map(formatOp).join('; '),
+    mask: mask ? `coverage-edge erosion ${mask.radius}, outlier cut ${mask.k} sigma, ${pct((mask.edge + mask.outlier) / mask.measured)} of measured voxels removed` : 'none',
+    ub_source: meta.lattice.source,
+    padded: padded ? 'yes' : 'no',
+    created_by: 'NeXus Viewer, https://drthyang.github.io/neutron-nexus-viewer/',
+    created: new Date().toISOString(),
+  };
+  exportJob = { name: `${stem()}_${sym ? `sym${symmetry.name.replace(/\//g, '')}` : 'unsym'}.nxs`, send, attrs };
+  $('export-run').disabled = $('export-open').disabled = true;
   $('export-state').textContent = 'working…';
   $('export-state').className = 'state busy';
   status('busy', 'exporting');
   showExportProgress('Symmetrizing', 0);
-  const { order, lo, size, shape, centers, ub, padded } = plan;
-  worker.postMessage({
-    type: 'export', id: ++requestId, plan: { order, lo, size, shape, centers, ub }, maps,
-    attrs: {
-      source_file: sourceName,
-      symmetry: sym ? symmetry.name : 'none',
-      symmetry_ops: symmetry.ops.map(formatOp).join('; '),
-      mask: mask ? `coverage-edge erosion ${mask.radius}, outlier cut ${mask.k} sigma, ${pct((mask.edge + mask.outlier) / mask.measured)} of measured voxels removed` : 'none',
-      ub_source: meta.lattice.source,
-      padded: padded ? 'yes' : 'no',
-      created_by: 'NeXus Viewer, https://drthyang.github.io/neutron-nexus-viewer/',
-      created: new Date().toISOString(),
-    },
-  });
+  worker.postMessage({ type: 'export', id: ++requestId, plan: { order, lo, size, shape, centers, ub }, maps, attrs });
+  return true;
 }
+
+function exportNote(kind, state, text) {
+  $('export-state').textContent = state;
+  $('export-state').className = `state ${kind}`;
+  $('export-status').className = `note${kind === 'ok' ? ' ok' : kind === 'error' ? ' error' : ''}`;
+  $('export-status').textContent = text;
+}
+
+/**
+ * Open in NEBULA3D: open its page in a new tab (now, while this is a click),
+ * build the volume meanwhile, and post the file once NEBULA3D says it is
+ * ready. The protocol is described in NEBULA3D's web/src/api/importHandoff.ts.
+ */
+function openInNebula() {
+  if (!panels.length || exportJob) return;
+  const url = new URL(NEBULA3D_URL, location.href), id = crypto.randomUUID();
+  url.searchParams.set('import', 'nexus-viewer');
+  url.searchParams.set('id', id);
+  url.searchParams.set('from', location.origin);
+  const win = window.open(url.href, '_blank');
+  if (!win) {
+    exportNote('error', 'blocked', 'The browser blocked the new tab: allow pop-ups for this site, or use Download.');
+    return;
+  }
+  endHandoff();
+  handoff = { id, win, origin: url.origin, ready: false, file: null, meta: null, sent: false, since: Date.now() };
+  handoff.watch = setInterval(watchHandoff, 1000);
+  if (!runExport(true)) endHandoff('the volume could not be built.');
+}
+
+function sendHandoff() {
+  const h = handoff;
+  if (!h?.ready || !h.file || h.sent) return;
+  h.sent = true;
+  h.win.postMessage({ type: 'nebula3d-import', id: h.id, schema: 'nexus-viewer/1', file: h.file, meta: h.meta }, h.origin);
+  exportNote('busy', 'sending…', `Sent ${h.file.name} to NEBULA3D; loading it there…`);
+}
+
+/** Stop the handoff; with a `reason`, tell NEBULA3D (so it stops waiting) and show it. */
+function endHandoff(reason = null) {
+  const h = handoff;
+  handoff = null;
+  if (!h) return;
+  clearInterval(h.watch);
+  if (reason) {
+    try { h.win.postMessage({ type: 'nebula3d-import-cancel', id: h.id, message: reason }, h.origin); } catch { /* tab gone */ }
+    exportNote('error', 'not sent', `Not sent to NEBULA3D: ${reason}`);
+  }
+}
+
+function watchHandoff() {
+  const h = handoff;
+  if (!h) return;
+  if (h.win.closed) endHandoff('the NEBULA3D tab was closed.');
+  else if (!h.ready && h.file && Date.now() - h.since > 120_000) {
+    exportNote('error', 'no answer', 'NEBULA3D has not answered after 2 minutes. Check its tab, or use Download and Load volume… there.');
+  }
+}
+
+addEventListener('message', (e) => {
+  const h = handoff;
+  if (!h || e.source !== h.win || e.origin !== h.origin || e.data?.id !== h.id) return;
+  if (e.data.type === 'nebula3d-import-ready') {
+    h.ready = true;
+    sendHandoff();
+  } else if (e.data.type === 'nebula3d-import-loaded') {
+    const name = h.file?.name ?? 'the volume';
+    endHandoff();
+    exportNote('ok', 'sent', `NEBULA3D loaded ${name} and selected it as its dataset; continue in its tab.`);
+  } else if (e.data.type === 'nebula3d-import-error') {
+    endHandoff();
+    exportNote('error', 'failed', `NEBULA3D could not load the volume: ${e.data.message}`);
+  }
+});
 
 // ---- 3-D view ---------------------------------------------------------------------------
 
@@ -1902,7 +1987,8 @@ $('mask-clear').onclick = () => applyMask(true);
 for (const id of ['mask-erode', 'mask-k']) $(id).onkeydown = (e) => { if (e.key === 'Enter') applyMask(); };
 $('mask-removed').onchange = () => { updateStates(); panels.forEach(request); };
 $('mask-download').onclick = () => worker.postMessage({ type: 'mask-download' });
-$('export-run').onclick = runExport;
+$('export-run').onclick = () => runExport();
+$('export-open').onclick = openInNebula;
 
 // Dropping a file opens it, or opens it as dataset B over the Compare card or the B button.
 const dropsOnB = (e) => panels.length > 0 && !!e.target.closest?.('#compare, #compare-button, #data-files');

@@ -518,10 +518,10 @@ body.dragging.drop-b::after { content: "Drop to compare as dataset B"; }
             <svg width="16" height="16" viewBox="0 0 18 18" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M9 11V2.5M5.5 6 9 2.5 12.5 6"/><path d="M3 10.5v3.5a1.5 1.5 0 0 0 1.5 1.5h9a1.5 1.5 0 0 0 1.5-1.5v-3.5"/></svg>
             <span class="sub-title">Export for NEBULA3D</span><span id="export-state" class="state">3D-ΔPDF</span>
           </div>
-          <p class="sub-hint">Saves the masked, symmetrized volume as an input file for NEBULA3D's 3D-ΔPDF pipeline.</p>
+          <p class="sub-hint">Sends the masked, symmetrized volume to NEBULA3D's 3D-ΔPDF pipeline in a new tab, or saves it as a file.</p>
           <p id="export-status" class="note"></p>
           <div id="export-progress" class="boot-bar" hidden><div id="export-bar" class="boot-fill"></div></div>
-          <span class="inline"><button id="export-run" class="btn btn-primary" type="button" style="flex: 1">Export volume</button><a class="btn btn-ghost" href="https://drthyang.github.io/nebula3d/" target="_blank" rel="noopener noreferrer" title="Open NEBULA3D; load the file there with Load volume…">Open NEBULA3D ↗</a></span>
+          <span class="inline"><button id="export-open" class="btn btn-primary" type="button" style="flex: 1" title="Open NEBULA3D in a new tab and load this volume there">Open in NEBULA3D ↗</button><button id="export-run" class="btn btn-ghost" type="button" title="Save the file, to load it in NEBULA3D with Load volume…">Download</button></span>
         </div>
       </div>
     </section>

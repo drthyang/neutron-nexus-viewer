@@ -39,7 +39,7 @@ short-range-order diffuse scattering condenses into superlattice peaks.
 | **Artifact masking** | Removes detector-edge voxels and symmetry outliers before averaging; preview what is removed and export the mask as a NumPy array | [Masking](docs/METHOD.md#masking-detector-edge-artifacts) |
 | **Two-dataset comparison** | A second file, such as another temperature, splits every slice along its diagonal, with shared positions, processing and color scale; hover reads both values | [Comparing](docs/USER_GUIDE.md#comparing-two-datasets) |
 | **3-D view** | A transparent isosurface of the processed volume, with the current slices as planes | [3-D view](docs/USER_GUIDE.md#3-d-view) |
-| **Export to NEBULA3D** | The masked, symmetrized volume as an input file for [NEBULA3D](https://github.com/drthyang/nebula3d)'s 3D-ΔPDF pipeline, padded to be symmetric about Q = 0 | [Export](docs/USER_GUIDE.md#export-for-nebula3d) |
+| **Hand-off to NEBULA3D** | One click sends the masked, symmetrized volume to [NEBULA3D](https://github.com/drthyang/nebula3d)'s 3D-ΔPDF pipeline in a new tab, or saves it as a file | [Export](docs/USER_GUIDE.md#export-for-nebula3d) |
 | **Files and links** | Mantid `MDHistoWorkspace` (`SaveMD`) and any 3-D `NXdata`; local files or links that open a file, a comparison, symmetry and mask; PNG export with a colorbar | [Opening data](docs/USER_GUIDE.md#opening-data) |
 
 ## Quick start
@@ -50,8 +50,9 @@ short-range-order diffuse scattering condenses into superlattice peaks.
 3. Click a slice to move the other two through that point. Switch the header to
    **Zoom** or **Move** to explore, and **Focus** to show one view large.
 4. To compare, open a second file under **Dataset → Compare two datasets**.
-5. For a 3D-ΔPDF, choose **Export volume** under **Processing → Export for NEBULA3D**
-   and load the file in [NEBULA3D](https://drthyang.github.io/nebula3d/).
+5. For a 3D-ΔPDF, choose **Open in NEBULA3D** under **Processing → Export for
+   NEBULA3D**: [NEBULA3D](https://drthyang.github.io/nebula3d/) opens with the
+   volume loaded.
 
 ## Run locally
 
