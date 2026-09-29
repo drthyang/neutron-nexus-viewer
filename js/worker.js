@@ -6,11 +6,14 @@ import h5wasm from 'https://cdn.jsdelivr.net/npm/h5wasm@0.10.3/dist/esm/hdf5_hl.
 import { symmetrizeForExport, writeNebulaFile } from './export.js';
 import { binVolume, coarseGrid, orbitMean, surfaceNets } from './iso.js';
 import { edgeMask, maskStats, outlierMask } from './mask.js';
-import { describeFile, loadVolume } from './nexus.js';
+import { describeFile, loadVariance, loadVolume } from './nexus.js';
+import { powderAverage } from './powder.js';
 import { averageSlab, selectBins } from './slab.js';
 import { indexMaps } from './symmetry.js';
 
-let info = null, volume = null, mask = null;
+// `variance` (σ² per voxel) is read from the file when I(Q) first needs it:
+// undefined until then, null without uncertainties.
+let info = null, volume = null, mask = null, path = null, variance, varianceNote = '';
 const coarse = new Map(), means = new Map();
 
 self.onmessage = async ({ data }) => {
@@ -21,8 +24,9 @@ self.onmessage = async ({ data }) => {
     else if (data.type === 'mask') buildMask(data);
     else if (data.type === 'mask-download') await downloadMask(data);
     else if (data.type === 'export') await exportVolume(data);
+    else if (data.type === 'powder') powder(data);
   } catch (err) {
-    const type = { iso: 'iso-error', mask: 'mask-error', 'mask-download': 'mask-error', export: 'export-error' }[data.type] ?? 'error';
+    const type = { iso: 'iso-error', mask: 'mask-error', 'mask-download': 'mask-error', export: 'export-error', powder: 'powder-error' }[data.type] ?? 'error';
     self.postMessage({ type, id: data.id, fixed: data.fixed, message: err?.message ?? String(err) });
   }
 };
@@ -41,9 +45,10 @@ async function open(file) {
   const { FS } = await h5wasm.ready;
   FS.mkdir('/work');
   FS.mount(FS.filesystems.WORKERFS, { files: [file] }, '/work');
+  path = `/work/${file.name}`;
   let h5;
   try {
-    h5 = new h5wasm.File(`/work/${file.name}`, 'r');
+    h5 = new h5wasm.File(path, 'r');
   } catch {
     throw new Error(`${file.name} could not be opened as an HDF5/NeXus file.`);
   }
@@ -156,6 +161,42 @@ async function downloadMask() {
   header.set(new TextEncoder().encode(padded), 10);
   const stream = new Blob([header, mask]).stream().pipeThrough(new CompressionStream('gzip'));
   self.postMessage({ type: 'mask-file', blob: await new Response(stream).blob() });
+}
+
+// I(Q), the powder average of the masked volume (see powder.js), on the shells
+// of `plan` (powderPlan() on the page) with the group's `maps` on this grid.
+function powder({ id, plan, maps, symmetry }) {
+  if (!volume) throw new Error('No histogram loaded.');
+  const t0 = performance.now();
+  let last = 0;
+  const progress = (label, from, to) => (fraction) => {
+    const now = performance.now();
+    if (now - last > 100 || fraction === 1) {
+      last = now;
+      self.postMessage({ type: 'progress-powder', label, fraction: from + (to - from) * fraction });
+    }
+  };
+  // The first time, a fifth of the progress is reading the uncertainties.
+  const start = variance === undefined && info.errors ? 0.2 : 0;
+  if (variance === undefined) {
+    variance = null;
+    if (info.errors) {
+      const h5 = new h5wasm.File(path, 'r');
+      try {
+        variance = loadVariance(h5, info, progress('Reading uncertainties', 0, start));
+      } catch (err) {
+        varianceNote = `uncertainties not read: ${err.message}`;
+      } finally {
+        h5.close();
+      }
+    }
+  }
+  const result = powderAverage(volume, info.shape, plan, maps, mask, variance, progress('Averaging shells', start, 1));
+  const errors = variance ? info.errors.path.split('/').pop() : null;
+  self.postMessage({
+    type: 'powder', id, ...result, dq: plan.dq, split: plan.split, frame: plan.frame, symmetry, order: maps.length,
+    masked: !!mask, errors, errorsNote: varianceNote, seconds: (performance.now() - t0) / 1000,
+  }, [result.edges.buffer, result.intensity.buffer, result.sigma.buffer, result.voxels.buffer, result.coverage.buffer]);
 }
 
 // The symmetrized, masked volume as a NEBULA3D input file (see export.js):

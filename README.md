@@ -6,7 +6,7 @@
 [![Runs in the browser](https://img.shields.io/badge/runs-in%20your%20browser-6b6b6b)](https://drthyang.github.io/neutron-nexus-viewer/)
 
 **Reciprocal-space slices of 3-D neutron scattering data, with symmetry averaging,
-artifact masking, two-dataset comparison and a 3-D view, all in your browser.**
+artifact masking, two-dataset comparison, a 3-D view and I(Q), all in your browser.**
 
 **▶ Try it: [drthyang.github.io/neutron-nexus-viewer](https://drthyang.github.io/neutron-nexus-viewer/)** —
 nothing to install, and your data never leaves your machine. Open a Mantid `.nxs`
@@ -39,6 +39,7 @@ short-range-order diffuse scattering condenses into superlattice peaks.
 | **Artifact masking** | Removes detector-edge voxels and symmetry outliers before averaging; preview what is removed and export the mask as a NumPy array | [Masking](docs/METHOD.md#masking-detector-edge-artifacts) |
 | **Two-dataset comparison** | A second file, such as another temperature, splits every slice along its diagonal, with shared positions, processing and color scale; hover reads both values | [Comparing](docs/USER_GUIDE.md#comparing-two-datasets) |
 | **3-D view** | A transparent isosurface of the processed volume, with the current slices as planes | [3-D view](docs/USER_GUIDE.md#3-d-view) |
+| **I(Q)** | The processed volume reduced to 1-D: the mean intensity per \|Q\| shell over the voxels with data, with symmetry orbits weighted by multiplicity, split voxels, propagated σ and shell coverage; saved as text | [I(Q)](docs/USER_GUIDE.md#iq) · [Method](docs/METHOD.md#powder-average-iq) |
 | **Hand-off to NEBULA3D** | One click sends the masked, symmetrized volume to [NEBULA3D](https://github.com/drthyang/nebula3d)'s 3D-ΔPDF pipeline in a new tab, or saves it as a file | [Export](docs/USER_GUIDE.md#export-for-nebula3d) |
 | **Files and links** | Mantid `MDHistoWorkspace` (`SaveMD`) and any 3-D `NXdata`; local files or links that open a file, a comparison, symmetry and mask; PNG export with a colorbar | [Opening data](docs/USER_GUIDE.md#opening-data) |
 

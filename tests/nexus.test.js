@@ -4,7 +4,8 @@ import test from 'node:test';
 
 import h5wasm from 'h5wasm/node';
 
-import { cellFromUB, describeFile, loadVolume, nominalCell, parseBasis, planeGeometry, reciprocalMetric } from '../js/nexus.js';
+import { cellFromUB, describeFile, loadVariance, loadVolume, nominalCell, parseBasis, planeGeometry, reciprocalMetric } from '../js/nexus.js';
+import { powderPlan } from '../js/powder.js';
 import { averageSlab, IDENTITY_MAP, selectBins } from '../js/slab.js';
 import { closeGroup, indexMaps, parseOps } from '../js/symmetry.js';
 
@@ -16,7 +17,7 @@ function open(name) {
   const file = new h5wasm.File(fixture(name), 'r');
   try {
     const info = describeFile(file);
-    return { info, ...loadVolume(file, info) };
+    return { info, ...loadVolume(file, info), variance: loadVariance(file, info) };
   } finally {
     file.close();
   }
@@ -53,6 +54,16 @@ test('Mantid MDHistoWorkspace fixture matches the Python reference', () => {
     assert.ok(Math.abs(info.lattice[k] - v) < 1e-9, k);
   }
   checkCases(loaded, expected.mdhisto_small);
+  // errors_squared holds |signal| in this fixture; non-finite entries are unknown.
+  assert.deepEqual(info.errors, { path: '/MDHistoWorkspace/data/errors_squared', squared: true });
+  let known = 0;
+  loaded.volume.forEach((v, i) => {
+    if (Number.isNaN(v)) return;
+    assert.equal(loaded.variance[i], Math.abs(v), `voxel ${i}`);
+    known++;
+  });
+  assert.ok(known > 500);
+  assert.ok(loaded.variance.some(Number.isNaN));
 });
 
 test('plain NXdata fixture: size-1 axis dropped, centers become edges', () => {
@@ -60,12 +71,16 @@ test('plain NXdata fixture: size-1 axis dropped, centers become edges', () => {
   const { info } = loaded;
   assert.equal(info.signal, '/entry/data/intensity');
   assert.equal(info.mask, null);
+  assert.equal(info.errors, null);
+  assert.equal(loaded.variance, null);
   assert.deepEqual(info.shape, [6, 8, 10]);
   assert.deepEqual(info.dims.map((d) => d.name), ['qx', 'qy', 'qz']);
   assert.ok(Math.abs(info.dims[2].edges[0] - 0.25) < 1e-12);
   assert.equal(info.lattice, null);
   const geometry = planeGeometry(info.dims, info.lattice, 0, 1);
   assert.deepEqual(geometry, { lx: 1, ly: 1, cos: 0, equal: true, lattice: false });
+  // Axes in Å⁻¹ give |Q| without a cell.
+  assert.equal(powderPlan(info.dims, info.lattice).frame, 'Q');
   checkCases(loaded, expected.nxdata_small);
 });
 

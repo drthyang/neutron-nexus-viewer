@@ -92,8 +92,15 @@ function describeNXdata(group, path) {
   }
 
   const axisNames = list(attr(group, 'axes')) ?? list(attr(signal, 'axes'));
-  const maskNode = keys.includes('mask') ? group.get('mask') : null;
-  const mask = isDataset(maskNode) && String(maskNode.shape) === String(shape) ? join(path, 'mask') : null;
+  const sameShape = (key) => {
+    const node = keys.includes(key) ? group.get(key) : null;
+    return isDataset(node) && String(node.shape) === String(shape);
+  };
+  const mask = sameShape('mask') ? join(path, 'mask') : null;
+  // Uncertainties: Mantid writes variances (errors_squared), NeXus standard deviations (errors).
+  const squared = ['errors_squared', `${name}_errors_squared`].find(sameShape);
+  const plain = ['errors', `${name}_errors`].find(sameShape);
+  const errors = squared ? { path: join(path, squared), squared: true } : plain ? { path: join(path, plain), squared: false } : null;
 
   const dims = [2, 1, 0].map((k) => {
     const axis = keep[k], n = shape[axis];
@@ -120,6 +127,7 @@ function describeNXdata(group, path) {
     group: path,
     signal: join(path, name),
     mask,
+    errors,
     dtype: signal.dtype,
     storageShape: shape,
     keep,
@@ -235,24 +243,11 @@ function invert3(m) {
 export function loadVolume(file, info, onProgress = () => {}) {
   const signal = file.get(info.signal);
   const mask = info.mask ? file.get(info.mask) : null;
-  const lead = info.keep[0];
-  const [n0, n1, n2] = info.shape;
-  const plane = n1 * n2;
-  const chunk = info.chunks?.[lead] ?? 0;
-  const step = Math.min(n0, Math.max(1, chunk || Math.floor(32e6 / (plane * 8))));
-  let volume;
-  try {
-    volume = new Float32Array(n0 * plane);
-  } catch {
-    throw new Error(`Could not allocate ${(n0 * plane * 4 / 1e9).toFixed(2)} GB for the volume.`);
-  }
+  const volume = allocate(info, 'the volume');
   let valid = 0, min = Infinity, max = -Infinity;
-  for (let i = 0; i < n0; i += step) {
-    const j = Math.min(n0, i + step);
-    const ranges = info.storageShape.map((n, a) => (a === lead ? [i, j] : n === 1 ? [0, 1] : []));
+  forEachChunk(info, (ranges, offset) => {
     const s = toNumbers(signal.slice(ranges));
     const m = mask ? toNumbers(mask.slice(ranges)) : null;
-    const offset = i * plane;
     for (let k = 0; k < s.length; k++) {
       const v = s[k];
       if ((m && m[k] != 0) || !Number.isFinite(v)) {
@@ -264,9 +259,50 @@ export function loadVolume(file, info, onProgress = () => {}) {
         if (v > max) max = v;
       }
     }
+  }, onProgress);
+  return { volume, stats: { valid, fraction: valid / volume.length, min, max } };
+}
+
+/**
+ * Per-voxel variances σ² in storage order, from the errors dataset (squared
+ * when it holds standard deviations), with NaN where unknown; null when the
+ * file has no uncertainties.
+ */
+export function loadVariance(file, info, onProgress = () => {}) {
+  if (!info.errors) return null;
+  const errors = file.get(info.errors.path), squared = info.errors.squared;
+  const variance = allocate(info, 'the uncertainties');
+  forEachChunk(info, (ranges, offset) => {
+    const e = toNumbers(errors.slice(ranges));
+    for (let k = 0; k < e.length; k++) {
+      const v = squared ? e[k] : e[k] * e[k];
+      variance[offset + k] = v >= 0 && v < Infinity ? v : NaN;
+    }
+  }, onProgress);
+  return variance;
+}
+
+function allocate(info, what) {
+  const [n0, n1, n2] = info.shape;
+  try {
+    return new Float32Array(n0 * n1 * n2);
+  } catch {
+    throw new Error(`Could not allocate ${(n0 * n1 * n2 * 4 / 1e9).toFixed(2)} GB for ${what}.`);
+  }
+}
+
+/** Visit a dataset shaped like the signal in whole chunks along the leading axis: visit(ranges, offset). */
+function forEachChunk(info, visit, onProgress) {
+  const lead = info.keep[0];
+  const [n0, n1, n2] = info.shape;
+  const plane = n1 * n2;
+  const chunk = info.chunks?.[lead] ?? 0;
+  const step = Math.min(n0, Math.max(1, chunk || Math.floor(32e6 / (plane * 8))));
+  for (let i = 0; i < n0; i += step) {
+    const j = Math.min(n0, i + step);
+    visit(info.storageShape.map((n, a) => (a === lead ? [i, j] : n === 1 ? [0, 1] : [])), i * plane);
     onProgress(j / n0);
   }
-  return { volume, stats: { valid, fraction: valid / volume.length, min, max } };
 }
 
 // ---- Geometry -------------------------------------------------------------
@@ -310,7 +346,8 @@ export function cartesianBasis(dims, cell) {
   return { T: [s[0], 0, 0, 0, s[1], 0, 0, 0, s[2]], lattice: false };
 }
 
-const isHKL = (dim) => dim.frame === 'HKL' || (!dim.frame && /r\.?l\.?u/i.test(dim.units));
+/** An axis in reciprocal lattice units (frame HKL, or r.l.u. without a frame). */
+export const isHKL = (dim) => dim.frame === 'HKL' || (!dim.frame && /r\.?l\.?u/i.test(dim.units));
 
 /**
  * Display geometry of the plane spanned by dims x and y: axis lengths per unit

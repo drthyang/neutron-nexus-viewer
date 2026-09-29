@@ -12,7 +12,7 @@ The histogram is held in memory as float32. A 401³ volume needs about 260 MB an
 
 ## Supported files
 
-- **Mantid `MDHistoWorkspace`** (`SaveMD`): `/MDHistoWorkspace/data/signal`, `mask` and `D0`–`D2`. The cell comes from the UB matrix in `experiment0/sample/oriented_lattice/orientation_matrix`, falling back to `unit_cell_*`. Axis names such as `[H,0,0]` or `[H,H,0]` give the basis vectors for the oblique geometry.
+- **Mantid `MDHistoWorkspace`** (`SaveMD`): `/MDHistoWorkspace/data/signal`, `mask` and `D0`–`D2`, and `errors_squared` for the uncertainties of I(Q). The cell comes from the UB matrix in `experiment0/sample/oriented_lattice/orientation_matrix`, falling back to `unit_cell_*`. Axis names such as `[H,0,0]` or `[H,H,0]` give the basis vectors for the oblique geometry.
 - **Any other `NXdata` group with a 3-D signal**, found through `@signal`, and `@axes` on the group or the signal. Axes may hold bin edges or bin centers. Size-1 dimensions are ignored, so a 4-D workspace with one integrated axis works. Without an HKL frame and a unit cell, the axes are drawn rectangular.
 - **Compression**: deflate (gzip), shuffle and the other filters built into HDF5. Plugin filters (LZ4, Blosc, bitshuffle) are not supported.
 - **Limits**: 3-D histograms up to about 3.5 GB as float32. The signal is shown as stored, with no `num_events` normalization. Non-uniform bins are drawn as if uniform.
@@ -24,8 +24,8 @@ The histogram is held in memory as float32. A 401³ volume needs about 260 MB an
   - **Dataset**: unit cell (from UB), reciprocal lattice, grid and measured fraction, and the Compare card for opening a second dataset.
   - **Display**: colormap, color range, scale, view range, guides, integer grid and cell angles.
   - **Processing**: the pipeline *Measured voxels → Mask → Symmetry average → Views → NEBULA3D*, followed by the Symmetry and Mask controls. Active stages are highlighted, and clicking a stage jumps to its controls.
-  - **Export**: the last step, handing the processed volume to NEBULA3D.
-- **Workspace**: a header row with the click mode, the shared color legend (click it for the Display settings) and the layout, then four views (HK, HL, KL and 3-D).
+  - **Export**: the last step: I(Q), the volume reduced to 1-D, and handing the processed volume to NEBULA3D.
+- **Workspace**: a header row with the click mode, the shared color legend (click it for the Display settings) and the layout, then four views: HK, HL, KL, and the 3-D view or I(Q), which share the fourth place (the *3D | I(Q)* switch in its header picks one).
 - **Panel footer**: copyright, the license and a link to this documentation. The ⓘ popover links to each guide.
 
 Below 1000 px wide, or on short screens, the panel sits above the views and the page scrolls.
@@ -78,6 +78,19 @@ In every mode, double-click (or *Reset zoom*) returns to the full view.
 
 A transparent isosurface of the binned, symmetrized and masked volume, with the current slices as planes, clipped to the view range. The footer sets the isosurface level (log slider or typed; empty returns to the automatic level) and the surface and slice opacity. The options button sets the grid (about 64, 100 or 150 blocks per axis) and hides the slices. Drag to rotate, scroll to zoom, right-drag to pan, and use ↺ to reset the camera.
 
+## I(Q)
+
+I(Q) reduces the masked, symmetrized volume to one dimension: the mean intensity in each shell of |Q|, over the part of the shell that has data. Open it with *I(Q)* in the header of the 3-D view (the two share the fourth place) or *Show I(Q)* in the **Export** section. It is computed when it is shown, and again when the symmetry, the mask or its settings change.
+
+- **Normalization**: unmeasured and masked voxels are left out, not counted as zero, so gaps in coverage do not lower I(Q). Symmetry-equivalent voxels are pooled as in the slices, and each orbit counts with its multiplicity, so a shell is not biased toward the directions that were measured best. See [Method → I(Q)](METHOD.md#powder-average-iq).
+- **Footer**: the shell width ΔQ (empty for the shortest bin step in |Q|), Q max (empty for all the data) and a linear or log intensity scale. |Q| is in Å⁻¹ with 2π, from the file's UB matrix or cell; axes already in Å⁻¹ (Mantid's Q frames) need no cell.
+- **Options** (the sliders button): *Split voxels* shares each voxel between the shells it overlaps by dividing it into 2³ or 3³ sub-cells, each binned by its own |Q|; *Centres* bins whole voxels, which is faster but aliases when ΔQ is close to the voxel size. The error band (±σ) and the shell coverage (the dashed line, right axis) can be hidden.
+- **Uncertainties**: σ is propagated from the file's `errors_squared` (or `errors`), read the first time I(Q) is computed. Without them, the curve has no error band and the text file has `nan` in its σ column.
+- **Coverage**: the fraction of each shell's volume that has data, after symmetry. Where it falls (beyond the measured region, or where shells leave the grid), I(Q) rests on few voxels.
+- **Plot**: hover to read Q, d = 2π/Q, and I ± σ with the coverage of each dataset. Drag a box to zoom (a flat drag zooms Q only), click in *Zoom* mode to zoom 2×, drag in *Move* mode to pan, and double-click (or *Reset zoom*) for the full range.
+- **Comparing**: both datasets are reduced on the same shells, each with its own grid, cell and mask, and drawn as two curves; *A / Split / B* chooses which are shown.
+- **Download** (in the view's header or the Export section) saves a text file, `<file>_IQ.dat`: a commented header with the file, cell, shells, symmetry, mask and normalization, then one row per shell with Q (the shell centre), I, σ, coverage and the number of voxels with data, for A and B when comparing. `numpy.loadtxt` reads it directly. *Save PNG* exports the plot at 3× with a title and a legend.
+
 ## Comparing two datasets
 
 *Open second file (B)* in the Compare card, or drop a file on the card, opens a second dataset next to the first (A). Every slice is then cut along its diagonal, from the top-left to the bottom-right corner of the view: A fills the lower-left half and B the upper-right half. A white gap marks the cut, B's half is hatched where it has no data, and tags in the corners name the files.
@@ -107,4 +120,4 @@ The **Export** section at the bottom of the panel hands the processed volume to 
 
 - **Layouts**: *Quad* (2×2), *Focus* (one large view with the other three beside it) and *Single*. In *Focus*, the small views are thumbnails: hovering one highlights it, and clicking it (or Enter) shows it large. Each view's header can focus or maximize it, and double-clicking a header maximizes it. Esc returns.
 - **Save PNG** exports a view at 3× resolution. Slice exports include a title, their own colorbar and the integer grid when it is on, without guides. When comparing, they keep the split and the dataset tags.
-- **Remembered settings**: the colormap, scale, click mode, layout, panel state and folded sections are remembered per browser.
+- **Remembered settings**: the colormap, scale, click mode, layout, the view in the fourth place, the I(Q) options, panel state and folded sections are remembered per browser.

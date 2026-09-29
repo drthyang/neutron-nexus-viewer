@@ -24,12 +24,13 @@ CI runs the same tests on every push (`.github/workflows/test.yml`).
 | --- | --- |
 | `index.html` | Markup and styles (light variant of the nebula3d design tokens) |
 | `js/app.js` | UI: control panel, views, layouts, interaction, canvas drawing and the second (comparison) dataset |
-| `js/worker.js` | Module worker (one per open dataset): opens the file with h5wasm, holds the volume, answers slice, mask and isosurface requests |
-| `js/nexus.js` | Finds the histogram in the file, reads it, and handles the UB matrix and lattice geometry |
+| `js/worker.js` | Module worker (one per open dataset): opens the file with h5wasm, holds the volume, answers slice, mask, isosurface, I(Q) and export requests |
+| `js/nexus.js` | Finds the histogram (and its uncertainties) in the file, reads it, and handles the UB matrix and lattice geometry |
 | `js/slab.js` | Slab selection and symmetry-pooled slab averaging (pure functions) |
 | `js/symmetry.js` | Parsing operations, group closure, metric check and integer index maps |
 | `js/mask.js` | Coverage-edge erosion and symmetry-outlier masks |
 | `js/iso.js` | Origin-aligned coarse binning, orbit means and surface nets |
+| `js/powder.js` | I(Q): the \|Q\| metric, shells, and the normalized spherical average with split voxels and propagated uncertainties |
 | `js/export.js` | NEBULA3D export: grid plan and padding, full-volume symmetrization, HDF5 writer |
 | `js/view3d.js` | three.js scene, loaded when the 3-D view opens |
 | `js/colormaps.js` | Colormap lookup tables (generated) |

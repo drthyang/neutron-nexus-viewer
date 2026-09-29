@@ -1,6 +1,7 @@
 import { COLORMAPS } from './colormaps.js';
 import { exportPlan } from './export.js';
 import { cartesianBasis, nominalCell, planeGeometry, reciprocalMetric } from './nexus.js';
+import { powderPlan } from './powder.js';
 import { IDENTITY_MAP } from './slab.js';
 import { closeGroup, formatOp, indexMaps, metricChange, parseOps, PRESETS } from './symmetry.js';
 
@@ -25,6 +26,7 @@ const ICONS = {
   restore: svg('<path d="M13.5 6.5h-4v-4M2.5 9.5h4v4M9.5 6.5 14 2M6.5 9.5 2 14"/>'),
   reset: svg('<path d="M2.8 8a5.2 5.2 0 1 0 1.6-3.8"/><path d="M2.5 2.5v3h3"/>'),
   gear: svg('<path d="M2.5 4.5h11M2.5 8h11M2.5 11.5h11"/><circle cx="5.5" cy="4.5" r="1.5" fill="#fff"/><circle cx="10.5" cy="8" r="1.5" fill="#fff"/><circle cx="7" cy="11.5" r="1.5" fill="#fff"/>'),
+  download: svg('<path d="M8 2.5v8M4.75 7.25 8 10.5l3.25-3.25"/><path d="M2.5 11v1.5a1 1 0 0 0 1 1h9a1 1 0 0 0 1-1V11"/>'),
 };
 
 let worker = null, meta = null, panels = [], settings = null, sourceName = '', sourceSize = 0, autoscaled = false;
@@ -37,6 +39,12 @@ const views = {};
 let clickMode = 'navigate';
 // 3-D view state: the lazily loaded View3D, its elements and the isosurface request queue.
 let view3d = null, iso = null;
+// I(Q) view state: its elements, zoom and one request queue per dataset (`a`, `b`).
+// The 3-D view and I(Q) share the fourth place in the layouts; `slot` is the one shown.
+let powder = null, slot = '3d', powderScale = 'linear';
+const SLOT_VIEWS = ['3d', 'iq'];
+// Counts mask rebuilds, so I(Q) is recomputed after each.
+let maskVersion = 0;
 // Second dataset (B) for comparison, with its own worker, index maps and mask.
 // `compareView` is what the slices show: 'split' (A below the diagonal, B above), 'a' or 'b'.
 let compare = null, compareView = 'split', pendingCompare = null;
@@ -239,6 +247,7 @@ function openFile(file) {
   symmetry = NO_SYMMETRY;
   mask = null;
   iso = null;
+  powder = null;
   sourceName = file.name;
   sourceSize = file.size;
   $('workspace').replaceChildren();
@@ -356,6 +365,7 @@ const handlers = {
     status('ok', 'ready');
     $('mask-apply').disabled = false;
     mask = stats ? { ...stats, radius, k, group } : null;
+    maskVersion++;
     // B may have opened while this mask was being built.
     if (compare?.ready && compare.maskRequested !== `${radius},${k}`) sendCompareMask(radius, k);
     $('mask-clear').disabled = $('mask-download').disabled = $('mask-removed').disabled = !mask;
@@ -363,6 +373,7 @@ const handlers = {
     showMask(seconds);
     panels.forEach((p) => request(p, 'a'));
     requestIso();
+    requestPowder();
     describe();
   },
   'mask-error': ({ message }) => {
@@ -402,6 +413,9 @@ const handlers = {
     $('export-status').className = 'note error';
     $('export-status').textContent = message;
   },
+  'progress-powder': (msg) => powderProgress('a', msg),
+  powder: (msg) => powderResult('a', msg),
+  'powder-error': ({ message }) => powderResult('a', null, message),
 };
 
 /** Ask for the panel's slice of dataset 'a', 'b' or 'both' (B only when it is loaded). */
@@ -495,6 +509,7 @@ function describe() {
   const items = [
     ['File', `${sourceName} (${mb(sourceSize)})`],
     ['Signal', meta.signal],
+    ['Errors', meta.errors ? `${meta.errors.path}${meta.errors.squared ? '' : ' (σ, squared when read)'}` : 'none in the file'],
     ['Axes', dims.map((d) => `${d.longName} ${fmt(d.edges[0], 2)} … ${fmt(d.edges[d.edges.length - 1], 2)}`).join('\n')],
     ['Grid', `${bins.join(' × ')} bins, Δ = ${widths.join(', ')}`],
     ['Measured', `${pct(stats.fraction)} of voxels · read in ${meta.seconds.toFixed(1)} s`],
@@ -560,7 +575,7 @@ function updateStates() {
     ? `${removed} removed${mask.radius ? ` · edge ${mask.radius}` : ''}${mask.k ? ` · ${mask.k}σ outliers` : ''}${$('mask-removed').checked ? ' · showing removed' : ''}`
     : 'off — all measured voxels';
   // One-line summaries shown on collapsed panel sections.
-  $('pipe-views').textContent = compare?.ready ? '3 slices, A | B split + 3-D (A)' : '3 slices + 3-D';
+  $('pipe-views').textContent = compare?.ready ? '3 slices, A | B split + 3-D (A) + I(Q)' : '3 slices + 3-D + I(Q)';
   $('sum-processing').textContent = `${mask ? `mask ${removed}` : 'no mask'} · ${sym ? symmetry.name : 'no symmetry'}`;
   $('sum-display').textContent = `${$('cmap').value} · ${$('vmin').value}–${$('vmax').value} · ${$('scale').dataset.value}`;
   $('legend-min').textContent = fmtValue(Number($('vmin').value) || 0);
@@ -587,6 +602,10 @@ function viewShell(key, badge, title) {
   focusBtn.onclick = () => setLayout(layout === 'focus' && primary === key ? 'quad' : 'focus', key);
   maxBtn.onclick = () => setLayout(layout === 'single' && primary === key ? lastMulti : 'single', key);
   section.querySelector('.view-head').ondblclick = (e) => { if (!e.target.closest('button')) maxBtn.click(); };
+  section.querySelector('.slot-switch')?.addEventListener('click', (e) => {
+    const button = e.target.closest('button');
+    if (button && !button.classList.contains('on')) setSlot(button.dataset.value);
+  });
   // In the focus layout the small views are thumbnails: a click (outside their buttons) shows one large.
   const enlarge = () => section.classList.contains('thumb');
   section.addEventListener('click', (e) => { if (enlarge() && !e.target.closest('button, input, select, a')) setLayout('focus', key); });
@@ -599,6 +618,11 @@ function viewShell(key, badge, title) {
   views[key] = { section, focusBtn, maxBtn };
   return { section, actions, focusBtn, maxBtn, q: (sel) => section.querySelector(sel) };
 }
+
+/** The badge of the 3-D view and I(Q), which share the fourth place: a switch between them, `key` on. */
+const slotSwitch = (key) => `<div class="segmented slot-switch" role="group" aria-label="Fourth view">${
+  [['3d', '3D', 'Show the 3-D isosurface here'], ['iq', 'I(Q)', 'Show I(Q), the powder average, here']].map(([k, label, title]) =>
+    `<button type="button" data-value="${k}"${k === key ? ' class="on"' : ` title="${title}"`}>${label}</button>`).join('')}</div>`;
 
 function setupViewer() {
   describe();
@@ -669,7 +693,7 @@ function setupViewer() {
     panels.push(p);
   }
 
-  const shell = viewShell('3d', '<span class="badge">3D</span>', 'Isosurface');
+  const shell = viewShell('3d', slotSwitch('3d'), 'Isosurface');
   shell.actions.innerHTML = `
     <button type="button" class="icon-btn reset3d" title="Reset camera">${ICONS.reset}</button>
     <button type="button" class="icon-btn" title="3-D options" aria-haspopup="dialog" aria-expanded="false" data-pop="pop-3d">${ICONS.gear}</button>
@@ -694,9 +718,67 @@ function setupViewer() {
   iso.caption.textContent = 'loading 3-D view…';
   setSegmented($('iso-grid'), '100');
   $('iso-slices').checked = true;
+  setupPowder();
 
   setLayout(layout, primary);
   paintAll();
+}
+
+/** The I(Q) view: a line plot of the powder average, with its shells set in the footer. */
+function setupPowder() {
+  const shell = viewShell('iq', slotSwitch('iq'), 'Powder average');
+  shell.actions.innerHTML = `
+    <button type="button" class="btn btn-ghost btn-xs zoom-reset" hidden title="Back to the full range (or double-click the plot)">Reset zoom</button>
+    <button type="button" class="icon-btn" title="I(Q) options" aria-haspopup="dialog" aria-expanded="false" data-pop="pop-iq">${ICONS.gear}</button>
+    <button type="button" class="icon-btn data" title="Download I(Q) as text: Q, I, σ, coverage and voxels per shell">${ICONS.download}</button>
+    <button type="button" class="icon-btn save" title="Save PNG">${ICONS.save}</button>`;
+  shell.actions.append(shell.focusBtn, shell.maxBtn);
+  shell.q('.view-body').innerHTML = '<canvas class="plot" role="img" aria-label="I(Q), the powder average of the volume"></canvas><span class="overlay-chip" hidden></span>';
+  const foot = document.createElement('footer');
+  foot.className = 'view-foot';
+  foot.innerHTML = `
+    <span class="label" title="Shell width">ΔQ</span>
+    <input class="pq-dq num" type="number" min="0" step="any" aria-label="Shell width ΔQ" title="Shell width in Å⁻¹; empty for the shortest bin step">
+    <span class="unit">Å⁻¹</span>
+    <span class="foot-sep"></span>
+    <span class="label">Q max</span>
+    <input class="pq-qmax num" type="number" min="0" step="any" placeholder="all" aria-label="Q max" title="Largest |Q| in Å⁻¹; empty for all the data">
+    <span class="unit">Å⁻¹</span>
+    <span class="spacer"></span>
+    <div class="segmented sm pq-scale" role="group" aria-label="Intensity scale"><button type="button" data-value="linear">Lin</button><button type="button" data-value="log">Log</button></div>`;
+  shell.section.append(foot);
+  const q = shell.q;
+  powder = {
+    canvas: q('canvas'), hover: q('.overlay-chip'), caption: q('.view-caption'), pos: q('.view-pos'), zoomReset: q('.zoom-reset'),
+    dq: q('.pq-dq'), qmax: q('.pq-qmax'), a: newPowderLayer(), b: newPowderLayer(),
+    stale: true, download: false, plan: null, zoom: null, drag: null, view: null, at: null,
+  };
+  try {
+    powder.dq.placeholder = fmt(powderPlan(meta.dims, meta.lattice).dq, 4);
+  } catch (err) {
+    powder.a.error = err.message;
+  }
+  setSegmented(q('.pq-scale'), powderScale);
+  segmented(q('.pq-scale'), (value) => {
+    powderScale = value;
+    // The intensity axis changes, so a zoom keeps its Q range only.
+    if (powder.zoom) setPowderZoom(powder.zoom.x ? { x: powder.zoom.x, y: null } : null);
+    persist();
+    drawPowderView();
+  });
+  powder.dq.onchange = powder.qmax.onchange = () => requestPowder();
+  for (const input of [powder.dq, powder.qmax]) input.onkeydown = (e) => { if (e.key === 'Enter') input.blur(); };
+  powder.canvas.onpointerdown = startPowderDrag;
+  powder.canvas.onpointermove = (e) => { hoverPowder(e); movePowderDrag(e); };
+  powder.canvas.onpointerup = endPowderDrag;
+  powder.canvas.onpointercancel = () => { powder.drag = null; powder.canvas.classList.remove('panning'); drawPowderView(); };
+  powder.canvas.onpointerleave = () => { powder.hover.hidden = true; powder.at = null; drawPowderView(); };
+  powder.canvas.ondblclick = () => { clearTimeout(powder.clickTimer); setPowderZoom(null); };
+  powder.zoomReset.onclick = () => setPowderZoom(null);
+  q('.data').onclick = downloadPowder;
+  q('.save').onclick = savePowderPNG;
+  resized.observe(powder.canvas);
+  showPowder();
 }
 
 // ---- Layout ------------------------------------------------------------------------
@@ -708,6 +790,7 @@ compactLayout.addEventListener('change', () => { if (views.hk) setLayout(layout,
 function setLayout(mode, key = primary) {
   if (!views[key]) key = 'hk';
   if (mode !== 'single') lastMulti = mode;
+  if (SLOT_VIEWS.includes(key)) slot = key;
   layout = mode;
   primary = key;
   const ws = $('workspace');
@@ -728,16 +811,25 @@ function setLayout(mode, key = primary) {
     const restore = mode === 'single' && isPrimary;
     v.maxBtn.innerHTML = restore ? ICONS.restore : ICONS.max;
     v.maxBtn.title = restore ? 'Restore the layout (Esc)' : 'Maximize this view (double-click the header)';
+    v.section.classList.toggle('off-slot', SLOT_VIEWS.includes(k) && k !== slot);
   }
-  try { localStorage.setItem('nxv-layout', JSON.stringify({ mode: lastMulti, key })); } catch { /* storage unavailable */ }
+  try { localStorage.setItem('nxv-layout', JSON.stringify({ mode: lastMulti, key, slot })); } catch { /* storage unavailable */ }
+  updatePowder();
 }
 
-// Redraw a plot whenever its canvas changes size (layout switches, window resizes).
+/** Show the 3-D view or I(Q) (`key`) in the fourth place. */
+function setSlot(key) {
+  slot = key;
+  setLayout(layout, SLOT_VIEWS.includes(primary) ? key : primary);
+}
+
+// Redraw a plot whenever its canvas changes size (layout switches, window resizes),
+// and compute I(Q) once its view is shown.
 let resizeQueued = false;
 const resized = new ResizeObserver(() => {
   if (resizeQueued) return;
   resizeQueued = true;
-  requestAnimationFrame(() => { resizeQueued = false; redraw(); });
+  requestAnimationFrame(() => { resizeQueued = false; redraw(); updatePowder(); });
 });
 
 // ---- Box zoom and clicks -------------------------------------------------------------
@@ -1237,6 +1329,7 @@ function drawPanel(p) {
 
 function redraw() {
   if (!meta || !panels.length) return;
+  drawPowderView();
   try {
     settings = readSettings();
     error('');
@@ -1314,8 +1407,13 @@ function savePNG(p) {
   const out = document.createElement('canvas');
   draw(p, out, Math.max(p.canvas.clientWidth, 480), Math.max(p.canvas.clientHeight, 360) + 24, 3, true);
   const X = meta.dims[p.x], Y = meta.dims[p.y], F = meta.dims[p.fixed];
+  out.toBlob((blob) => download(blob, `${shownStem()}_${X.label}${Y.label}_${F.label}=${p.data.center}.png`));
+}
+
+/** File names of what the views show: A, B, or A_vs_B. */
+function shownStem() {
   const names = { a: stem(), b: stemOf(compare?.name ?? ''), split: `${stem()}_vs_${stemOf(compare?.name ?? '')}` };
-  out.toBlob((blob) => download(blob, `${names[compareShown() ?? 'a']}_${X.label}${Y.label}_${F.label}=${p.data.center}.png`));
+  return names[compareShown() ?? 'a'];
 }
 
 function download(blob, name) {
@@ -1353,6 +1451,7 @@ function applySymmetry() {
   describe();
   panels.forEach(request);
   requestIso();
+  requestPowder();
 }
 
 function showSymmetry() {
@@ -1509,7 +1608,7 @@ function exportNote(kind, state, text, file = '') {
 function exportState(kind, state) {
   $('export-state').textContent = state;
   $('export-state').className = `state ${kind}`.trim();
-  $('sum-export').textContent = `NEBULA3D · ${state}`;
+  $('sum-export').textContent = `I(Q) · NEBULA3D · ${state}`;
   $('pipe-export').className = kind === 'ok' ? 'ok' : 'off';
   $('pipe-export-text').textContent = { sent: 'volume sent to NEBULA3D', saved: 'volume saved for NEBULA3D' }[state] ?? 'next analysis: export the volume';
 }
@@ -1767,6 +1866,618 @@ function openDemo() {
   openURL(DEMO.url);
 }
 
+// ---- I(Q) ---------------------------------------------------------------------------------
+
+// Curve colors of datasets A and B: the accent and the H-axis hue.
+const CURVE = { A: '#2f74e6', B: '#d98a0b' };
+const newPowderLayer = () => ({ data: null, key: '', busy: false, wanted: null, error: '', progress: null });
+/** Whether the I(Q) view is on screen. */
+const powderShown = () => !!powder && powder.canvas.clientWidth > 0;
+
+/** Recompute I(Q): now if its view is shown or a download waits, otherwise once it is shown. */
+function requestPowder() {
+  if (!powder) return;
+  powder.stale = true;
+  updatePowder();
+}
+
+/**
+ * Send the I(Q) requests when they are due. B gets A's shells, reaching the
+ * farther of the two grids unless Q max is set; its mask is built first.
+ */
+function updatePowder() {
+  if (!powder?.stale || !(powderShown() || powder.download)) return;
+  powder.stale = false;
+  const read = (input) => {
+    const text = input.value.trim(), x = Number(text);
+    if (text === '') return null;
+    if (!(x > 0)) throw new Error(`${input.getAttribute('aria-label')} must be a positive number, or empty for automatic.`);
+    return x;
+  };
+  const split = Number($('iq-split').dataset.value);
+  let plan, planB = null, errorB = '';
+  try {
+    const dq = read(powder.dq), qmax = read(powder.qmax);
+    plan = powderPlan(meta.dims, meta.lattice, { dq, qmax, split });
+    if (compare?.ready) {
+      try {
+        const topB = powderPlan(compare.meta.dims, compare.meta.lattice, { dq: plan.dq, split }).top;
+        planB = powderPlan(compare.meta.dims, compare.meta.lattice, { dq: plan.dq, qmax: qmax ?? Math.max(plan.top, topB), split });
+        plan = powderPlan(meta.dims, meta.lattice, { dq: plan.dq, qmax: planB.qmax, split });
+      } catch (err) {
+        errorB = err.message;
+      }
+    }
+  } catch (err) {
+    Object.assign(powder.a, { data: null, error: err.message, key: '' });
+    powder.download = false;
+    showPowder();
+    drawPowderView();
+    return;
+  }
+  powder.plan = plan;
+  const group = groupKey(symmetry.ops);
+  queuePowder(powder.a, worker, { plan, maps: symmetry.maps, symmetry: symmetry.name }, `${JSON.stringify(plan)}|${group}|${maskVersion}`);
+  if (planB && !compare.maskBusy) {
+    queuePowder(powder.b, compare.worker, { plan: planB, maps: compare.maps, symmetry: compare.maps.length > 1 ? symmetry.name : '1' },
+      `${JSON.stringify(planB)}|${group}|${compare.maps.length}|${compare.maskVersion ?? 0}`);
+  } else if (errorB) {
+    Object.assign(powder.b, { data: null, error: errorB, key: '' });
+  }
+  showPowder();
+  finishPowderDownload();
+}
+
+/** Ask a dataset's worker for I(Q), unless it has (or is computing) the same `key`. One request in flight per dataset. */
+function queuePowder(layer, w, request, key) {
+  if (key === layer.key && !layer.error) return;
+  layer.key = key;
+  layer.wanted = request;
+  if (!layer.busy) sendPowder(layer, w);
+}
+
+function sendPowder(layer, w) {
+  const q = layer.wanted;
+  layer.wanted = null;
+  layer.busy = true;
+  layer.progress = null;
+  w.postMessage({ type: 'powder', id: ++requestId, ...q });
+}
+
+/** I(Q) of dataset `which` ('a' or 'b') has arrived, or failed with `message`. */
+function powderResult(which, msg, message = '') {
+  const layer = powder?.[which];
+  if (!layer) return;
+  layer.busy = false;
+  layer.progress = null;
+  Object.assign(layer, msg ? { data: msg, error: '' } : { data: null, error: message });
+  if (layer.wanted) sendPowder(layer, which === 'a' ? worker : compare.worker);
+  showPowder();
+  drawPowderView();
+  finishPowderDownload();
+}
+
+function powderProgress(which, { label, fraction }) {
+  const layer = powder?.[which];
+  if (!layer?.busy) return;
+  layer.progress = { label, fraction };
+  showPowder();
+}
+
+/** The I(Q) card in the Export section, and the view's header. */
+function showPowder() {
+  if (!powder) return;
+  const statusEl = $('powder-status');
+  const state = (kind, text) => {
+    $('powder-state').textContent = text;
+    $('powder-state').className = `state ${kind}`.trim();
+  };
+  const layers = [['A', powder.a], ...(compare?.ready ? [['B', powder.b]] : [])];
+  const working = layers.filter(([, l]) => l.busy);
+  $('powder-progress').hidden = !working.length;
+  powder.pos.textContent = powder.plan ? `ΔQ ${fmt(powder.plan.dq, 4)} Å⁻¹` : '';
+  if (working.length) {
+    const fraction = working.reduce((s, [, l]) => s + (l.progress?.fraction ?? 0), 0) / working.length;
+    const label = working.find(([, l]) => l.progress)?.[1].progress.label ?? 'Starting';
+    $('powder-bar').style.width = `${Math.round(100 * fraction)}%`;
+    state('busy', 'working…');
+    statusEl.className = 'note';
+    statusEl.textContent = `${label}${compare?.ready ? ` (${working.map(([k]) => k).join(', ')})` : ''}… ${Math.round(100 * fraction)}%`;
+    powder.caption.textContent = `computing… ${Math.round(100 * fraction)}%`;
+    powder.caption.title = '';
+    return;
+  }
+  const A = powder.a.data;
+  if (!A) {
+    state('', powder.a.error ? 'unavailable' : 'off');
+    statusEl.className = powder.a.error ? 'note error' : 'note';
+    statusEl.textContent = powder.a.error || 'Computed when its view is shown: choose Show I(Q), or I(Q) in the header of the 3-D view.';
+    powder.caption.textContent = powder.a.error ? 'unavailable' : '';
+    powder.caption.title = powder.a.error;
+    return;
+  }
+  const sets = layers.filter(([, l]) => l.data);
+  const end = Math.max(...sets.map(([, l]) => powderEnd(l.data)));
+  const errors = sets.map(([k, l]) => [k, l.data.errors ? `σ from ${l.data.errors}` : l.data.errorsNote || 'no uncertainties in the file']);
+  const facts = [
+    `${Math.round(end / A.dq)} shells of ${fmt(A.dq, 4)} Å⁻¹ to ${fmt(end, 2)} Å⁻¹`,
+    A.order > 1 ? `${A.symmetry} averaged` : 'not symmetrized',
+    A.masked && mask ? `mask ${pct((mask.edge + mask.outlier) / mask.measured)}` : 'no mask',
+    ...(errors.every(([, t]) => t === errors[0][1]) ? [errors[0][1].replace('the file', sets.length > 1 ? 'the files' : 'the file')] : errors.map(([k, t]) => `${k}: ${t}`)),
+  ];
+  const warnings = compare?.ready && powder.b.error ? [`B: ${powder.b.error}`] : [];
+  if (powder.stale) warnings.push('Settings changed: it is recomputed when its view is shown.');
+  state(powder.stale ? '' : 'ok', powder.stale ? 'out of date' : 'ready');
+  statusEl.className = warnings.length ? 'note warn' : 'note';
+  statusEl.textContent = `${sets.length > 1 ? 'A and B: ' : ''}${facts.join(' · ')}.${warnings.length ? ` ${warnings.join(' ')}` : ''}`;
+  powder.caption.textContent = `${A.split > 1 ? `${A.split}³ split` : 'centres'}${A.order > 1 ? ` · ${A.symmetry}` : ''}${A.masked ? ' · masked' : ''}${A.errors ? ' · ±σ' : ''}`;
+  powder.caption.title = `${facts.join('\n')}\nVoxels split into ${A.split}³ sub-cells · ${sets.map(([k, l]) => `${sets.length > 1 ? `${k} ` : ''}${l.data.seconds.toFixed(1)} s`).join(', ')}`;
+}
+
+/** Show the I(Q) view: in the fourth place, or as the single view. */
+function showPowderView() {
+  if (!powder) return;
+  if (layout === 'single') setLayout('single', 'iq');
+  else setSlot('iq');
+  views.iq.section.scrollIntoView({ block: 'nearest', behavior: 'smooth' });
+}
+
+/** Save I(Q) as text, computing it first if needed. */
+function downloadPowder() {
+  if (!powder) return;
+  powder.download = true;
+  updatePowder();
+  finishPowderDownload();
+}
+
+function finishPowderDownload() {
+  if (!powder?.download || powder.stale || compare?.maskBusy) return;
+  if ([powder.a, ...(compare?.ready ? [powder.b] : [])].some((l) => l.busy || l.wanted)) return;
+  powder.download = false;
+  if (!powder.a.data) return;
+  const both = compare?.ready && powder.b.data;
+  download(new Blob([powderText()], { type: 'text/plain' }), `${both ? `${stem()}_vs_${stemOf(compare.name)}` : stem()}_IQ.dat`);
+}
+
+/** I(Q) as text: a commented header, then Q and, per dataset, I, σ, coverage and voxels. */
+function powderText() {
+  const sets = [['A', sourceName, powder.a.data]];
+  if (compare?.ready && powder.b.data) sets.push(['B', compare.name, powder.b.data]);
+  const both = sets.length > 1, { dq, split, frame } = sets[0][2], l = meta.lattice;
+  const rows = Math.round(Math.max(...sets.map(([, , d]) => powderEnd(d))) / dq);
+  const num = (x) => (Number.isFinite(x) ? String(Number(x.toPrecision(7))) : 'nan');
+  const columns = both ? sets.flatMap(([k]) => [`I_${k}`, `sigma_${k}`, `coverage_${k}`, `voxels_${k}`]) : ['I', 'sigma', 'coverage', 'voxels'];
+  const lines = [
+    `# I(Q), the powder average of ${sets.map(([k, name]) => (both ? `${k} = ${name}` : name)).join(' and ')}`,
+    `# Written by NeXus Viewer (https://drthyang.github.io/neutron-nexus-viewer/) on ${new Date().toISOString()}`,
+    frame === 'HKL'
+      ? `# |Q| in 1/Angstrom, with 2*pi, from the cell (${l.source}): a b c = ${[l.a, l.b, l.c].map((x) => x.toFixed(4)).join(' ')} Angstrom, alpha beta gamma = ${[l.alpha, l.beta, l.gamma].map((x) => x.toFixed(3)).join(' ')} deg`
+      : '# |Q| in 1/Angstrom, from the Q axes',
+    `# Shells of dQ = ${dq} 1/Angstrom from Q = 0 (Q is the shell centre); voxels split into ${split}^3 sub-cells, each binned by its own |Q|`,
+    `# Symmetry: ${symmetry.ops.length > 1 ? `${symmetry.name} (${symmetry.ops.length} operations), equivalent voxels pooled` : 'none'}`,
+    `# Mask: ${mask ? `coverage-edge erosion ${mask.radius}${mask.k ? `, outlier cut ${mask.k} sigma` : ''}${both ? ', built for each dataset' : `, ${pct((mask.edge + mask.outlier) / mask.measured)} of measured voxels removed`}` : 'none'}`,
+    '# I: mean intensity over the part of the shell with data. Unmeasured and masked voxels are left out, not',
+    '#    counted as zero, and each symmetry orbit counts with its multiplicity',
+    `# sigma: ${sets.map(([k, , d]) => `${both ? `${k} ` : ''}${d.errors ? `propagated from ${d.errors}` : 'nan, no uncertainties in the file'}`).join('; ')}`,
+    '# coverage: fraction of the shell volume with data; voxels: number of voxels with data in the shell',
+    `# Q ${columns.join(' ')}`,
+  ];
+  for (let b = 0; b < rows; b++) {
+    const cells = [((b + 0.5) * dq).toFixed(6)];
+    for (const [, , d] of sets) cells.push(num(d.intensity[b]), num(d.sigma[b]), d.coverage[b].toFixed(5), num(d.voxels[b]));
+    lines.push(cells.join(' '));
+  }
+  return `${lines.join('\n')}\n`;
+}
+
+/** The curves shown: A, and B when comparing (following A / Split / B). */
+function powderLayers() {
+  const shown = compareShown(), out = [];
+  if (powder.a.data && shown !== 'b') out.push({ letter: 'A', name: sourceName, data: powder.a.data, color: CURVE.A });
+  if (shown && shown !== 'a' && powder.b.data) out.push({ letter: 'B', name: compare.name, data: powder.b.data, color: CURVE.B });
+  return out;
+}
+
+/** |Q| at the end of the last shell with data. */
+function powderEnd(data) {
+  let b = data.voxels.length - 1;
+  while (b > 0 && !(data.voxels[b] > 0)) b--;
+  return data.edges[b + 1];
+}
+
+/**
+ * The plot window: the zoom, or all shells with data and the range of the
+ * curves (and bands) over them. Intensities are in plot units: log10(I) on a
+ * log scale.
+ */
+function powderWindow(layers, log, band) {
+  const [x0, x1] = powder.zoom?.x ?? [0, Math.max(...layers.map((l) => powderEnd(l.data)))];
+  if (powder.zoom?.y) return { x0, x1, y0: powder.zoom.y[0], y1: powder.zoom.y[1] };
+  let lo = Infinity, hi = -Infinity;
+  for (const { data } of layers) {
+    for (let b = 0; b < data.intensity.length; b++) {
+      const q = (b + 0.5) * data.dq, v = data.intensity[b], s = band && Number.isFinite(data.sigma[b]) ? data.sigma[b] : 0;
+      if (q < x0 || q > x1 || !Number.isFinite(v) || (log && v <= 0)) continue;
+      lo = Math.min(lo, log && v - s <= 0 ? v : v - s);
+      hi = Math.max(hi, v + s);
+    }
+  }
+  if (!(hi >= lo)) [lo, hi] = log ? [1, 10] : [0, 1];
+  if (log) {
+    const a = Math.log10(lo), b = Math.log10(hi), pad = Math.max(0.05 * (b - a), 0.1);
+    return { x0, x1, y0: a - pad, y1: b + pad };
+  }
+  // Intensities start from 0 unless some are negative.
+  const base = Math.min(0, lo), span = hi - base || Math.abs(hi) || 1;
+  return { x0, x1, y0: base - (lo < 0 ? 0.05 * span : 0), y1: hi + 0.06 * span };
+}
+
+/**
+ * Ticks of a log axis from 10^a to 10^b, as exponents: decades, with 2 and 5
+ * on short spans, and evenly spaced values on spans shorter than that.
+ */
+function logTicks(a, b) {
+  const out = [];
+  for (let k = Math.floor(a); k <= Math.ceil(b); k++) {
+    for (const m of b - a < 2.5 ? [1, 2, 5] : [1]) {
+      const t = k + Math.log10(m);
+      if (t >= a && t <= b) out.push(t);
+    }
+  }
+  if (out.length < 3) return niceTicks(10 ** a, 10 ** b, 4).filter((v) => v > 0).map(Math.log10);
+  const step = Math.ceil(out.length / 7);
+  return out.filter((_, i) => i % step === 0);
+}
+
+/** Fill `text` centred at (x, y), wrapped to `width`. */
+function wrapText(c, text, x, y, width, lineHeight) {
+  const lines = [];
+  for (const word of text.split(' ')) {
+    const longer = lines.length ? `${lines[lines.length - 1]} ${word}` : word;
+    if (lines.length && c.measureText(longer).width <= width) lines[lines.length - 1] = longer;
+    else lines.push(word);
+  }
+  lines.forEach((line, i) => c.fillText(line, x, y + (i - (lines.length - 1) / 2) * lineHeight));
+}
+
+function drawPowderView() {
+  if (!powderShown()) return;
+  drawPowder(powder.canvas, powder.canvas.clientWidth, powder.canvas.clientHeight, devicePixelRatio || 1);
+}
+
+/**
+ * Draw I(Q) into `canvas` (w × h CSS px): curves with ±σ bands, and the shell
+ * coverage on the right-hand axis. Exports add a title and a legend.
+ */
+function drawPowder(canvas, w, h, dpr, exporting = false) {
+  canvas.width = Math.round(w * dpr);
+  canvas.height = Math.round(h * dpr);
+  const c = canvas.getContext('2d');
+  c.setTransform(dpr, 0, 0, dpr, 0, 0);
+  c.fillStyle = '#ffffff';
+  c.fillRect(0, 0, w, h);
+  if (w < 80 || h < 60) return;
+  const layers = powderLayers();
+  if (!layers.length) {
+    const busy = powder.a.busy || powder.b.busy, failed = compareShown() === 'b' ? powder.b.error : powder.a.error;
+    c.fillStyle = !busy && failed ? '#d64545' : INK2;
+    c.font = `12.5px ${SANS}`;
+    c.textAlign = 'center';
+    c.textBaseline = 'middle';
+    wrapText(c, busy ? 'Computing I(Q)…' : failed || 'I(Q) appears here once computed.', w / 2, h / 2, Math.min(w - 40, 420), 18);
+    if (!exporting) powder.view = null;
+    return;
+  }
+  const log = powderScale === 'log', band = $('iq-band').checked, cover = $('iq-coverage').checked;
+  const { x0, x1, y0, y1 } = powderWindow(layers, log, band);
+  const pad = { l: 62, r: cover ? 52 : 18, t: exporting ? 46 : 14, b: 44 };
+  const aw = Math.max(10, w - pad.l - pad.r), ah = Math.max(10, h - pad.t - pad.b), bottom = pad.t + ah;
+  const X = (q) => pad.l + ((q - x0) / (x1 - x0)) * aw;
+  const T = (t) => bottom - ((t - y0) / (y1 - y0)) * ah;
+  const Y = (v) => T(log ? Math.log10(v) : v);
+  // Coverage: 0 at the bottom, 100% a little below the top.
+  const C = (f) => bottom - (f / 1.08) * ah;
+  if (!exporting) powder.view = { x0, x1, y0, y1, pad, aw, ah };
+  const xt = niceTicks(x0, x1, Math.max(2, Math.round(aw / 80)));
+  const yt = log ? logTicks(y0, y1) : niceTicks(y0, y1, Math.max(2, Math.round(ah / 55)));
+  c.strokeStyle = '#eef1f4';
+  c.lineWidth = 1;
+  c.beginPath();
+  for (const t of xt) { const x = Math.round(X(t)) + 0.5; c.moveTo(x, pad.t); c.lineTo(x, bottom); }
+  for (const t of yt) { const y = Math.round(T(t)) + 0.5; c.moveTo(pad.l, y); c.lineTo(pad.l + aw, y); }
+  c.stroke();
+
+  c.save();
+  c.beginPath();
+  c.rect(pad.l, pad.t, aw, ah);
+  c.clip();
+  // Shells with data, in runs: a shell without data breaks the curve.
+  const runs = (data) => {
+    const out = [];
+    let run = null;
+    data.intensity.forEach((v, b) => {
+      if (Number.isFinite(v) && (!log || v > 0)) (run ??= []).push(b);
+      else if (run) { out.push(run); run = null; }
+    });
+    if (run) out.push(run);
+    return out;
+  };
+  const at = (data, b) => X((b + 0.5) * data.dq);
+  if (cover) {
+    c.setLineDash([3, 3]);
+    c.lineWidth = 1;
+    c.globalAlpha = 0.55;
+    for (const { data, color } of layers) {
+      c.strokeStyle = color;
+      c.beginPath();
+      data.coverage.forEach((f, b) => {
+        const y = C(f);
+        if (b) c.lineTo(X(data.edges[b]), y);
+        else c.moveTo(X(data.edges[b]), y);
+        c.lineTo(X(data.edges[b + 1]), y);
+      });
+      c.stroke();
+    }
+    c.setLineDash([]);
+    c.globalAlpha = 1;
+  }
+  for (const { data, color } of layers) {
+    if (!band) break;
+    c.fillStyle = color;
+    c.globalAlpha = 0.16;
+    for (const run of runs(data)) {
+      if (!run.some((b) => data.sigma[b] > 0)) continue;
+      c.beginPath();
+      run.forEach((b, i) => {
+        const y = Y(data.intensity[b] + (data.sigma[b] || 0));
+        if (i) c.lineTo(at(data, b), y);
+        else c.moveTo(at(data, b), y);
+      });
+      for (let i = run.length - 1; i >= 0; i--) {
+        const b = run[i], v = data.intensity[b] - (data.sigma[b] || 0);
+        c.lineTo(at(data, b), log && v <= 0 ? bottom + 10 : Y(v));
+      }
+      c.closePath();
+      c.fill();
+    }
+    c.globalAlpha = 1;
+  }
+  // Markers when the shells are far enough apart to see them.
+  const markers = (x1 - x0) / layers[0].data.dq < aw / 6;
+  for (const { data, color } of layers) {
+    c.strokeStyle = c.fillStyle = color;
+    c.lineWidth = 1.6;
+    c.lineJoin = 'round';
+    for (const run of runs(data)) {
+      c.beginPath();
+      run.forEach((b, i) => (i ? c.lineTo(at(data, b), Y(data.intensity[b])) : c.moveTo(at(data, b), Y(data.intensity[b]))));
+      c.stroke();
+      if (!markers && run.length > 1) continue;
+      for (const b of run) {
+        c.beginPath();
+        c.arc(at(data, b), Y(data.intensity[b]), 2.2, 0, 2 * Math.PI);
+        c.fill();
+      }
+    }
+  }
+  if (!exporting && powder.at !== null) {
+    // The shell under the cursor.
+    const x = at(layers[0].data, powder.at);
+    c.strokeStyle = 'rgba(18, 24, 33, 0.35)';
+    c.lineWidth = 1;
+    c.setLineDash([4, 4]);
+    c.beginPath(); c.moveTo(x, pad.t); c.lineTo(x, bottom); c.stroke();
+    c.setLineDash([]);
+    for (const { data, color } of layers) {
+      const v = data.intensity[powder.at];
+      if (!Number.isFinite(v) || (log && v <= 0)) continue;
+      c.fillStyle = '#ffffff';
+      c.strokeStyle = color;
+      c.lineWidth = 2;
+      c.beginPath(); c.arc(x, Y(v), 4, 0, 2 * Math.PI); c.fill(); c.stroke();
+    }
+  }
+  const d = powder.drag;
+  if (!exporting && d?.moved && clickMode !== 'move') {
+    // The zoom box being dragged; a flat one zooms Q only and spans the height.
+    const flat = Math.abs(d.py1 - d.py) < 12;
+    const xa = Math.min(d.px, d.px1), ya = flat ? pad.t : Math.min(d.py, d.py1);
+    const bw = Math.abs(d.px1 - d.px), bh = flat ? ah : Math.abs(d.py1 - d.py);
+    c.fillStyle = 'rgba(47, 116, 230, 0.12)';
+    c.fillRect(xa, ya, bw, bh);
+    c.setLineDash([5, 3]);
+    c.strokeStyle = '#2f74e6';
+    c.lineWidth = 1.5;
+    c.strokeRect(xa, ya, bw, bh);
+    c.setLineDash([]);
+  }
+  c.restore();
+
+  // Axes, ticks and labels.
+  c.strokeStyle = AXIS;
+  c.lineWidth = 1;
+  c.beginPath();
+  c.moveTo(pad.l + 0.5, pad.t);
+  c.lineTo(pad.l + 0.5, bottom + 0.5);
+  c.lineTo(pad.l + aw, bottom + 0.5);
+  if (cover) c.lineTo(pad.l + aw + 0.5, pad.t);
+  c.stroke();
+  c.fillStyle = INK2;
+  c.font = `10.5px ${MONO}`;
+  c.textAlign = 'center';
+  c.textBaseline = 'top';
+  c.beginPath();
+  for (const t of xt) {
+    const x = Math.round(X(t)) + 0.5;
+    c.moveTo(x, bottom); c.lineTo(x, bottom + 4);
+    c.fillText(fmt(t), x, bottom + 7);
+  }
+  c.textAlign = 'right';
+  c.textBaseline = 'middle';
+  for (const t of yt) {
+    const y = Math.round(T(t)) + 0.5;
+    c.moveTo(pad.l, y); c.lineTo(pad.l - 4, y);
+    c.fillText(fmtValue(log ? 10 ** t : t), pad.l - 7, y);
+  }
+  if (cover) {
+    c.textAlign = 'left';
+    for (const f of [0, 0.5, 1]) {
+      const y = Math.round(C(f)) + 0.5;
+      c.moveTo(pad.l + aw, y); c.lineTo(pad.l + aw + 4, y);
+      c.fillText(`${100 * f}%`, pad.l + aw + 7, y);
+    }
+  }
+  c.stroke();
+  c.fillStyle = INK;
+  c.font = `600 11.5px ${SANS}`;
+  c.textAlign = 'center';
+  c.textBaseline = 'alphabetic';
+  c.fillText('Q (Å⁻¹)', pad.l + aw / 2, bottom + 36);
+  const vertical = (text, x) => {
+    c.save();
+    c.translate(x, pad.t + ah / 2);
+    c.rotate(-Math.PI / 2);
+    c.fillText(text, 0, 0);
+    c.restore();
+  };
+  vertical(log ? 'I(Q), log scale' : 'I(Q)', 16);
+  if (cover) {
+    c.fillStyle = INK2;
+    c.font = `11px ${SANS}`;
+    c.save();
+    c.translate(w - 8, pad.t + ah / 2);
+    c.rotate(Math.PI / 2);
+    c.fillText('shell coverage', 0, 0);
+    c.restore();
+  }
+
+  // Legend: when comparing (on plots large enough to spare the room), and on exports.
+  if ((layers.length > 1 && aw >= 280 && ah >= 160) || exporting) {
+    c.font = `600 11.5px ${SANS}`;
+    const items = layers.map((l) => [l.color, `${layers.length > 1 ? `${l.letter}  ` : ''}${shortName(l.name, 32)}`]);
+    const lw = Math.max(...items.map(([, t]) => c.measureText(t).width)) + 38, lh = 18 * items.length + 10;
+    const lx = pad.l + aw - lw - 8, ly = pad.t + 8;
+    c.fillStyle = 'rgba(255, 255, 255, 0.9)';
+    c.strokeStyle = 'rgba(18, 24, 33, 0.18)';
+    c.beginPath(); c.roundRect(lx, ly, lw, lh, 6); c.fill(); c.stroke();
+    c.textAlign = 'left';
+    c.textBaseline = 'middle';
+    items.forEach(([color, text], i) => {
+      const y = ly + 14 + 18 * i;
+      c.strokeStyle = color;
+      c.lineWidth = 2;
+      c.beginPath(); c.moveTo(lx + 10, y); c.lineTo(lx + 26, y); c.stroke();
+      c.fillStyle = INK2;
+      c.fillText(text, lx + 32, y);
+    });
+  }
+
+  if (!exporting) return;
+  const data = layers[0].data;
+  c.textAlign = 'left';
+  c.textBaseline = 'alphabetic';
+  c.fillStyle = INK;
+  c.font = `650 14px ${SANS}`;
+  c.fillText('I(Q)', 10, 24);
+  const titleWidth = c.measureText('I(Q)').width;
+  c.font = `11px ${MONO}`;
+  c.fillStyle = INK2;
+  const extras = [`ΔQ ${fmt(data.dq, 4)} Å⁻¹`, `voxels split ${data.split}³`, data.order > 1 ? data.symmetry : 'no symmetry', data.masked && mask ? `mask ${pct((mask.edge + mask.outlier) / mask.measured)}` : 'no mask'];
+  c.fillText(extras.join(' · '), 20 + titleWidth, 24);
+}
+
+/** The pointer in plot coordinates: q (Å⁻¹) and t (intensity, or log10 of it). */
+function powderPoint(e) {
+  const v = powder.view;
+  if (!v) return null;
+  const r = powder.canvas.getBoundingClientRect(), px = e.clientX - r.left, py = e.clientY - r.top;
+  return {
+    px, py,
+    q: v.x0 + ((px - v.pad.l) / v.aw) * (v.x1 - v.x0),
+    t: v.y0 + ((v.pad.t + v.ah - py) / v.ah) * (v.y1 - v.y0),
+    inside: px >= v.pad.l && px <= v.pad.l + v.aw && py >= v.pad.t && py <= v.pad.t + v.ah,
+  };
+}
+
+/** Read the shell under the pointer: Q, d = 2π/Q, and I ± σ with the coverage for each dataset. */
+function hoverPowder(e) {
+  const pt = powderPoint(e), layers = powderLayers(), first = layers[0]?.data;
+  const b = pt?.inside && first ? Math.floor(pt.q / first.dq) : -1;
+  if (b < 0 || b >= (first?.intensity.length ?? 0)) {
+    powder.hover.hidden = true;
+    if (powder.at !== null) { powder.at = null; drawPowderView(); }
+    return;
+  }
+  const value = (d) => (Number.isFinite(d.intensity[b])
+    ? `${fmtValue(d.intensity[b])}${Number.isFinite(d.sigma[b]) ? ` ± ${fmtValue(d.sigma[b])}` : ''} (${pct(d.coverage[b])} covered)`
+    : 'no data');
+  const q = (b + 0.5) * first.dq;
+  powder.hover.textContent = `Q ${fmt(q)} Å⁻¹  d ${fmt(2 * Math.PI / q, 3)} Å  →  ${layers.map((l) => `${layers.length > 1 ? `${l.letter} ` : ''}${value(l.data)}`).join(' · ')}`;
+  powder.hover.hidden = false;
+  if (powder.at !== b) {
+    powder.at = b;
+    drawPowderView();
+  }
+}
+
+// Dragging on I(Q): a box zooms (a flat one Q only), and in Move mode the plot pans.
+function startPowderDrag(e) {
+  const pt = powderPoint(e);
+  if (e.button !== 0 || !pt?.inside) return;
+  powder.drag = { px: pt.px, py: pt.py, px1: pt.px, py1: pt.py, q: pt.q, view: { ...powder.view }, moved: false };
+  try { powder.canvas.setPointerCapture(e.pointerId); } catch { /* synthetic or already released pointer */ }
+  if (clickMode === 'move') powder.canvas.classList.add('panning');
+}
+
+function movePowderDrag(e) {
+  const d = powder.drag;
+  if (!d) return;
+  const r = powder.canvas.getBoundingClientRect();
+  d.px1 = e.clientX - r.left;
+  d.py1 = e.clientY - r.top;
+  d.moved ||= Math.hypot(d.px1 - d.px, d.py1 - d.py) > (clickMode === 'move' ? 1 : 5);
+  if (!d.moved) return;
+  if (clickMode !== 'move') { drawPowderView(); return; }
+  const v = d.view, sq = ((d.px1 - d.px) / v.aw) * (v.x1 - v.x0), st = ((d.py1 - d.py) / v.ah) * (v.y1 - v.y0);
+  setPowderZoom({ x: [v.x0 - sq, v.x1 - sq], y: powder.zoom?.y ? [v.y0 + st, v.y1 + st] : null });
+}
+
+function endPowderDrag() {
+  const d = powder.drag;
+  powder.drag = null;
+  powder.canvas.classList.remove('panning');
+  if (!d || clickMode === 'move') return;
+  const v = d.view, dq = powderLayers()[0]?.data.dq ?? 0;
+  if (!d.moved) {
+    // A click in Zoom mode zooms into Q 2×, after a pause so a double-click (full range) does not also zoom.
+    if (clickMode !== 'zoom') return;
+    clearTimeout(powder.clickTimer);
+    powder.clickTimer = setTimeout(() => {
+      const half = Math.max((v.x1 - v.x0) / 4, dq);
+      setPowderZoom({ x: [Math.max(0, d.q - half), Math.max(0, d.q - half) + 2 * half], y: null });
+    }, 250);
+    return;
+  }
+  const q = (px) => v.x0 + ((px - v.pad.l) / v.aw) * (v.x1 - v.x0), t = (py) => v.y0 + ((v.pad.t + v.ah - py) / v.ah) * (v.y1 - v.y0);
+  const x = [q(Math.min(d.px, d.px1)), q(Math.max(d.px, d.px1))];
+  // At least two shells across.
+  if (x[1] - x[0] < 2 * dq) { drawPowderView(); return; }
+  setPowderZoom({ x, y: Math.abs(d.py1 - d.py) < 12 ? null : [t(Math.max(d.py, d.py1)), t(Math.min(d.py, d.py1))] });
+}
+
+function setPowderZoom(zoom) {
+  powder.zoom = zoom;
+  powder.zoomReset.hidden = !zoom;
+  drawPowderView();
+}
+
+function savePowderPNG() {
+  if (!powderLayers().length) return;
+  const out = document.createElement('canvas');
+  drawPowder(out, Math.max(powder.canvas.clientWidth, 560), Math.max(powder.canvas.clientHeight, 360) + 32, 3, true);
+  out.toBlob((blob) => download(blob, `${shownStem()}_IQ.png`));
+}
+
 // ---- Comparing two datasets ---------------------------------------------------------------
 
 /** Open a second file (B) in its own worker; its slices follow A's positions and processing. */
@@ -1813,6 +2524,8 @@ function closeCompare() {
   }
   showCompare();
   if (meta && panels.length) {
+    powder.b = newPowderLayer();
+    requestPowder();
     describe();
     redraw();
   }
@@ -1850,6 +2563,8 @@ const compareHandlers = {
     else panels.forEach((p) => request(p, 'b'));
     if (compare.maskBusy) showCompare('Building mask', 0);
     else showCompare();
+    powder.b = newPowderLayer();
+    requestPowder();
     describe();
     redraw();
   },
@@ -1882,16 +2597,22 @@ const compareHandlers = {
   mask: ({ stats, radius, k }) => {
     compare.maskBusy = false;
     compare.mask = stats ? { ...stats, radius, k } : null;
+    compare.maskVersion = (compare.maskVersion ?? 0) + 1;
     showCompare();
     describe();
     panels.forEach((p) => request(p, 'b'));
+    requestPowder();
   },
   'mask-error': ({ message }) => {
     compare.maskBusy = false;
     compare.maskNote = `Mask for B failed: ${message}`;
     showCompare();
     panels.forEach((p) => request(p, 'b'));
+    requestPowder();
   },
+  'progress-powder': (msg) => powderProgress('b', msg),
+  powder: (msg) => powderResult('b', msg),
+  'powder-error': ({ message }) => powderResult('b', null, message),
 };
 
 /**
@@ -1962,16 +2683,24 @@ function restore() {
   if (typeof saved.guides === 'boolean') $('guides').checked = saved.guides;
   if (typeof saved.grid === 'boolean') $('grid').checked = saved.grid;
   setClickMode(['zoom', 'move'].includes(saved.clickMode) ? saved.clickMode : 'navigate');
+  if (['linear', 'log'].includes(saved.iqScale)) powderScale = saved.iqScale;
+  if (['1', '2', '3'].includes(saved.iqSplit)) setSegmented($('iq-split'), saved.iqSplit);
+  if (typeof saved.iqBand === 'boolean') $('iq-band').checked = saved.iqBand;
+  if (typeof saved.iqCoverage === 'boolean') $('iq-coverage').checked = saved.iqCoverage;
   try {
     const l = JSON.parse(localStorage.getItem('nxv-layout'));
     if (['quad', 'focus'].includes(l?.mode)) lastMulti = layout = l.mode;
-    if (['hk', 'hl', 'kl', '3d'].includes(l?.key)) primary = l.key;
+    if (SLOT_VIEWS.includes(l?.slot)) slot = l.slot;
+    if (['hk', 'hl', 'kl', ...SLOT_VIEWS].includes(l?.key)) primary = l.key;
   } catch { /* storage unavailable: keep the defaults */ }
   paintColorbar();
 }
 
 function persist() {
-  const values = { cmap: $('cmap').value, scale: $('scale').dataset.value, angles: $('angles').checked, guides: $('guides').checked, grid: $('grid').checked, clickMode };
+  const values = {
+    cmap: $('cmap').value, scale: $('scale').dataset.value, angles: $('angles').checked, guides: $('guides').checked, grid: $('grid').checked, clickMode,
+    iqScale: powderScale, iqSplit: $('iq-split').dataset.value, iqBand: $('iq-band').checked, iqCoverage: $('iq-coverage').checked,
+  };
   try { localStorage.setItem('nxv-settings', JSON.stringify(values)); } catch { /* storage unavailable */ }
 }
 
@@ -2063,6 +2792,10 @@ $('mask-removed').onchange = () => { updateStates(); panels.forEach(request); };
 $('mask-download').onclick = () => worker.postMessage({ type: 'mask-download' });
 $('export-run').onclick = () => runExport();
 $('export-open').onclick = openInNebula;
+$('powder-show').onclick = showPowderView;
+$('powder-download').onclick = downloadPowder;
+segmented($('iq-split'), () => { persist(); requestPowder(); });
+for (const id of ['iq-band', 'iq-coverage']) $(id).onchange = () => { persist(); drawPowderView(); };
 
 // Dropping a file opens it, or opens it as dataset B over the Compare card or the B button.
 const dropsOnB = (e) => panels.length > 0 && !!e.target.closest?.('#compare, #compare-button, #data-files');

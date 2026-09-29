@@ -5,7 +5,7 @@
 <meta name="viewport" content="width=device-width, initial-scale=1">
 <meta name="theme-color" content="#ffffff">
 <title>NeXus Slice Viewer</title>
-<meta name="description" content="View reciprocal-space slices of 3-D neutron histograms (Mantid MDHistoWorkspace .nxs) in the browser, with symmetry averaging, masking and a 3-D view. Files are read locally and never uploaded.">
+<meta name="description" content="View reciprocal-space slices of 3-D neutron histograms (Mantid MDHistoWorkspace .nxs) in the browser, with symmetry averaging, masking, a 3-D view and I(Q). Files are read locally and never uploaded.">
 <link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 32 32'%3E%3Crect width='32' height='32' rx='7' fill='%23ffffff' stroke='%23cfd6df'/%3E%3Ccircle cx='16' cy='16' r='3.4' fill='%232f74e6'/%3E%3Cg fill='%237d8796' opacity='.7'%3E%3Ccircle cx='16' cy='6.5' r='1.7'/%3E%3Ccircle cx='16' cy='25.5' r='1.7'/%3E%3Ccircle cx='6.5' cy='16' r='1.7'/%3E%3Ccircle cx='25.5' cy='16' r='1.7'/%3E%3C/g%3E%3C/svg%3E">
 <script type="importmap">
 { "imports": {
@@ -299,6 +299,12 @@ body.panel-collapsed .panel { visibility: hidden; }
 .view-foot input.foot-fixed { flex: none; width: 90px; }
 .view-foot input.foot-fixed.short { width: 64px; }
 .cut--0 { --accent: var(--hue-0); } .cut--1 { --accent: var(--hue-1); } .cut--2 { --accent: var(--hue-2); }
+/* The fourth place holds the 3-D view or I(Q), switched from either header; the compact layout shows both. */
+.workspace > .view.off-slot { display: none; }
+.segmented.sm { height: 26px; }
+.segmented.sm button { padding: 0 8px; font-size: 11.5px; }
+.slot-switch { height: 24px; }
+.slot-switch button { padding: 0 7px; font-family: var(--font-mono); font-size: 10.5px; font-weight: 700; }
 
 /* ---- popovers ---------------------------------------------------------------------- */
 .popover {
@@ -369,6 +375,8 @@ body.dragging.drop-b::after { content: "Drop to compare as dataset B"; }
   .workspace { display: flex; flex-direction: column; padding: 0 10px 10px; }
   .workspace .view, .workspace.focus > .view:not(.primary), .workspace.single > .view:not(.primary) { display: flex; height: 460px; }
   .workspace .view .view-foot { display: flex !important; }
+  .workspace > .view.off-slot { display: flex; }
+  .slot-switch button:not(.on) { display: none; }
   .layout-control { display: none !important; }
   .work-head { flex-wrap: wrap; height: auto; padding: 10px; }
   .stage { height: auto; min-height: calc(100vh - var(--topbar)); }
@@ -540,8 +548,18 @@ body.dragging.drop-b::after { content: "Drop to compare as dataset B"; }
       </div>
     </section>
     <section class="psec" data-sec="export">
-      <button class="psec-head" type="button" aria-expanded="true"><svg class="chev" width="12" height="12" viewBox="0 0 12 12" aria-hidden="true"><path d="M2.5 4.5 6 8l3.5-3.5" fill="none" stroke="currentColor" stroke-width="1.4" stroke-linecap="round" stroke-linejoin="round"/></svg><span class="psec-title">Export</span><span id="sum-export" class="psec-sum">NEBULA3D · 3D-ΔPDF</span></button>
+      <button class="psec-head" type="button" aria-expanded="true"><svg class="chev" width="12" height="12" viewBox="0 0 12 12" aria-hidden="true"><path d="M2.5 4.5 6 8l3.5-3.5" fill="none" stroke="currentColor" stroke-width="1.4" stroke-linecap="round" stroke-linejoin="round"/></svg><span class="psec-title">Export</span><span id="sum-export" class="psec-sum">I(Q) · NEBULA3D</span></button>
       <div class="psec-body">
+        <div id="powder" class="sub">
+          <div class="sub-head">
+            <svg width="16" height="16" viewBox="0 0 18 18" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M2.5 2.5v13h13"/><path d="M4.5 12.5c1.5 0 2-7.5 3.2-7.5s1.3 5 2.6 5 1.4-2.5 2.4-2.5 1.2 3 2.3 3"/></svg>
+            <span class="sub-title">I(Q) · powder average</span><span id="powder-state" class="state">off</span>
+          </div>
+          <p class="sub-hint">Reduces the masked, symmetrized volume to 1-D: the mean intensity in each |Q| shell, over the part of the shell that has data.</p>
+          <p id="powder-status" class="note"></p>
+          <div id="powder-progress" class="boot-bar" hidden><div id="powder-bar" class="boot-fill"></div></div>
+          <span class="inline"><button id="powder-show" class="btn btn-ghost" type="button" style="flex: 1" title="Show I(Q) in the fourth view, in place of the 3-D view">Show I(Q)</button><button id="powder-download" class="btn btn-ghost" type="button" title="Save I(Q) as text: Q, I, σ, coverage and voxels per shell">Download</button></span>
+        </div>
         <div id="export" class="sub">
           <div class="sub-head">
             <svg width="16" height="16" viewBox="0 0 18 18" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M9 11V2.5M5.5 6 9 2.5 12.5 6"/><path d="M3 10.5v3.5a1.5 1.5 0 0 0 1.5 1.5h9a1.5 1.5 0 0 0 1.5-1.5v-3.5"/></svg>
@@ -608,6 +626,7 @@ body.dragging.drop-b::after { content: "Drop to compare as dataset B"; }
     <div><h4>Symmetry</h4><p>Generators are closed into a group, and every operation must map bin centers onto bin centers. A warning appears when the operations change the cell metric by more than 2%. Oblique axes use the reciprocal metric from the UB matrix.</p></div>
     <div><h4>Mask</h4><p>Edge erosion removes measured voxels near unmeasured ones, where detector edges leave spurious values; the outlier cut removes voxels far above the median of their equivalents (1.4826·MAD). The mask acts before averaging.</p></div>
     <div><h4>3-D view</h4><p>The volume is binned by an odd factor with blocks aligned to the origin, symmetrized and masked the same way, and drawn as a transparent isosurface with the current slices as planes.</p></div>
+    <div><h4>I(Q)</h4><p>Each shell's intensity is the mean over the voxels with data in it, so gaps and masks do not lower it. Symmetry orbits count with their multiplicity, voxels are split into sub-cells shared between shells, and σ is propagated from the file's uncertainties.</p></div>
   </div>
 </div>
 
@@ -618,6 +637,18 @@ body.dragging.drop-b::after { content: "Drop to compare as dataset B"; }
       <div id="iso-grid" class="segmented fill" data-value="100"><button type="button" data-value="64">Coarse</button><button type="button" data-value="100" class="on">Medium</button><button type="button" data-value="150">Fine</button></div></div>
     <label class="switch"><input id="iso-slices" type="checkbox" checked><span class="switch-track"></span><span class="switch-label">Show the three slices</span></label>
     <p class="note">Drag to rotate, scroll to zoom, right-drag to pan.</p>
+  </div>
+</div>
+
+<div id="pop-iq" class="popover" role="dialog" aria-label="I(Q) options" hidden style="width: 320px">
+  <div class="pop-head"><span class="pop-title">I(Q)</span></div>
+  <div class="pop-body">
+    <div class="field"><span class="label">Split voxels</span>
+      <div id="iq-split" class="segmented fill" data-value="2"><button type="button" data-value="1">Centres</button><button type="button" data-value="2" class="on">2³</button><button type="button" data-value="3">3³</button></div></div>
+    <p class="note">Each voxel is divided into n³ sub-cells, binned by their own |Q|, so a voxel is shared between the shells it overlaps. Binning whole voxels by their centres aliases when ΔQ is close to the voxel size; 3³ takes about twice as long as 2³.</p>
+    <label class="switch"><input id="iq-band" type="checkbox" checked><span class="switch-track"></span><span class="switch-label">Error band (±σ)</span></label>
+    <label class="switch" title="Fraction of each shell's volume that has data (right axis)"><input id="iq-coverage" type="checkbox" checked><span class="switch-track"></span><span class="switch-label">Shell coverage</span></label>
+    <p class="note">Drag to zoom (a flat drag zooms Q only), double-click for the full range. In Move mode, drag to pan.</p>
   </div>
 </div>
 
