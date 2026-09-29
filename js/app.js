@@ -46,7 +46,7 @@ const DEMO = { url: 'examples/demo_300K.nxs', compare: 'examples/demo_10K.nxs', 
 // True while the color range is the automatic one (not edited by hand).
 let rangeIsAuto = false;
 // The export for NEBULA3D being built: { name, send, attrs }. `handoff` is the
-// NEBULA3D tab it is sent to (Open in NEBULA3D): { id, win, origin, ready, file, sent }.
+// NEBULA3D tab it is sent to (Open in NEBULA3D): { id, win | channel, origin, ready, file, sent }.
 let exportJob = null, handoff = null;
 // ?nebula3d= points Open in NEBULA3D at another deployment (a local dev server).
 const NEBULA3D_URL = new URLSearchParams(location.search).get('nebula3d') || 'https://drthyang.github.io/nebula3d/';
@@ -1493,6 +1493,12 @@ function exportState(kind, state) {
  * Open in NEBULA3D: open its page in a new tab (now, while this is a click),
  * build the volume meanwhile, and post the file once NEBULA3D says it is
  * ready. The protocol is described in NEBULA3D's web/src/api/importHandoff.ts.
+ *
+ * On this origin (the deployed pair) the tab opens with `noopener` and the
+ * messages go over a BroadcastChannel: tabs of one site that hold a window
+ * reference to each other share a renderer process, so reloading or closing
+ * this page would also stop a run in NEBULA3D. Another origin (a local dev
+ * server) needs the window reference for postMessage.
  */
 function openInNebula() {
   if (!panels.length || exportJob) return;
@@ -1500,22 +1506,32 @@ function openInNebula() {
   url.searchParams.set('import', 'nexus-viewer');
   url.searchParams.set('id', id);
   url.searchParams.set('from', location.origin);
-  const win = window.open(url.href, '_blank');
-  if (!win) {
+  const separate = url.origin === location.origin && typeof BroadcastChannel === 'function';
+  // With noopener, window.open returns null even when the tab opens; watchHandoff reports a blocked one.
+  const win = window.open(url.href, '_blank', separate ? 'noopener' : '');
+  if (!separate && !win) {
     exportNote('error', 'blocked', 'The browser blocked the new tab: allow pop-ups for this site, or use Download.');
     return;
   }
   endHandoff();
-  handoff = { id, win, origin: url.origin, ready: false, file: null, meta: null, sent: false, since: Date.now() };
+  const channel = separate ? new BroadcastChannel(`nebula3d-import:${id}`) : null;
+  channel?.addEventListener('message', (e) => onHandoffMessage(e.data));
+  handoff = { id, win, channel, origin: url.origin, ready: false, file: null, meta: null, sent: false, since: Date.now() };
   handoff.watch = setInterval(watchHandoff, 1000);
   if (!runExport(true)) endHandoff('the volume could not be built.');
+}
+
+/** Post `message` to the NEBULA3D tab of handoff `h`. */
+function postHandoff(h, message) {
+  if (h.channel) h.channel.postMessage(message);
+  else h.win.postMessage(message, h.origin);
 }
 
 function sendHandoff() {
   const h = handoff;
   if (!h?.ready || !h.file || h.sent) return;
   h.sent = true;
-  h.win.postMessage({ type: 'nebula3d-import', id: h.id, schema: 'nexus-viewer/1', file: h.file, meta: h.meta }, h.origin);
+  postHandoff(h, { type: 'nebula3d-import', id: h.id, schema: 'nexus-viewer/1', file: h.file, meta: h.meta });
   exportNote('busy', 'sending…', `Sent ${shortName(h.file.name)} to NEBULA3D; loading it there…`, h.file.name);
 }
 
@@ -1526,34 +1542,44 @@ function endHandoff(reason = null) {
   if (!h) return;
   clearInterval(h.watch);
   if (reason) {
-    try { h.win.postMessage({ type: 'nebula3d-import-cancel', id: h.id, message: reason }, h.origin); } catch { /* tab gone */ }
+    try { postHandoff(h, { type: 'nebula3d-import-cancel', id: h.id, message: reason }); } catch { /* tab gone */ }
     exportNote('error', 'not sent', `Not sent to NEBULA3D: ${reason}`);
   }
+  h.channel?.close();
 }
 
 function watchHandoff() {
   const h = handoff;
   if (!h) return;
-  if (h.win.closed) endHandoff('the NEBULA3D tab was closed.');
-  else if (!h.ready && h.file && Date.now() - h.since > 120_000) {
+  if (h.win?.closed) endHandoff('the NEBULA3D tab was closed.');
+  else if (h.channel && !h.ready && h.file && Date.now() - h.since > 20_000) {
+    // NEBULA3D answers as soon as its page loads, so this is most likely a blocked tab.
+    exportNote('error', 'no answer', 'NEBULA3D has not answered. If no tab opened, allow pop-ups for this site and try again, or use Download and Load volume… there.');
+  } else if (!h.ready && h.file && Date.now() - h.since > 120_000) {
     exportNote('error', 'no answer', 'NEBULA3D has not answered after 2 minutes. Check its tab, or use Download and Load volume… there.');
+  }
+}
+
+/** A message from the NEBULA3D tab, by window or channel. */
+function onHandoffMessage(data) {
+  const h = handoff;
+  if (!h || data?.id !== h.id) return;
+  if (data.type === 'nebula3d-import-ready') {
+    h.ready = true;
+    sendHandoff();
+  } else if (data.type === 'nebula3d-import-loaded') {
+    const name = h.file?.name ?? 'the volume';
+    endHandoff();
+    exportNote('ok', 'sent', `NEBULA3D loaded ${shortName(name)} and selected it as its dataset; continue in its tab.`, name);
+  } else if (data.type === 'nebula3d-import-error') {
+    endHandoff();
+    exportNote('error', 'failed', `NEBULA3D could not load the volume: ${data.message}`);
   }
 }
 
 addEventListener('message', (e) => {
   const h = handoff;
-  if (!h || e.source !== h.win || e.origin !== h.origin || e.data?.id !== h.id) return;
-  if (e.data.type === 'nebula3d-import-ready') {
-    h.ready = true;
-    sendHandoff();
-  } else if (e.data.type === 'nebula3d-import-loaded') {
-    const name = h.file?.name ?? 'the volume';
-    endHandoff();
-    exportNote('ok', 'sent', `NEBULA3D loaded ${shortName(name)} and selected it as its dataset; continue in its tab.`, name);
-  } else if (e.data.type === 'nebula3d-import-error') {
-    endHandoff();
-    exportNote('error', 'failed', `NEBULA3D could not load the volume: ${e.data.message}`);
-  }
+  if (h?.win && e.source === h.win && e.origin === h.origin) onHandoffMessage(e.data);
 });
 
 // ---- 3-D view ---------------------------------------------------------------------------
