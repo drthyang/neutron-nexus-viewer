@@ -385,11 +385,8 @@ const handlers = {
       return;
     }
     download(blob, name);
-    $('export-state').textContent = 'saved';
-    $('export-state').className = 'state ok';
-    $('export-status').className = 'note ok';
-    $('export-status').textContent = `Saved ${name} (${mb(blob.size)}, ${pct(stats.valid / stats.total)} of voxels valid) in ${seconds.toFixed(1)} s. `
-      + 'In NEBULA3D, open it with Load volume…';
+    exportNote('ok', 'saved', `Saved ${name} (${mb(blob.size)}, ${pct(stats.valid / stats.total)} of voxels valid) in ${seconds.toFixed(1)} s. `
+      + 'In NEBULA3D, open it with Load volume…');
   },
   'export-error': ({ message }) => {
     if (exportJob?.send) endHandoff(`the viewer could not build the volume: ${message}`);
@@ -1404,22 +1401,20 @@ function showMask(seconds) {
 /** The Export card: what would be exported, or why it cannot be. */
 function showExport() {
   if (exportJob || !meta) return;
-  const statusEl = $('export-status'), state = $('export-state');
+  const statusEl = $('export-status');
   $('export-progress').hidden = true;
   let plan;
   try {
     plan = exportPlan(meta.dims, meta.lattice);
   } catch (err) {
     $('export-run').disabled = $('export-open').disabled = true;
-    state.textContent = 'unavailable';
-    state.className = 'state';
+    exportState('', 'unavailable');
     statusEl.className = 'note error';
     statusEl.textContent = err.message;
     return;
   }
   $('export-run').disabled = $('export-open').disabled = false;
-  state.textContent = '3D-ΔPDF';
-  state.className = 'state';
+  exportState('', 'ready');
   const sym = symmetry.ops.length > 1, voxels = plan.shape.reduce((a, b) => a * b);
   const parts = [
     `${plan.shape.join(' × ')} (H × K × L)${plan.padded ? ', padded to be symmetric about 0' : ''}`,
@@ -1466,8 +1461,7 @@ function runExport(send = false) {
   };
   exportJob = { name: `${stem()}_${sym ? `sym${symmetry.name.replace(/\//g, '')}` : 'unsym'}.nxs`, send, attrs };
   $('export-run').disabled = $('export-open').disabled = true;
-  $('export-state').textContent = 'working…';
-  $('export-state').className = 'state busy';
+  exportState('busy', 'working…');
   status('busy', 'exporting');
   showExportProgress('Symmetrizing', 0);
   worker.postMessage({ type: 'export', id: ++requestId, plan: { order, lo, size, shape, centers, ub }, maps, attrs });
@@ -1475,10 +1469,18 @@ function runExport(send = false) {
 }
 
 function exportNote(kind, state, text) {
-  $('export-state').textContent = state;
-  $('export-state').className = `state ${kind}`;
+  exportState(kind, state);
   $('export-status').className = `note${kind === 'ok' ? ' ok' : kind === 'error' ? ' error' : ''}`;
   $('export-status').textContent = text;
+}
+
+/** The export's state badge, its section summary and the pipeline's NEBULA3D step. */
+function exportState(kind, state) {
+  $('export-state').textContent = state;
+  $('export-state').className = `state ${kind}`.trim();
+  $('sum-export').textContent = `NEBULA3D · ${state}`;
+  $('pipe-export').className = kind === 'ok' ? 'ok' : 'off';
+  $('pipe-export-text').textContent = { sent: 'volume sent to NEBULA3D', saved: 'volume saved for NEBULA3D' }[state] ?? 'next analysis: export the volume';
 }
 
 /**
@@ -1962,18 +1964,20 @@ for (const sec of document.querySelectorAll('.psec')) {
   };
 }
 try { if (localStorage.getItem('nxv-panel') === 'closed') setPanel(false); } catch { /* storage unavailable */ }
-for (const li of document.querySelectorAll('.pipeline li[data-target]')) {
-  li.onclick = () => {
-    setPanel(true);
-    const sec = li.closest('.psec');
-    if (sec.classList.contains('collapsed')) sec.querySelector('.psec-head').click();
-    const target = $(li.dataset.target);
-    target.scrollIntoView({ block: 'nearest', behavior: 'smooth' });
-    target.classList.remove('flash');
-    void target.offsetWidth;
-    target.classList.add('flash');
-  };
+/** Show a panel element: open the panel and its section, scroll to it and flash it. */
+function reveal(target) {
+  setPanel(true);
+  const sec = target.closest('.psec');
+  if (sec?.classList.contains('collapsed')) sec.querySelector('.psec-head').click();
+  target.scrollIntoView({ block: 'nearest', behavior: 'smooth' });
+  target.classList.remove('flash');
+  void target.offsetWidth;
+  target.classList.add('flash');
 }
+for (const li of document.querySelectorAll('.pipeline li[data-target]')) li.onclick = () => reveal($(li.dataset.target));
+// The legend above the views opens the color settings.
+$('legend').onclick = () => reveal(document.querySelector('.psec[data-sec="display"] .psec-body'));
+$('legend').onkeydown = (e) => { if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); $('legend').click(); } };
 $('sym-preset').onchange = () => {
   const preset = PRESETS.find(([name]) => name === $('sym-preset').value);
   if (!preset) { $('sym-ops').focus(); return; }

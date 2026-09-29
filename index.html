@@ -175,7 +175,9 @@ body.panel-collapsed .panel { visibility: hidden; }
 .credit .sep { margin: 0 6px; color: var(--border-strong); }
 .credit a { color: var(--text-2); text-decoration: none; }
 .credit a:hover { color: var(--accent-hi); text-decoration: underline; }
-.panel-foot { position: sticky; bottom: 0; margin-top: auto; display: flex; flex-direction: column; gap: 2px; padding: 10px 16px; border-top: 1px solid var(--border); background: var(--surface); }
+.panel-foot { position: sticky; bottom: 0; margin-top: auto; display: flex; flex-direction: column; gap: 2px; padding: 10px 16px; border-top: 1px solid var(--border); background: var(--surface); z-index: 3; }
+/* Scrolled-to elements stop above the sticky footer. */
+.panel .sub, .panel .psec-body { scroll-margin-bottom: 64px; }
 .psec { border-bottom: 1px solid var(--border); }
 .psec-head { display: flex; align-items: center; gap: 8px; width: 100%; height: 42px; padding: 0 16px; border: 0; background: transparent; cursor: pointer; text-align: left; }
 .psec-head:hover .psec-title { color: var(--text); }
@@ -245,6 +247,8 @@ body.panel-collapsed .panel { visibility: hidden; }
 .legend { display: flex; align-items: center; gap: 8px; min-width: 0; font-family: var(--font-mono); font-size: 11px; color: var(--text-2); }
 .legend canvas { width: 160px; height: 10px; border-radius: 3px; border: 1px solid var(--border); }
 .legend .scale-name { color: var(--text-3); }
+.legend { cursor: pointer; padding: 4px 8px; border-radius: var(--radius-sm); }
+.legend:hover { background: var(--surface); }
 .workspace { flex: 1; min-height: 0; padding: 0 10px 10px; display: grid; gap: 10px; }
 .workspace.quad { grid-template-columns: repeat(2, minmax(0, 1fr)); grid-template-rows: repeat(2, minmax(0, 1fr)); }
 .workspace.focus { grid-template-columns: minmax(0, 2.2fr) minmax(0, 1fr); grid-template-rows: repeat(3, minmax(0, 1fr)); }
@@ -470,6 +474,22 @@ body.dragging.drop-b::after { content: "Drop to compare as dataset B"; }
       </div>
     </section>
 
+    <section class="psec" data-sec="display">
+      <button class="psec-head" type="button" aria-expanded="true"><svg class="chev" width="12" height="12" viewBox="0 0 12 12" aria-hidden="true"><path d="M2.5 4.5 6 8l3.5-3.5" fill="none" stroke="currentColor" stroke-width="1.4" stroke-linecap="round" stroke-linejoin="round"/></svg><span class="psec-title">Display</span><span id="sum-display" class="psec-sum"></span></button>
+      <div class="psec-body">
+        <div class="inline" style="justify-content: flex-end; margin-top: -6px"><button id="auto" class="btn btn-ghost btn-xs" type="button" title="vmin 0, vmax at the 97th percentile and softening at the median of positive values in the current slices">Auto range</button></div>
+        <div class="prow"><label class="plabel" for="cmap">Colormap</label><select id="cmap"></select></div>
+        <div class="prow"><span class="plabel"></span><canvas id="cmap-bar" class="cbar-panel" width="256" height="1" aria-hidden="true"></canvas></div>
+        <div class="prow"><span class="plabel">Range</span><span class="pair"><input id="vmin" class="num" type="number" step="any" aria-label="vmin" title="vmin"><input id="vmax" class="num" type="number" step="any" aria-label="vmax" title="vmax"></span></div>
+        <div class="prow"><span class="plabel">Scale</span>
+          <div id="scale" class="segmented fill" data-value="asinh" role="group" aria-label="Color scale"><button type="button" data-value="asinh" class="on">Asinh</button><button type="button" data-value="linear">Linear</button><button type="button" data-value="log">Log</button></div></div>
+        <div id="soft-wrap" class="prow" title="Asinh softening: values below it are shown nearly linearly"><label class="plabel" for="soft">Softening</label><input id="soft" class="num" type="number" min="0" step="any"></div>
+        <div class="prow" title="Show ± this many r.l.u. around the origin; empty for the full range"><label class="plabel" for="limit">View ±</label><input id="limit" class="num" type="number" min="0" step="any" placeholder="full range"></div>
+        <label class="switch"><input id="guides" type="checkbox" checked><span class="switch-track"></span><span class="switch-label">Guides where the other slices cut</span></label>
+        <label id="angles-wrap" class="switch" title="Snap direct-cell angles within 1° of 60°, 90° or 120°"><input id="angles" type="checkbox" checked><span class="switch-track"></span><span class="switch-label">Nominal cell angles (60/90/120°)</span></label>
+      </div>
+    </section>
+
     <section class="psec" data-sec="processing">
       <button class="psec-head" type="button" aria-expanded="true"><svg class="chev" width="12" height="12" viewBox="0 0 12 12" aria-hidden="true"><path d="M2.5 4.5 6 8l3.5-3.5" fill="none" stroke="currentColor" stroke-width="1.4" stroke-linecap="round" stroke-linejoin="round"/></svg><span class="psec-title">Processing</span><span id="sum-processing" class="psec-sum"></span></button>
       <div class="psec-body">
@@ -478,6 +498,7 @@ body.dragging.drop-b::after { content: "Drop to compare as dataset B"; }
           <li id="pipe-mask" class="off" data-target="mask"><span class="pipe-dot"></span><span class="pipe-name">Mask<small id="pipe-mask-text">off</small></span></li>
           <li id="pipe-sym" class="off" data-target="symmetry"><span class="pipe-dot"></span><span class="pipe-name">Symmetry average<small id="pipe-sym-text">none</small></span></li>
           <li class="ok"><span class="pipe-dot"></span><span class="pipe-name">Views<small id="pipe-views">3 slices + 3-D</small></span></li>
+          <li id="pipe-export" class="off" data-target="export"><span class="pipe-dot"></span><span class="pipe-name">NEBULA3D · 3D-ΔPDF<small id="pipe-export-text">next analysis: export the volume</small></span></li>
         </ol>
 
         <div id="symmetry" class="sub">
@@ -513,32 +534,21 @@ body.dragging.drop-b::after { content: "Drop to compare as dataset B"; }
           </div>
         </div>
 
+      </div>
+    </section>
+    <section class="psec" data-sec="export">
+      <button class="psec-head" type="button" aria-expanded="true"><svg class="chev" width="12" height="12" viewBox="0 0 12 12" aria-hidden="true"><path d="M2.5 4.5 6 8l3.5-3.5" fill="none" stroke="currentColor" stroke-width="1.4" stroke-linecap="round" stroke-linejoin="round"/></svg><span class="psec-title">Export</span><span id="sum-export" class="psec-sum">NEBULA3D · 3D-ΔPDF</span></button>
+      <div class="psec-body">
         <div id="export" class="sub">
           <div class="sub-head">
             <svg width="16" height="16" viewBox="0 0 18 18" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M9 11V2.5M5.5 6 9 2.5 12.5 6"/><path d="M3 10.5v3.5a1.5 1.5 0 0 0 1.5 1.5h9a1.5 1.5 0 0 0 1.5-1.5v-3.5"/></svg>
-            <span class="sub-title">Export for NEBULA3D</span><span id="export-state" class="state">3D-ΔPDF</span>
+            <span class="sub-title">NEBULA3D · 3D-ΔPDF</span><span id="export-state" class="state">ready</span>
           </div>
-          <p class="sub-hint">Sends the masked, symmetrized volume to NEBULA3D's 3D-ΔPDF pipeline in a new tab, or saves it as a file.</p>
+          <p class="sub-hint">The last step here: hand the masked, symmetrized volume to NEBULA3D for 3D-ΔPDF analysis, in a new tab or as a file.</p>
           <p id="export-status" class="note"></p>
           <div id="export-progress" class="boot-bar" hidden><div id="export-bar" class="boot-fill"></div></div>
           <span class="inline"><button id="export-open" class="btn btn-primary" type="button" style="flex: 1" title="Open NEBULA3D in a new tab and load this volume there">Open in NEBULA3D ↗</button><button id="export-run" class="btn btn-ghost" type="button" title="Save the file, to load it in NEBULA3D with Load volume…">Download</button></span>
         </div>
-      </div>
-    </section>
-
-    <section class="psec" data-sec="display">
-      <button class="psec-head" type="button" aria-expanded="true"><svg class="chev" width="12" height="12" viewBox="0 0 12 12" aria-hidden="true"><path d="M2.5 4.5 6 8l3.5-3.5" fill="none" stroke="currentColor" stroke-width="1.4" stroke-linecap="round" stroke-linejoin="round"/></svg><span class="psec-title">Display</span><span id="sum-display" class="psec-sum"></span></button>
-      <div class="psec-body">
-        <div class="inline" style="justify-content: flex-end; margin-top: -6px"><button id="auto" class="btn btn-ghost btn-xs" type="button" title="vmin 0, vmax at the 97th percentile and softening at the median of positive values in the current slices">Auto range</button></div>
-        <div class="prow"><label class="plabel" for="cmap">Colormap</label><select id="cmap"></select></div>
-        <div class="prow"><span class="plabel"></span><canvas id="cmap-bar" class="cbar-panel" width="256" height="1" aria-hidden="true"></canvas></div>
-        <div class="prow"><span class="plabel">Range</span><span class="pair"><input id="vmin" class="num" type="number" step="any" aria-label="vmin" title="vmin"><input id="vmax" class="num" type="number" step="any" aria-label="vmax" title="vmax"></span></div>
-        <div class="prow"><span class="plabel">Scale</span>
-          <div id="scale" class="segmented fill" data-value="asinh" role="group" aria-label="Color scale"><button type="button" data-value="asinh" class="on">Asinh</button><button type="button" data-value="linear">Linear</button><button type="button" data-value="log">Log</button></div></div>
-        <div id="soft-wrap" class="prow" title="Asinh softening: values below it are shown nearly linearly"><label class="plabel" for="soft">Softening</label><input id="soft" class="num" type="number" min="0" step="any"></div>
-        <div class="prow" title="Show ± this many r.l.u. around the origin; empty for the full range"><label class="plabel" for="limit">View ±</label><input id="limit" class="num" type="number" min="0" step="any" placeholder="full range"></div>
-        <label class="switch"><input id="guides" type="checkbox" checked><span class="switch-track"></span><span class="switch-label">Guides where the other slices cut</span></label>
-        <label id="angles-wrap" class="switch" title="Snap direct-cell angles within 1° of 60°, 90° or 120°"><input id="angles" type="checkbox" checked><span class="switch-track"></span><span class="switch-label">Nominal cell angles (60/90/120°)</span></label>
       </div>
     </section>
     <footer class="panel-foot credit"><span>© 2026 Tsung-Han Yang</span><span><a href="https://github.com/drthyang/neutron-nexus-viewer/blob/main/LICENSE" target="_blank" rel="noopener noreferrer">AGPLv3</a><span class="sep" aria-hidden="true">·</span><a href="https://github.com/drthyang/neutron-nexus-viewer#readme" target="_blank" rel="noopener noreferrer">About &amp; documentation</a></span></footer>
@@ -564,7 +574,7 @@ body.dragging.drop-b::after { content: "Drop to compare as dataset B"; }
         <button type="button" data-value="b" title="Show dataset B only">B</button>
       </div>
       <span class="spacer"></span>
-      <span class="legend" title="Shared color scale (set it in the Display section)">
+      <span id="legend" class="legend" role="button" tabindex="0" title="Shared color scale: click to set it in the Display section">
         <span id="legend-min">0</span><canvas id="legend-bar" width="256" height="1" aria-hidden="true"></canvas><span id="legend-max">1</span><span id="legend-scale" class="scale-name">asinh</span>
       </span>
       <span class="spacer"></span>

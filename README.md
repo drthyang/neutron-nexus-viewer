@@ -14,7 +14,7 @@ file, or [the example](https://drthyang.github.io/neutron-nexus-viewer/?demo): o
 short-range-order diffuse scattering condenses into superlattice peaks.
 
 <p align="center">
-  <img src="docs/screenshot.png" alt="NeXus Viewer comparing the example crystal at 300 K and 10 K: the HK, HL and KL slices are each cut along their diagonal, with 300 K in the lower-left half, showing diffuse rods at the M points, and 10 K in the upper-right half, showing sharp superlattice peaks there. The control panel lists both files in one Dataset table and shows the processing pipeline with 6/mmm symmetry averaging and a mask; the 3-D view shows the isosurface with the split slice planes." width="100%" />
+  <img src="docs/screenshot.png" alt="NeXus Viewer comparing the example crystal at 300 K and 10 K: the HK, HL and KL slices are each cut along their diagonal, with 300 K in the lower-left half, showing diffuse rods at the M points, and 10 K in the upper-right half, showing sharp superlattice peaks there. The control panel lists both files in one Dataset table, then the Display settings and the processing pipeline with 6/mmm symmetry averaging and a mask; the 3-D view shows the isosurface with the split slice planes." width="100%" />
 </p>
 
 ## Goals
@@ -50,9 +50,8 @@ short-range-order diffuse scattering condenses into superlattice peaks.
 3. Click a slice to move the other two through that point. Switch the header to
    **Zoom** or **Move** to explore, and **Focus** to show one view large.
 4. To compare, open a second file under **Dataset → Compare two datasets**.
-5. For a 3D-ΔPDF, choose **Open in NEBULA3D** under **Processing → Export for
-   NEBULA3D**: [NEBULA3D](https://drthyang.github.io/nebula3d/) opens with the
-   volume loaded.
+5. For a 3D-ΔPDF, choose **Open in NEBULA3D** in the **Export** section:
+   [NEBULA3D](https://drthyang.github.io/nebula3d/) opens with the volume loaded.
 
 ## Run locally
 

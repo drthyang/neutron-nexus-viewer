@@ -20,11 +20,12 @@ The histogram is held in memory as float32. A 401³ volume needs about 260 MB an
 ## The screen
 
 - **Top bar**: the open file (A and B, joined by the split icon, when comparing), the engine status, and ⓘ for dataset details, a summary of the method and links to these guides. Long file names are shortened in the middle; hover for the full name.
-- **Control panel** (left, collapsible; each section folds to a one-line summary):
+- **Control panel** (left, collapsible; each section folds to a one-line summary), in the order you work:
   - **Dataset**: unit cell (from UB), reciprocal lattice, grid and measured fraction, and the Compare card for opening a second dataset.
-  - **Processing**: the pipeline *Measured voxels → Mask → Symmetry average → Views*, followed by the Symmetry and Mask controls. Active stages are highlighted.
   - **Display**: colormap, color range, scale, view range, guides and cell angles.
-- **Workspace**: a header row with the click mode, the shared color legend and the layout, then four views (HK, HL, KL and 3-D).
+  - **Processing**: the pipeline *Measured voxels → Mask → Symmetry average → Views → NEBULA3D*, followed by the Symmetry and Mask controls. Active stages are highlighted, and clicking a stage jumps to its controls.
+  - **Export**: the last step, handing the processed volume to NEBULA3D.
+- **Workspace**: a header row with the click mode, the shared color legend (click it for the Display settings) and the layout, then four views (HK, HL, KL and 3-D).
 - **Panel footer**: copyright, the license and a link to this documentation. The ⓘ popover links to each guide.
 
 Below 1000 px wide, or on short screens, the panel sits above the views and the page scrolls.
@@ -92,7 +93,7 @@ Once B is open, the Dataset section lists both files and one table for the two: 
 
 ## Export for NEBULA3D
 
-**Processing → Export for NEBULA3D** hands the processed volume to the 3D-ΔPDF pipeline of [NEBULA3D](https://github.com/drthyang/nebula3d). NEBULA3D does not symmetrize, so choose a Laue class (and a mask) first.
+The **Export** section at the bottom of the panel hands the processed volume to the 3D-ΔPDF pipeline of [NEBULA3D](https://github.com/drthyang/nebula3d). NEBULA3D does not symmetrize, so choose a Laue class (and a mask) first.
 
 - **Open in NEBULA3D** opens NEBULA3D in a new tab and builds the volume while it starts; NEBULA3D then loads it and selects it as its dataset, ready to configure and run. The card reports when NEBULA3D has loaded it. If the browser blocks the tab, allow pop-ups for this site.
 - **Download** saves the same file, to open in NEBULA3D with *Load volume…* (or to put in the data folder of its desktop app).
