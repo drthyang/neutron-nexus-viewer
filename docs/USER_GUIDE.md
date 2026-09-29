@@ -87,7 +87,7 @@ In every mode, double-click (or *Reset zoom*) returns to the full view. On a tou
 
 A line cut is a 1-D profile through the volume along a line in one of the slices: *3-D volume → 2-D slice → 1-D cut*. It lies in its slice's plane and within its slab, so it follows the slice as you move it or change its thickness.
 
-- **Drawing**: choose **Cut** in the workspace header (or *Draw a cut* in the empty cut view) and drag across a slice. The ends snap to voxel centres; hold Shift to keep the cut along a lattice direction, such as (H, 0), (H, H) or (H, 2H). Drag an end to change the cut, or drag elsewhere to draw a new one. The cut shows in the fourth place, and on its slice as a line between two handles inside a dashed band, the width it averages.
+- **Drawing**: choose **Cut** in the workspace header (or *Draw a cut* in the empty cut view) and drag across a slice. The ends snap to voxel centres; hold Shift to keep the cut along a lattice direction, such as (H, 0), (H, H) or (H, 2H). Drag an end to change the cut, or drag elsewhere to draw a new one. The first cut shows in the fourth place; after that the fourth place stays as you set it, so you can change a cut while watching the 3-D view. The cut shows on its slice as a line between two handles inside a dashed band, the width it averages, and in the 3-D view as a rod through the slices, in the box of voxels it averages (its options turn that off).
 - **Typed ends** (footer): *From* and *To* take three coordinates, like `-3, 0, 1` and `3, 0, 1`. They must share one coordinate, and the cut lies in the slice through it, which moves there: for these, the HK slice moves to L = 1 (the cut's current slice is kept when the ends fit it).
 - **Width W**: the full width of the band across the line, in Å⁻¹ on a lattice plane (with 2π, as for I(Q)) or in the axes' unit otherwise. The slider covers half a voxel to 30 voxels on a log scale; empty means three voxels.
 - **Points**: along the axis the cut changes more along (H for a cut along (H, 0.5H+1, 0)), every bin width of that axis by default; *Step* in the options changes it. Each point averages the voxels whose centres lie within W/2 of the line and within half a step of the point, pooled with their symmetry equivalents as in the slices. See [Method → Line cuts](METHOD.md#line-cuts).
@@ -97,7 +97,7 @@ A line cut is a 1-D profile through the volume along a line in one of the slices
 
 ## 3-D view
 
-A transparent isosurface of the binned, symmetrized and masked volume, with the current slices as planes, clipped to the view range. The footer sets the isosurface level (log slider or typed; empty returns to the automatic level) and the surface and slice opacity. The options button sets the grid (about 64, 100 or 150 blocks per axis) and hides the slices. Drag to rotate, scroll to zoom, right-drag to pan, and use ↺ to reset the camera.
+A transparent isosurface of the binned, symmetrized and masked volume, with the current slices as planes, clipped to the view range. The footer sets the isosurface level (log slider or typed; empty returns to the automatic level) and the surface and slice opacity. The options button sets the grid (about 64, 100 or 150 blocks per axis), hides the slices, and shows or hides the [line cut](#line-cuts): a rod along its line, in a translucent box of the voxels it averages. The rod passes through the slices: it is solid where it is in view and faint where a slice hides it, with a white collar where it crosses another slice. Drag to rotate, scroll to zoom, right-drag to pan, and use ↺ to reset the camera.
 
 ## I(Q)
 
@@ -143,4 +143,4 @@ The **Export** section at the bottom of the panel hands the processed volume to 
 
 - **Layouts**: *Quad* (2×2), *Focus* (one large view with the other three beside it) and *Single*. In *Focus*, the small views are thumbnails: hovering one highlights it, and clicking it (or Enter) shows it large. Each view's header can focus or maximize it, and double-clicking a header maximizes it. Esc returns.
 - **Save PNG** exports a view at 3× resolution. Slice exports include a title, their own colorbar and the integer grid when it is on, without guides. When comparing, they keep the split and the dataset tags.
-- **Remembered settings**: the colormap, scale, click mode, layout, the view in the fourth place, the I(Q) and line cut options, panel state and folded sections are remembered per browser.
+- **Remembered settings**: the colormap, scale, click mode, layout, the view in the fourth place, the I(Q) and line cut options, whether the 3-D view shows the cut, panel state and folded sections are remembered per browser.

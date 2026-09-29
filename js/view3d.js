@@ -1,5 +1,5 @@
 // 3-D view: transparent isosurface of the binned volume plus the three current
-// slices as textured planes, all in the lattice geometry. Geometry is built in
+// slices as textured planes and the line cut, all in the lattice geometry. Geometry is built in
 // display coordinates (r.l.u. along each axis) inside a group whose matrix maps
 // them to Cartesian reciprocal space, so the isosurface and slices are sheared
 // exactly like the 2-D plots. Rendering happens on demand.
@@ -9,6 +9,8 @@ import { OrbitControls } from 'three/addons/controls/OrbitControls.js';
 
 // Outline colors follow the page's axis hues: H amber, K blue, L green.
 const PLANE_COLORS = [0xd98a0b, 0x2f74e6, 0x13a36b];
+// The line cut: a color apart from the axes, the isosurface and the colormaps.
+const CUT_COLOR = 0xc2185b;
 
 export class View3D {
   constructor(canvas) {
@@ -36,6 +38,7 @@ export class View3D {
     this.sliceOpacity = 1;
     this.mesh = null;
     this.frame = null;
+    this.cut = null;
     new ResizeObserver(() => this.resize()).observe(canvas);
   }
 
@@ -74,6 +77,7 @@ export class View3D {
       return [new THREE.Plane(g.clone().divideScalar(len), -lo / len), new THREE.Plane(g.clone().divideScalar(-len), hi / len)];
     });
     if (this.mesh) this.mesh.material.clippingPlanes = this.clipping;
+    for (const part of this.cutParts()) part.material.clippingPlanes = this.clipping;
 
     const center = this.toCartesian(box.map(([lo, hi]) => (lo + hi) / 2));
     this.radius = Math.max(...Array.from({ length: 8 }, (_, i) => this.toCartesian(corner(i)).distanceTo(center)));
@@ -196,6 +200,85 @@ export class View3D {
       if (!keep.has(fixed)) entry.plane.visible = entry.outline.visible = false;
     }
     this.render();
+  }
+
+  /**
+   * The line cut: `line`, its two ends, `corners`, the box of voxels it
+   * averages (its band at the low then the high edge of the slab, in order
+   * around the band), and `pierce`, where it passes through the other slices
+   * ({ at, axis }: a point, and the display axis normal to that slice), all in
+   * display coordinates; null hides it.
+   */
+  setCut(cut) {
+    if (cut && !this.T) return; // no frame yet
+    if (!this.cut && cut) {
+      const shape = (geometry, material, order = 0) => {
+        material.clippingPlanes = this.clipping ?? [];
+        const mesh = new THREE.Mesh(geometry, material);
+        mesh.renderOrder = order;
+        return mesh;
+      };
+      // The rod and its ends are drawn twice, so they read as passing through the
+      // slices: shaded where nothing is in front of them, and as a faint ghost,
+      // drawn last without the depth test, where a slice hides them.
+      const solid = () => new THREE.MeshPhongMaterial({ color: CUT_COLOR, specular: 0x444444, shininess: 40 });
+      const ghost = () => new THREE.MeshBasicMaterial({ color: CUT_COLOR, transparent: true, opacity: 0.28, depthTest: false, depthWrite: false });
+      // Built in Cartesian space, so they stay round under the lattice shear.
+      const rod = new THREE.CylinderGeometry(1, 1, 1, 20), end = new THREE.SphereGeometry(1, 20, 14);
+      this.cut = {
+        box: shape(new THREE.BufferGeometry(), new THREE.MeshBasicMaterial({ color: CUT_COLOR, transparent: true, opacity: 0.16, depthWrite: false, side: THREE.DoubleSide })),
+        edges: new THREE.LineSegments(new THREE.BufferGeometry(), new THREE.LineBasicMaterial({ color: CUT_COLOR, transparent: true, opacity: 0.55, clippingPlanes: this.clipping ?? [] })),
+        rods: [shape(rod, solid()), shape(rod, ghost(), 10)],
+        ends: [shape(end, solid()), shape(end, solid()), shape(end, ghost(), 10), shape(end, ghost(), 10)],
+        // A collar where the rod passes through another slice, lifted off the plane so it does not flicker.
+        collars: [0, 1].map(() => shape(new THREE.RingGeometry(1.05, 2.3, 32), new THREE.MeshBasicMaterial({
+          color: 0xffffff, side: THREE.DoubleSide, polygonOffset: true, polygonOffsetFactor: -4, polygonOffsetUnits: -4,
+        }))),
+      };
+      this.world.add(this.cut.box, this.cut.edges);
+      this.scene.add(...this.cut.rods, ...this.cut.ends, ...this.cut.collars);
+    }
+    for (const part of this.cutParts()) part.visible = !!cut;
+    if (cut) {
+      const { box, edges, rods, ends } = this.cut, positions = cut.corners.flat();
+      const faces = [0, 1, 2, 0, 2, 3, 4, 5, 6, 4, 6, 7];
+      const lines = [];
+      for (let i = 0; i < 4; i++) {
+        const j = (i + 1) % 4;
+        faces.push(i, j, j + 4, i, j + 4, i + 4);
+        lines.push(i, j, i + 4, j + 4, i, i + 4);
+      }
+      box.geometry.dispose();
+      box.geometry = new THREE.BufferGeometry();
+      box.geometry.setAttribute('position', new THREE.Float32BufferAttribute(positions, 3));
+      box.geometry.setIndex(faces);
+      edges.geometry.dispose();
+      edges.geometry = new THREE.BufferGeometry();
+      edges.geometry.setAttribute('position', new THREE.Float32BufferAttribute(lines.flatMap((i) => cut.corners[i]), 3));
+      const [a, b] = cut.line.map((p) => this.toCartesian(p)), r = this.radius * 0.006;
+      for (const rod of rods) {
+        rod.position.copy(a).add(b).multiplyScalar(0.5);
+        rod.scale.set(r, a.distanceTo(b), r);
+        rod.quaternion.setFromUnitVectors(new THREE.Vector3(0, 1, 0), b.clone().sub(a).normalize());
+      }
+      ends.forEach((end, i) => { end.position.copy(i % 2 ? b : a); end.scale.setScalar(2.2 * r); });
+      // Each collar lies in its slice: its normal is the gradient of that display coordinate.
+      const inv = new THREE.Matrix3().set(...this.T).invert().elements; // column-major
+      this.cut.collars.forEach((collar, i) => {
+        const through = cut.pierce[i];
+        collar.visible = !!through;
+        if (!through) return;
+        const d = through.axis, normal = new THREE.Vector3(inv[d], inv[d + 3], inv[d + 6]).normalize();
+        collar.position.copy(this.toCartesian(through.at));
+        collar.quaternion.setFromUnitVectors(new THREE.Vector3(0, 0, 1), normal);
+        collar.scale.setScalar(r);
+      });
+    }
+    this.render();
+  }
+
+  cutParts() {
+    return this.cut ? [this.cut.box, this.cut.edges, ...this.cut.rods, ...this.cut.ends, ...this.cut.collars] : [];
   }
 
   resize() {

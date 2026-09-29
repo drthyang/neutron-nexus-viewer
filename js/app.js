@@ -1951,6 +1951,29 @@ function update3D() {
     };
   });
   view3d.setSlices(slices, $('iso-slices').checked);
+  show3DCut();
+}
+
+/** The line cut in the 3-D view, unless turned off in its options: its line and the box of voxels it averages. */
+function show3DCut() {
+  if (!view3d) return;
+  const p = cutPanel();
+  let spec = null;
+  try {
+    if (p?.data && $('iso-cut').checked) spec = cutSpec();
+  } catch { /* the cut view says why */ }
+  if (!spec) {
+    view3d.setCut(null);
+    return;
+  }
+  const at = ([u, v], f) => { const out = [0, 0, 0]; out[p.fixed] = f; out[p.x] = u; out[p.y] = v; return out; };
+  const band = cutBand(spec), [lo, hi] = p.data.slab, { a, b } = spec;
+  // Where the cut passes through the other two slices, whose positions are coordinates of its plane.
+  const pierce = panels.filter((q) => q !== p && q.data).flatMap((q) => {
+    const d = q.fixed === p.x ? 0 : 1, t = (q.data.center - a[d]) / (b[d] - a[d]);
+    return t > 0 && t < 1 ? [{ at: at([a[0] + t * (b[0] - a[0]), a[1] + t * (b[1] - a[1])], spec.center), axis: q.fixed }] : [];
+  });
+  view3d.setCut({ line: [at(a, spec.center), at(b, spec.center)], corners: [...band.map((c) => at(c, lo)), ...band.map((c) => at(c, hi))], pierce });
 }
 
 /**
@@ -2927,17 +2950,22 @@ function snapDirection(p, from, to) {
   return [from[0] + k * dir[0], from[1] + k * dir[1]].map((x) => Number(x.toFixed(6)));
 }
 
-/** Make the cut run between points P and Q of slice p (either way round), and show it. */
+/**
+ * Make the cut run between points P and Q of slice p (either way round). The
+ * first cut shows in the fourth place; later ones leave it as it is, so a cut
+ * can be changed while watching the 3-D view.
+ */
 function setCutLine(p, P, Q) {
   if (P[0] === Q[0] && P[1] === Q[1]) return;
   const dom = cutAxis(P, Q), [a, b] = P[dom] <= Q[dom] ? [P, Q] : [Q, P];
   const before = cutPanel();
   cut.line = { key: p.key, a, b };
   if (before && before !== p) drawPanel(before);
-  if (slot !== 'cut') setSlot('cut');
+  if (!before && slot !== 'cut') setSlot('cut');
   syncWidthSlider();
   requestCut();
   drawPanel(p);
+  show3DCut();
 }
 
 // Cut mode on a slice: a drag from an end of the cut moves that end, and one
@@ -3011,6 +3039,7 @@ function changeCutWidth() {
   requestCut();
   const p = cutPanel();
   if (p) drawPanel(p);
+  show3DCut();
 }
 
 /**
@@ -3408,6 +3437,7 @@ function restore() {
   if (typeof saved.iqCoverage === 'boolean') $('iq-coverage').checked = saved.iqCoverage;
   if (['linear', 'log'].includes(saved.cutScale)) cutScale = saved.cutScale;
   if (typeof saved.cutBand === 'boolean') $('cut-band').checked = saved.cutBand;
+  if (typeof saved.cut3d === 'boolean') $('iso-cut').checked = saved.cut3d;
   try {
     const l = JSON.parse(localStorage.getItem('nxv-layout'));
     if (['quad', 'focus'].includes(l?.mode)) lastMulti = layout = l.mode;
@@ -3421,7 +3451,7 @@ function persist() {
   const values = {
     cmap: $('cmap').value, scale: $('scale').dataset.value, angles: $('angles').checked, guides: $('guides').checked, grid: $('grid').checked, clickMode,
     iqScale: powderScale, iqSplit: $('iq-split').dataset.value, iqBand: $('iq-band').checked, iqCoverage: $('iq-coverage').checked,
-    cutScale, cutBand: $('cut-band').checked,
+    cutScale, cutBand: $('cut-band').checked, cut3d: $('iso-cut').checked,
   };
   try { localStorage.setItem('nxv-settings', JSON.stringify(values)); } catch { /* storage unavailable */ }
 }
@@ -3460,6 +3490,7 @@ segmented($('scale'), (value) => {
 });
 segmented($('iso-grid'), () => { if (iso) { iso.userLevel = false; requestIso(); } });
 $('iso-slices').onchange = update3D;
+$('iso-cut').onchange = () => { persist(); show3DCut(); };
 $('auto').onclick = autoRange;
 function setPanel(open) {
   document.body.classList.toggle('panel-collapsed', !open);
