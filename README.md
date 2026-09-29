@@ -50,7 +50,7 @@ short-range-order diffuse scattering condenses into superlattice peaks.
    **Mask** if detector edges show up as bright rims.
 3. Click a slice to move the other two through that point. Switch the header to
    **Zoom** or **Move** to explore, and **Focus** to show one view large.
-4. To compare, open a second file under **Dataset → Compare two datasets**.
+4. To compare, click **Compare…** next to the file in the top bar and open a second file.
 5. For a 3D-ΔPDF, choose **Open in NEBULA3D** in the **Export** section:
    [NEBULA3D](https://drthyang.github.io/nebula3d/) opens with the volume loaded.
 

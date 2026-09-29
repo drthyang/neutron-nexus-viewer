@@ -19,13 +19,11 @@ The histogram is held in memory as float32. A 401³ volume needs about 260 MB an
 
 ## The screen
 
-- **Top bar**: the open file (A and B, joined by the split icon, when comparing), the engine status, and ⓘ for dataset details, a summary of the method and links to these guides. Long file names are shortened in the middle; hover for the full name.
+- **Top bar**: the datasets, then the engine status and ⓘ for the full dataset details, a summary of the method and links to these guides. Each dataset is a chip with its file name over one line of facts: the cell (angles other than 90°), the grid and the measured fraction; hover for the details, such as the reciprocal lattice, bin widths and mask. Click A to open another file, or *Compare…* to add a second one (B); see [Comparing](#comparing-two-datasets). Long file names are shortened in the middle.
 - **Control panel** (left, collapsible; each section folds to a one-line summary), in the order you work:
-  - **Dataset**: unit cell (from UB), reciprocal lattice, grid and measured fraction, and the Compare card for opening a second dataset.
-  - **Display**: colormap, color range, scale, view range, guides, integer grid and cell angles.
   - **Processing**: the pipeline *Measured voxels → Mask → Symmetry average → Views → NEBULA3D*, followed by the Symmetry and Mask controls. Active stages are highlighted, and clicking a stage jumps to its controls.
   - **Export**: the last step: I(Q), the volume reduced to 1-D, and handing the processed volume to NEBULA3D.
-- **Workspace**: a header row with the click mode, the shared color legend (click it for the Display settings) and the layout, then four views: HK, HL, KL, and the 3-D view or I(Q), which share the fourth place (the *3D | I(Q)* switch in its header picks one).
+- **Workspace**: a header row with the click mode, the display controls (see [Display](#display)) and the layout, then four views: HK, HL, KL, and the 3-D view or I(Q), which share the fourth place (the *3D | I(Q)* switch in its header picks one).
 - **Panel footer**: copyright, the license and a link to this documentation. The ⓘ popover links to each guide.
 
 Below 1000 px wide, or on short screens, the panel sits above the views and the page scrolls.
@@ -47,8 +45,13 @@ The mask removes voxels from the measured data before symmetry averaging:
 
 ## Display
 
-- **Colormap and range**: vmin and vmax set the ends of the colormap. The legend above the views shows the current scale.
-- **Scale**: asinh (with a softening value), linear or log. *Auto range* sets vmin to 0, vmax to the 97th percentile, and softening to the median of the positive values in the current slices.
+The color scale is set in the workspace header, above the views: the colormap, vmin and vmax on either side of the colorbar, and the scale.
+
+- **Scale**: asinh (with a softening value), lin or log. *Auto* sets vmin to 0, vmax to the 97th percentile, and softening to the median of the positive values in the current slices.
+
+The sliders button next to *Auto* opens the other options:
+
+- **Softening** (asinh only): values below it are shown nearly linearly.
 - **View ±**: shows ± this many r.l.u. around the origin. Leave it empty for the full range.
 - **Guides**: dashed lines where the other two slices cut each view.
 - **Integer grid**: thin lines at whole-number values of each view's axes, such as integer H and K in the HK view. They follow the true axis directions, so on a hexagonal cell they meet at 60°. An axis whose lines would be closer than 6 pixels gets none.
@@ -85,7 +88,7 @@ I(Q) reduces the masked, symmetrized volume to one dimension: the mean intensity
 - **Normalization**: unmeasured and masked voxels are left out, not counted as zero, so gaps in coverage do not lower I(Q). Symmetry-equivalent voxels are pooled as in the slices, and each orbit counts with its multiplicity, so a shell is not biased toward the directions that were measured best. See [Method → I(Q)](METHOD.md#powder-average-iq).
 - **Q bins** (footer): the ΔQ field takes Mantid `Rebin` parameters. `0.05` gives shells of 0.05 Å⁻¹; a negative step gives logarithmic shells, so `-0.01` means ΔQ/Q = 1% (suited to the constant Δd/d resolution of time-of-flight instruments); `0.5, 0.02, 3, 0.05, 10` gives 0.02 Å⁻¹ shells from 0.5 to 3 Å⁻¹ and 0.05 Å⁻¹ shells from 3 to 10 Å⁻¹, and any mix of ranges works. As in Mantid, a range ends at its boundary with a last bin of 0.25 to 1.25 steps. Empty means shells of the shortest bin step in |Q|.
 - **ΔQ slider**: changes a single step on a log scale, from a tenth of the shortest bin step to 20 times it (or ΔQ/Q from 0.1% to 20% for logarithmic shells), and recomputes I(Q) as it moves. Typed values apply on Enter.
-- **Q range**: Q min (empty for 0; the shortest bin step for logarithmic shells) and Q max (empty for all the data) bound a single step; ranges typed in the ΔQ field set their own, and the fields are then disabled. The footer also switches the intensity scale between linear and log. |Q| is in Å⁻¹ with 2π, from the file's UB matrix or cell; axes already in Å⁻¹ (Mantid's Q frames) need no cell.
+- **Q range**: Q min (empty for 0; the shortest bin step for logarithmic shells) and Q max (empty for all the data) bound a single step; ranges typed in the ΔQ field set their own, and the fields are then disabled. *Lin | Log* in the view's header switches the intensity scale. |Q| is in Å⁻¹ with 2π, from the file's UB matrix or cell; axes already in Å⁻¹ (Mantid's Q frames) need no cell.
 - **Options** (the sliders button): *Split voxels* shares each voxel between the shells it overlaps by dividing it into 2³ or 3³ sub-cells, each binned by its own |Q|; *Centres* bins whole voxels, which is faster but aliases when ΔQ is close to the voxel size. The error band (±σ) and the shell coverage (the dashed line, right axis) can be hidden.
 - **Uncertainties**: σ is propagated from the file's `errors_squared` (or `errors`), read the first time I(Q) is computed. Without them, the curve has no error band and the text file has `nan` in its σ column.
 - **Coverage**: the fraction of each shell's volume that has data, after symmetry. Where it falls (beyond the measured region, or where shells leave the grid), I(Q) rests on few voxels.
@@ -95,17 +98,17 @@ I(Q) reduces the masked, symmetrized volume to one dimension: the mean intensity
 
 ## Comparing two datasets
 
-*Open second file (B)* in the Compare card, or drop a file on the card, opens a second dataset next to the first (A). Every slice is then cut along its diagonal, from the top-left to the bottom-right corner of the view: A fills the lower-left half and B the upper-right half. A white gap marks the cut, B's half is hatched where it has no data, and tags in the corners name the files.
+*Compare…* in the top bar, or dropping a file on it, opens a second dataset next to the first (A). Every slice is then cut along its diagonal, from the top-left to the bottom-right corner of the view: A fills the lower-left half and B the upper-right half. A white gap marks the cut, B's half is hatched where it has no data, and tags in the corners name the files.
 
-Once B is open, the Dataset section lists both files and one table for the two: a value they share (often the cell and grid) appears once, and a value that differs gets a line for each, tagged A and B.
+B then gets its own chip in the top bar, after A and the split icon, with its facts. While it loads, and while its mask is built, the chip shows the step and a thin progress bar; an amber *!* marks warnings (hover to read them).
 
 - **Shared**: slice positions and thickness, zoom and pan, symmetry, mask settings and the color scale apply to both datasets, so the two halves are directly comparable. *Auto range* pools both.
 - **A / Split / B** in the workspace header shows one dataset over the whole view, or the split.
 - **Hover** reads both datasets at the cursor, the one under it first. View headers show the coverage of each.
 - **Processing**: B has its own worker and mask, built with the same parameters on its own data. Symmetry operations are mapped onto B's grid; if they do not fit it, B is used as measured and the card says so.
-- **Axes**: B is drawn on A's axes and lattice geometry. Files should share the same axes (for example both `[H,0,0]`, `[0,K,0]`, `[0,0,L]`); the grids may differ. A warning under the Dataset table appears when the axis names differ.
+- **Axes**: B is drawn on A's axes and lattice geometry. Files should share the same axes (for example both `[H,0,0]`, `[0,K,0]`, `[0,0,L]`); the grids may differ. B's chip warns when the axis names differ.
 - **3-D view**: the isosurface is A's; the slice planes show the same split as the views.
-- **Replace** (⇄ on B's line, or the B half of the top bar) swaps in another file, and **Remove** (×) returns to a single dataset. Opening a new file as A also removes B.
+- **Replace**: click B's chip to swap in another file. **Remove** (× on the chip, which also cancels a loading B) returns to a single dataset. Opening a new file as A also removes B.
 
 ## Export for NEBULA3D
 

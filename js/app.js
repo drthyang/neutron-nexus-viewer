@@ -255,6 +255,7 @@ function openFile(file) {
   show('loading');
   status('busy', 'reading');
   setFileName($('dataset-name'), file.name);
+  $('dataset-facts').hidden = true;
   $('loading-title').textContent = 'Opening file';
   setFileName($('loading-name'), file.name);
   $('loading-size').textContent = mb(file.size);
@@ -310,6 +311,7 @@ const handlers = {
     status('ok', 'ready');
     setupViewer();
     show('workspace');
+    showCompare();
     redraw();
     panels.forEach(request);
     setup3D();
@@ -485,24 +487,12 @@ function describe() {
   const bins = [0, 1, 2].map((d) => shape[2 - d]);
   const widths = dims.map((d) => fmt((d.edges[d.edges.length - 1] - d.edges[0]) / (d.edges.length - 1), 4));
 
-  // Dataset section of the control panel: one table, and when comparing, a value
-  // shared by A and B appears once while differing values get a line each.
+  // Dataset A in the top bar: one line of facts, the full ones as its tooltip.
   const { a, b, c, alpha, beta, gamma } = lattice ?? {};
   const recip = recipOf(lattice);
-  const A = datasetFacts(meta, mask), B = compare?.ready ? datasetFacts(compare.meta, compare.mask) : null;
-  const rows = [['Cell', 'cell'], ['Recip.', 'recip'], ['Grid', 'grid'], ['Measured', 'measured']];
-  if (B && (mask || compare.mask)) rows.push(['Masked', 'masked']);
-  $('data-kv').innerHTML = rows.map(([label, key]) => {
-    const va = A[key] ?? '—', vb = B ? B[key] ?? '—' : null;
-    let dd;
-    if (!B) dd = `<dd>${va}${key === 'measured' ? ' of voxels' : ''}</dd>`;
-    else if (va === vb) dd = `<dd title="Same for A and B">${va}</dd>`;
-    else if (!/<br>/.test(va + vb) && (va + vb).length < 28) dd = `<dd><span class="ab-inline"><span class="ab-mini">A</span>${va}</span><span class="ab-inline"><span class="ab-mini">B</span>${vb}</span></dd>`;
-    else dd = `<dd class="ab-rows"><span class="ab-row"><span class="ab-mini">A</span><span>${va}</span></span><span class="ab-row"><span class="ab-mini">B</span><span>${vb}</span></span></dd>`;
-    return `<dt>${label}</dt>${dd}`;
-  }).join('');
-  $('sum-dataset').textContent = (lattice ? `${a.toFixed(3)} ${b.toFixed(3)} ${c.toFixed(3)} Å · ${gamma.toFixed(1)}°` : `${bins.join('×')}`)
-    + (compare?.ready ? ' · vs B' : '');
+  $('dataset-facts').textContent = datasetFacts(meta);
+  $('dataset-facts').hidden = false;
+  $('open').title = `${compare ? 'Dataset A: ' : ''}${sourceName} (${mb(sourceSize)})\n${datasetDetails(meta, mask)}\nClick to open another file.`;
   $('pipe-measured').textContent = `${(stats.valid / 1e6).toFixed(1)} M · ${pct(stats.fraction)} of the grid`;
 
   // Full details in the info popover.
@@ -541,21 +531,33 @@ function recipOf(lattice) {
   return { len, angles: [ang(1, 2), ang(0, 2), ang(0, 1)] };
 }
 
-/** The Dataset table's values (HTML) for one dataset. */
-function datasetFacts(m, userMask) {
-  const l = m.lattice, r = recipOf(l), bins = [0, 1, 2].map((d) => m.shape[2 - d]);
-  const widths = m.dims.map((d) => fmt((d.edges[d.edges.length - 1] - d.edges[0]) / (d.edges.length - 1), 4));
+/** A dataset's cell (angles other than 90°), grid and measured fraction, in one short line for the top bar. */
+function datasetFacts(m) {
+  const l = m.lattice, bins = [0, 1, 2].map((d) => m.shape[2 - d]);
   const same = (xs) => xs.every((x) => x === xs[0]);
-  return {
-    cell: l ? `${l.a.toFixed(3)} ${l.b.toFixed(3)} ${l.c.toFixed(3)} Å<br>${l.alpha.toFixed(2)}° ${l.beta.toFixed(2)}° ${l.gamma.toFixed(2)}° <span class="note">(${escapeHTML(l.source)})</span>` : 'not in file',
-    recip: r ? `${r.len.map((x) => x.toFixed(4)).join(' ')} Å⁻¹<br>${r.angles.map((x) => x.toFixed(2)).join('° ')}°` : '—',
-    grid: `${same(bins) ? `${bins[0]}³` : bins.join(' × ')}, Δ ${same(widths) ? widths[0] : widths.join(' ')}`,
-    measured: pct(m.stats.fraction),
-    masked: userMask ? pct((userMask.edge + userMask.outlier) / userMask.measured) : 'none',
-  };
+  const parts = [];
+  if (l) {
+    // Angles only where they differ from 90°.
+    const angles = [['α', l.alpha], ['β', l.beta], ['γ', l.gamma]].filter(([, x]) => Math.abs(x - 90) >= 0.05);
+    parts.push(`${[l.a, l.b, l.c].map((x) => x.toFixed(3)).join(' ')} Å${angles.map(([k, x], i) => `${i ? '' : ','} ${k} ${Number(x.toFixed(1))}°`).join('')}`);
+  }
+  parts.push(same(bins) ? `${bins[0]}³` : bins.join('×'), `${pct(m.stats.fraction)} measured`);
+  return parts.join(' · ');
 }
 
-/** Processing pipeline, section badges and the legend above the views. */
+/** A dataset's cell, reciprocal lattice, grid, measured fraction and mask, one per line (for tooltips). */
+function datasetDetails(m, userMask) {
+  const l = m.lattice, r = recipOf(l), bins = [0, 1, 2].map((d) => m.shape[2 - d]);
+  const widths = m.dims.map((d) => fmt((d.edges[d.edges.length - 1] - d.edges[0]) / (d.edges.length - 1), 4));
+  return [
+    l ? `Cell ${l.a.toFixed(4)} ${l.b.toFixed(4)} ${l.c.toFixed(4)} Å, ${l.alpha.toFixed(2)}° ${l.beta.toFixed(2)}° ${l.gamma.toFixed(2)}° (${l.source})` : 'No unit cell in the file',
+    r ? `Reciprocal ${r.len.map((x) => x.toFixed(4)).join(' ')} Å⁻¹ (no 2π)` : null,
+    `Grid ${bins.join(' × ')}, Δ ${widths.join(' ')}`,
+    `Measured ${pct(m.stats.fraction)} of voxels${userMask ? `, ${pct((userMask.edge + userMask.outlier) / userMask.measured)} masked` : ''}`,
+  ].filter(Boolean).join('\n');
+}
+
+/** Processing pipeline and section badges. */
 function updateStates() {
   const sym = symmetry.ops.length > 1;
   $('sym-state').textContent = sym ? `${symmetry.name} · ${symmetry.ops.length}` : 'none';
@@ -577,10 +579,6 @@ function updateStates() {
   // One-line summaries shown on collapsed panel sections.
   $('pipe-views').textContent = compare?.ready ? '3 slices, A | B split + 3-D (A) + I(Q)' : '3 slices + 3-D + I(Q)';
   $('sum-processing').textContent = `${mask ? `mask ${removed}` : 'no mask'} · ${sym ? symmetry.name : 'no symmetry'}`;
-  $('sum-display').textContent = `${$('cmap').value} · ${$('vmin').value}–${$('vmax').value} · ${$('scale').dataset.value}`;
-  $('legend-min').textContent = fmtValue(Number($('vmin').value) || 0);
-  $('legend-max').textContent = fmtValue(Number($('vmax').value) || 0);
-  $('legend-scale').textContent = $('scale').dataset.value;
 }
 
 function viewShell(key, badge, title) {
@@ -729,6 +727,7 @@ function setupPowder() {
   const shell = viewShell('iq', slotSwitch('iq'), 'Powder average');
   shell.actions.innerHTML = `
     <button type="button" class="btn btn-ghost btn-xs zoom-reset" hidden title="Back to the full range (or double-click the plot)">Reset zoom</button>
+    <div class="segmented sm pq-scale" role="group" aria-label="Intensity scale"><button type="button" data-value="linear" title="Linear intensity scale">Lin</button><button type="button" data-value="log" title="Logarithmic intensity scale">Log</button></div>
     <button type="button" class="icon-btn" title="I(Q) options" aria-haspopup="dialog" aria-expanded="false" data-pop="pop-iq">${ICONS.gear}</button>
     <button type="button" class="icon-btn data" title="Download I(Q) as text: Q, I, σ, coverage and voxels per shell">${ICONS.download}</button>
     <button type="button" class="icon-btn save" title="Save PNG">${ICONS.save}</button>`;
@@ -747,12 +746,11 @@ function setupPowder() {
     <input class="pq-qmin num" type="number" min="0" step="any" aria-label="Q min" title="Smallest |Q| in Å⁻¹; empty for 0 (the shortest bin step for logarithmic bins)">
     <span class="unit">–</span>
     <input class="pq-qmax num" type="number" min="0" step="any" placeholder="all" aria-label="Q max" title="Largest |Q| in Å⁻¹; empty for all the data">
-    <span class="unit">Å⁻¹</span>
-    <div class="segmented sm pq-scale" role="group" aria-label="Intensity scale" title="Intensity scale"><button type="button" data-value="linear">Lin</button><button type="button" data-value="log">Log</button></div>`;
+    <span class="unit">Å⁻¹</span>`;
   shell.section.append(foot);
   const q = shell.q;
   powder = {
-    canvas: q('canvas'), hover: q('.overlay-chip'), caption: q('.view-caption'), pos: q('.view-pos'), zoomReset: q('.zoom-reset'),
+    canvas: q('canvas'), hover: q('.overlay-chip'), caption: q('.view-caption'), zoomReset: q('.zoom-reset'),
     slider: q('.pq-slider'), bins: q('.pq-bins'), qmin: q('.pq-qmin'), qmax: q('.pq-qmax'), a: newPowderLayer(), b: newPowderLayer(),
     stale: true, download: false, plan: null, zoom: null, drag: null, view: null, at: null, step: null,
   };
@@ -1009,7 +1007,7 @@ function colorTicks(s) {
 
 function paintColorbar() {
   const lut = LUTS[$('cmap').value];
-  for (const id of ['cmap-bar', 'legend-bar']) {
+  for (const id of ['legend-bar']) {
     const c = $(id).getContext('2d'), img = c.createImageData(256, 1);
     for (let k = 0; k < 256; k++) img.data.set([lut[3 * k], lut[3 * k + 1], lut[3 * k + 2], 255], 4 * k);
     c.putImageData(img, 0, 0);
@@ -2052,7 +2050,6 @@ function showPowder() {
   const layers = [['A', powder.a], ...(compare?.ready ? [['B', powder.b]] : [])];
   const working = layers.filter(([, l]) => l.busy);
   $('powder-progress').hidden = !working.length;
-  powder.pos.textContent = powder.plan ? binsLabel(powder.plan.bins) : '';
   if (working.length) {
     const fraction = working.reduce((s, [, l]) => s + (l.progress?.fraction ?? 0), 0) / working.length;
     const label = working.find(([, l]) => l.progress)?.[1].progress.label ?? 'Starting';
@@ -2693,57 +2690,38 @@ const compareHandlers = {
 };
 
 /**
- * The Compare card, the B button in the top bar and the A / Split / B control.
- * `step` and `fraction` describe work in progress on B (loading or masking).
+ * Dataset B in the top bar (or the Compare button that adds it) and the
+ * A / Split / B control. `step` and `fraction` describe work in progress on B
+ * (loading or masking), shown under its name with a thin bar.
  */
 function showCompare(step = '', fraction = null) {
   const ready = !!compare?.ready;
   document.body.classList.toggle('comparing', ready);
-  // Loaded, A and B share the Dataset table; the Compare card only opens and loads B.
-  $('compare').hidden = ready;
-  $('data-files').hidden = !ready;
-  $('compare-open').hidden = !!compare;
-  $('compare-file').hidden = !compare || ready;
-  $('compare-progress').hidden = !compare || ready || fraction === null;
-  if (sourceName) setFileName($('dataset-name'), sourceName, ready ? compare.name : null);
-  if (compare && !ready) {
-    setFileName($('compare-name'), compare.name, sourceName);
-    $('compare-size').textContent = compare.size ? mb(compare.size) : '';
-    $('compare-bar').style.width = `${Math.round(100 * clamp(fraction ?? 0, 0, 1))}%`;
-  }
-  const stepText = step && `${step}${fraction > 0 ? ` · ${Math.round(100 * fraction)}%` : '…'}`;
-  $('compare-view').hidden = $('compare-button').hidden = $('file-sep').hidden = $('dataset-tag').hidden = !ready;
-  $('compare-state').textContent = compare ? 'loading' : 'off';
-  $('compare-state').className = `state${compare ? ' busy' : ''}`;
+  $('dataset-b').hidden = !compare;
+  $('compare-open').hidden = !!compare || !panels.length;
+  $('compare-view').hidden = $('file-sep').hidden = !ready;
+  $('dataset-tag').hidden = !compare;
+  if (sourceName) setFileName($('dataset-name'), sourceName, compare?.name ?? null);
   const title3d = views['3d']?.section.querySelector('.view-title');
   if (title3d) title3d.textContent = ready ? 'Isosurface · A' : 'Isosurface';
-  const note = $('compare-note');
-  note.hidden = true;
-  if (!compare) {
-    $('compare-status').textContent = 'Split every slice along its diagonal: this dataset (A) below, a second one (B) above.';
-    return;
-  }
-  if (!ready) {
-    $('compare-status').textContent = stepText || 'Opening…';
-    return;
-  }
-  setFileName($('file-a-name'), sourceName, compare.name);
-  $('file-a-size').textContent = mb(sourceSize);
-  setFileName($('file-b-name'), compare.name, sourceName);
-  $('file-b-size').textContent = compare.size ? mb(compare.size) : '';
-  setFileName($('compare-button-name'), compare.name, sourceName);
-  $('compare-button').title = `Dataset B: ${compare.name} (click to replace)`;
-  // Work in progress on B, or warnings, under the Dataset table.
+  if (!compare) return;
+  setFileName($('compare-name'), compare.name, sourceName);
+  const stepText = step && `${step}${fraction > 0 ? ` · ${Math.round(100 * fraction)}%` : '…'}`;
+  $('compare-progress').hidden = !stepText || fraction === null;
+  $('compare-bar').style.width = `${Math.round(100 * clamp(fraction ?? 0, 0, 1))}%`;
+  $('compare-facts').textContent = stepText || (ready ? datasetFacts(compare.meta) : 'Opening…');
+  $('compare-close').title = ready ? 'Remove B' : 'Cancel';
+  // Warnings about B: its axes, and processing that could not be applied to it.
   const labels = (dims) => dims.map((d) => d.label).join(' ');
   const warnings = [];
-  if (labels(compare.meta.dims) !== labels(meta.dims)) warnings.push(`B's axes (${labels(compare.meta.dims)}) differ from A's (${labels(meta.dims)}); B is drawn on A's axes.`);
+  if (ready && labels(compare.meta.dims) !== labels(meta.dims)) warnings.push(`B's axes (${labels(compare.meta.dims)}) differ from A's (${labels(meta.dims)}); B is drawn on A's axes.`);
   if (compare.mapsNote) warnings.push(compare.mapsNote);
   if (compare.maskNote) warnings.push(compare.maskNote);
-  if (stepText || warnings.length) {
-    note.hidden = false;
-    note.className = stepText ? 'note' : 'note warn';
-    note.textContent = stepText ? `B: ${stepText}` : warnings.join(' ');
-  }
+  $('compare-warn').hidden = !warnings.length;
+  $('compare-warn').title = warnings.join('\n');
+  $('compare-button').title = `Dataset B: ${compare.name}${compare.size ? ` (${mb(compare.size)})` : ''}`
+    + `${ready ? `\n${datasetDetails(compare.meta, compare.mask)}` : ''}${warnings.length ? `\n${warnings.join('\n')}` : ''}`
+    + '\nSlice positions, symmetry, mask settings and the color scale apply to both datasets.\nClick to replace B with another file.';
 }
 
 // ---- Startup -------------------------------------------------------------------------
@@ -2793,9 +2771,9 @@ $('file').onchange = () => {
   }
   $('file').value = '';
 };
-$('compare-open').onclick = $('compare-replace').onclick = $('compare-button').onclick = () => $('file-b').click();
+$('compare-open').onclick = $('compare-button').onclick = () => $('file-b').click();
 $('file-b').onchange = () => { if ($('file-b').files[0]) openCompare($('file-b').files[0]); $('file-b').value = ''; };
-$('compare-close').onclick = $('compare-cancel').onclick = closeCompare;
+$('compare-close').onclick = closeCompare;
 segmented($('compare-view'), (value) => {
   compareView = value;
   redraw();
@@ -2851,9 +2829,6 @@ function reveal(target) {
   target.classList.add('flash');
 }
 for (const li of document.querySelectorAll('.pipeline li[data-target]')) li.onclick = () => reveal($(li.dataset.target));
-// The legend above the views opens the color settings.
-$('legend').onclick = () => reveal(document.querySelector('.psec[data-sec="display"] .psec-body'));
-$('legend').onkeydown = (e) => { if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); $('legend').click(); } };
 $('sym-preset').onchange = () => {
   const preset = PRESETS.find(([name]) => name === $('sym-preset').value);
   if (!preset) { $('sym-ops').focus(); return; }
@@ -2874,8 +2849,8 @@ $('powder-download').onclick = downloadPowder;
 segmented($('iq-split'), () => { persist(); requestPowder(); });
 for (const id of ['iq-band', 'iq-coverage']) $(id).onchange = () => { persist(); drawPowderView(); };
 
-// Dropping a file opens it, or opens it as dataset B over the Compare card or the B button.
-const dropsOnB = (e) => panels.length > 0 && !!e.target.closest?.('#compare, #compare-button, #data-files');
+// Dropping a file opens it, or opens it as dataset B over B's chip or the Compare button.
+const dropsOnB = (e) => panels.length > 0 && !!e.target.closest?.('#dataset-b, #compare-open');
 document.addEventListener('dragover', (e) => {
   e.preventDefault();
   document.body.classList.add('dragging');

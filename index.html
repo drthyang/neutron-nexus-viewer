@@ -145,19 +145,28 @@ input[type=range]::-moz-range-track { background: transparent; }
 .brand-glyph { display: grid; place-items: center; width: 30px; height: 30px; border-radius: 8px; background: linear-gradient(145deg, var(--surface), var(--surface-3)); border: 1px solid var(--border-strong); color: var(--accent); }
 .brand b { font-size: 14px; font-weight: 700; text-transform: uppercase; letter-spacing: 0.06em; white-space: nowrap; }
 .vdiv { width: 1px; height: 22px; background: var(--border); flex: none; }
-/* Open files: one chip, or two halves (A ◩ B) joined by the split icon when comparing. */
-.file-chip { display: flex; align-items: stretch; min-width: 0; height: 32px; border: 1px solid var(--border-strong); border-radius: 8px; background: var(--surface-2); overflow: hidden; flex: 0 1 auto; }
-.file-half { display: flex; align-items: center; gap: 8px; min-width: 0; max-width: 440px; padding: 0 12px 0 10px; border: 0; background: transparent; cursor: pointer; font-size: 12.5px; font-weight: 600; color: var(--text); transition: background 120ms ease; }
-.file-half:hover { background: var(--surface-3); }
-.file-half > svg { color: var(--text-3); }
-.file-sep { display: grid; place-items: center; width: 28px; flex: none; border-left: 1px solid var(--border); border-right: 1px solid var(--border); background: var(--surface); color: var(--text-3); }
-body.comparing .file-half { max-width: 260px; }
+/* Datasets: a chip per file (A, and B when comparing) with its name over one line of facts, joined by the split icon. */
+.datasets { display: flex; align-items: center; gap: 4px; min-width: 0; flex: 0 1 auto; }
+.ds { position: relative; display: flex; align-items: center; gap: 9px; min-width: 0; max-width: 420px; height: 40px; padding: 0 12px 0 10px; border: 1px solid var(--border-strong); border-radius: 9px; background: var(--surface-2); color: var(--text); font: inherit; text-align: left; overflow: hidden; transition: background 120ms ease, border-color 120ms ease; }
+button.ds { cursor: pointer; }
+button.ds:hover, .ds-b:has(.ds-main:hover) { background: var(--surface-3); }
+.ds-icon { color: var(--text-3); }
+.ds-b { padding: 0 4px 0 0; gap: 2px; }
+.ds-main { display: flex; align-items: center; gap: 9px; min-width: 0; height: 100%; padding: 0 6px 0 10px; border: 0; background: transparent; color: inherit; font: inherit; text-align: left; cursor: pointer; }
+.ds-text { display: flex; flex-direction: column; gap: 2px; min-width: 0; }
+.ds-name { font-size: 12.5px; font-weight: 650; line-height: 1.2; }
+.ds-facts { font-family: var(--font-mono); font-size: 10.5px; line-height: 1.2; color: var(--text-3); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.ds-warn { display: inline-grid; place-items: center; width: 16px; height: 16px; border-radius: 50%; background: var(--amber); color: #fff; font-size: 10.5px; font-weight: 700; flex: none; cursor: help; }
+.ds-bar { position: absolute; left: 0; right: 0; bottom: 0; height: 3px; background: var(--surface-3); }
+.ds-add { height: 40px; border-style: dashed; color: var(--text-3); }
+.file-sep { display: grid; place-items: center; width: 22px; flex: none; color: var(--text-3); }
+body.comparing .ds { max-width: 400px; }
 .pill { display: inline-flex; align-items: center; height: 22px; padding: 0 8px; border-radius: 999px; background: var(--surface-2); border: 1px solid var(--border); font-family: var(--font-mono); font-size: 11px; color: var(--text-2); white-space: nowrap; }
 .spacer { flex: 1; min-width: 8px; }
 /* File names, shortened by app.js to fit their box. */
 .fname { display: block; min-width: 0; max-width: 100%; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .ab-tag { display: inline-grid; place-items: center; width: 17px; height: 17px; border-radius: 4px; background: var(--text); color: #fff; font-family: var(--font-mono); font-size: 10.5px; font-weight: 700; flex: none; }
-body.comparing #open > svg { display: none; }
+body.comparing #open > .ds-icon { display: none; }
 .status { display: flex; align-items: center; gap: 7px; font-size: 11.5px; color: var(--text-3); white-space: nowrap; }
 .status-dot { width: 7px; height: 7px; border-radius: 50%; background: var(--text-3); flex: none; }
 .status-dot.ok { background: var(--green); box-shadow: 0 0 6px rgba(19, 163, 107, 0.5); }
@@ -217,14 +226,7 @@ body.panel-collapsed .panel { visibility: hidden; }
 .file-line .icon-btn { width: 22px; height: 22px; margin: -4px -5px -4px -2px; }
 .file-line .fsize + .icon-btn { margin-left: 2px; }
 .files { display: flex; flex-direction: column; gap: 6px; }
-/* Dataset table when comparing: shared values once, differing values per dataset. */
-.ab-mini { display: inline-grid; place-items: center; width: 14px; height: 14px; border-radius: 3px; background: var(--text); color: #fff; font-family: var(--font-mono); font-size: 9px; font-weight: 700; flex: none; }
-.kv .ab-rows { display: flex; flex-direction: column; gap: 4px; }
-.kv .ab-row { display: flex; align-items: baseline; gap: 6px; }
-.kv .ab-row .ab-mini { transform: translateY(2px); }
-.kv .ab-inline { display: inline-flex; align-items: center; gap: 5px; margin-right: 10px; }
 .sub .boot-bar { margin-top: -2px; }
-.cbar-panel { display: block; width: 100%; height: 10px; border-radius: 3px; border: 1px solid var(--border); }
 .flash { animation: flash 1.2s ease; }
 @keyframes flash { 0%, 40% { box-shadow: 0 0 0 3px var(--accent-soft); border-color: var(--accent); } }
 
@@ -246,11 +248,11 @@ body.panel-collapsed .panel { visibility: hidden; }
 /* ---- work area: header row + views --------------------------------------------------- */
 .work { display: flex; flex-direction: column; min-width: 0; min-height: 0; }
 .work-head { display: flex; align-items: center; gap: 12px; height: 48px; padding: 0 12px; flex: none; }
-.legend { display: flex; align-items: center; gap: 8px; min-width: 0; font-family: var(--font-mono); font-size: 11px; color: var(--text-2); }
-.legend canvas { width: 160px; height: 10px; border-radius: 3px; border: 1px solid var(--border); }
-.legend .scale-name { color: var(--text-3); }
-.legend { cursor: pointer; padding: 4px 8px; border-radius: var(--radius-sm); }
-.legend:hover { background: var(--surface); }
+/* Display: colormap, color range around its bar, scale, Auto and the options popover. */
+.display-bar { display: flex; align-items: center; gap: 6px; min-width: 0; }
+.display-bar select { flex: none; height: 28px; width: 100px; font-size: 12px; }
+.display-bar input.num { flex: none; width: 60px; height: 28px; font-size: 11.5px; }
+.display-bar canvas { width: 96px; height: 10px; flex: none; border-radius: 3px; border: 1px solid var(--border); }
 .workspace { flex: 1; min-height: 0; padding: 0 10px 10px; display: grid; gap: 10px; }
 .workspace.quad { grid-template-columns: repeat(2, minmax(0, 1fr)); grid-template-rows: repeat(2, minmax(0, 1fr)); }
 .workspace.focus { grid-template-columns: minmax(0, 2.2fr) minmax(0, 1fr); grid-template-rows: repeat(3, minmax(0, 1fr)); }
@@ -305,8 +307,16 @@ body.panel-collapsed .panel { visibility: hidden; }
 .segmented.sm button { padding: 0 8px; font-size: 11.5px; }
 .slot-switch { height: 24px; }
 .slot-switch button { padding: 0 7px; font-family: var(--font-mono); font-size: 10.5px; font-weight: 700; }
-.view-foot input.pq-bins { flex: none; width: 104px; height: 26px; font-size: 11.5px; }
-.view-foot input.pq-qmin, .view-foot input.pq-qmax { width: 52px; }
+.view-foot input.pq-bins { flex: none; width: 96px; height: 26px; font-size: 11.5px; }
+.view-foot input.pq-qmin, .view-foot input.pq-qmax { width: 50px; }
+/* Narrow views (small windows with the panel open) drop the I(Q) title and the footers' unit labels. */
+.view { container-type: inline-size; }
+@container (max-width: 440px) {
+  .view[data-key="iq"] .view-title, .view-foot .unit { display: none; }
+  .view-foot input.foot-grow { min-width: 36px; }
+}
+.view-actions .segmented.sm { height: 24px; margin-right: 4px; }
+.view-actions .segmented.sm button { padding: 0 7px; font-size: 11px; }
 .view-foot input:disabled { opacity: 0.45; cursor: default; }
 
 /* ---- popovers ---------------------------------------------------------------------- */
@@ -369,6 +379,11 @@ body.dragging.drop-b::after { content: "Drop to compare as dataset B"; }
   :root { --panel: 292px; }
   .hide-md { display: none !important; }
 }
+@media (max-width: 1180px) {
+  .display-bar canvas { display: none; }
+  .display-bar select { width: 86px; }
+  .display-bar input.num { width: 54px; }
+}
 @media (max-width: 1000px), (max-height: 640px) {
   body { overflow: auto; }
   .app, body.panel-collapsed .app { display: block; height: auto; }
@@ -389,7 +404,6 @@ body.dragging.drop-b::after { content: "Drop to compare as dataset B"; }
   .brand b, .status-text, .hide-sm { display: none !important; }
   .hero { padding: 28px 20px; }
   .features { grid-template-columns: minmax(0, 1fr); }
-  .legend canvas { width: 100px; }
 }
 </style>
 </head>
@@ -402,16 +416,25 @@ body.dragging.drop-b::after { content: "Drop to compare as dataset B"; }
     <b>NeXus viewer</b>
   </span>
   <span class="vdiv hide-sm"></span>
-  <div class="file-chip">
-    <button id="open" class="file-half" type="button" title="Open a .nxs file">
-      <svg width="15" height="15" viewBox="0 0 18 18" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linejoin="round" aria-hidden="true"><path d="M2 5.5V14a1 1 0 0 0 1 1h12a1 1 0 0 0 1-1V7a1 1 0 0 0-1-1H9L7.5 4H3a1 1 0 0 0-1 1.5Z"/></svg>
+  <!-- The datasets: A, and B when comparing (or a button to add one), each with its name and one line of facts; the full details are under ⓘ. -->
+  <div class="datasets">
+    <button id="open" class="ds" type="button" title="Open a .nxs file">
+      <svg class="ds-icon" width="15" height="15" viewBox="0 0 18 18" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linejoin="round" aria-hidden="true"><path d="M2 5.5V14a1 1 0 0 0 1 1h12a1 1 0 0 0 1-1V7a1 1 0 0 0-1-1H9L7.5 4H3a1 1 0 0 0-1 1.5Z"/></svg>
       <span id="dataset-tag" class="ab-tag" hidden>A</span>
-      <span id="dataset-name" class="fname">Open .nxs file…</span>
+      <span class="ds-text"><span id="dataset-name" class="fname ds-name">Open .nxs file…</span><span id="dataset-facts" class="ds-facts" hidden></span></span>
     </button>
     <span id="file-sep" class="file-sep hide-sm" title="Compared: each slice is split along its diagonal" hidden><svg width="14" height="14" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linejoin="round" aria-hidden="true"><path d="M1.75 1.75v12.5h12.5Z" fill="currentColor" opacity="0.3" stroke="none"/><rect x="1.75" y="1.75" width="12.5" height="12.5" rx="1"/><path d="M2.25 2.25l11.5 11.5"/></svg></span>
-    <button id="compare-button" class="file-half hide-sm" type="button" hidden><span class="ab-tag">B</span><span id="compare-button-name" class="fname"></span></button>
+    <div id="dataset-b" class="ds ds-b hide-sm" hidden>
+      <button id="compare-button" class="ds-main" type="button"><span class="ab-tag">B</span><span class="ds-text"><span id="compare-name" class="fname ds-name"></span><span id="compare-facts" class="ds-facts"></span></span></button>
+      <span id="compare-warn" class="ds-warn" hidden>!</span>
+      <button id="compare-close" class="icon-btn" type="button" title="Remove B"><svg width="11" height="11" viewBox="0 0 12 12" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" aria-hidden="true"><path d="M2.5 2.5l7 7M9.5 2.5l-7 7"/></svg></button>
+      <div id="compare-progress" class="ds-bar" hidden><div id="compare-bar" class="boot-fill"></div></div>
+    </div>
+    <button id="compare-open" class="btn btn-ghost ds-add hide-sm" type="button" hidden title="Compare with a second file (B): every slice is split along its diagonal, and I(Q) shows both. Or drop a file here.">
+      <svg width="14" height="14" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linejoin="round" aria-hidden="true"><path d="M1.75 1.75v12.5h12.5Z" fill="currentColor" opacity="0.22" stroke="none"/><rect x="1.75" y="1.75" width="12.5" height="12.5" rx="1.5"/><path d="M2.25 2.25l11.5 11.5"/></svg>Compare…</button>
   </div>
   <input id="file" type="file" accept=".nxs,.nx5,.h5,.hdf5,.hdf" hidden>
+  <input id="file-b" type="file" accept=".nxs,.nx5,.h5,.hdf5,.hdf" hidden>
   <span class="spacer"></span>
   <span class="status" title="Everything runs in this browser tab"><span id="status-dot" class="status-dot"></span><span id="status-text" class="status-text">ready</span></span>
   <button class="icon-btn" type="button" title="Dataset details and method" aria-haspopup="dialog" aria-expanded="false" data-pop="pop-info" data-loaded hidden>
@@ -461,49 +484,6 @@ body.dragging.drop-b::after { content: "Drop to compare as dataset B"; }
 
 <div id="app" class="app" hidden>
   <aside id="panel" class="panel" aria-label="Controls">
-    <section class="psec" data-sec="dataset">
-      <button class="psec-head" type="button" aria-expanded="true"><svg class="chev" width="12" height="12" viewBox="0 0 12 12" aria-hidden="true"><path d="M2.5 4.5 6 8l3.5-3.5" fill="none" stroke="currentColor" stroke-width="1.4" stroke-linecap="round" stroke-linejoin="round"/></svg><span class="psec-title">Dataset</span><span id="sum-dataset" class="psec-sum"></span></button>
-      <div class="psec-body">
-        <div id="data-files" class="files" hidden title="Slice positions, symmetry, mask and color scale apply to both datasets">
-          <div class="file-line"><span class="ab-tag">A</span><span id="file-a-name" class="fname"></span><span id="file-a-size" class="fsize"></span></div>
-          <div class="file-line"><span class="ab-tag">B</span><span id="file-b-name" class="fname"></span><span id="file-b-size" class="fsize"></span>
-            <button id="compare-replace" class="icon-btn" type="button" title="Replace B with another file"><svg width="13" height="13" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M2.5 5.5h10l-2.5-2.5M13.5 10.5h-10l2.5 2.5"/></svg></button><button id="compare-close" class="icon-btn" type="button" title="Remove B"><svg width="11" height="11" viewBox="0 0 12 12" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" aria-hidden="true"><path d="M2.5 2.5l7 7M9.5 2.5l-7 7"/></svg></button></div>
-        </div>
-        <dl id="data-kv" class="kv"></dl>
-        <p id="compare-note" class="note" hidden></p>
-
-        <div id="compare" class="sub">
-          <div class="sub-head">
-            <svg width="16" height="16" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linejoin="round" aria-hidden="true"><path d="M1.75 1.75v12.5h12.5Z" fill="currentColor" opacity="0.22" stroke="none"/><rect x="1.75" y="1.75" width="12.5" height="12.5" rx="1.5"/><path d="M2.25 2.25l11.5 11.5"/></svg>
-            <span class="sub-title">Compare two datasets</span><span id="compare-state" class="state">off</span>
-          </div>
-          <div id="compare-file" class="file-line" hidden><span class="ab-tag">B</span><span id="compare-name" class="fname"></span><span id="compare-size" class="fsize"></span>
-            <button id="compare-cancel" class="icon-btn" type="button" title="Cancel"><svg width="11" height="11" viewBox="0 0 12 12" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" aria-hidden="true"><path d="M2.5 2.5l7 7M9.5 2.5l-7 7"/></svg></button></div>
-          <div id="compare-progress" class="boot-bar" hidden><div id="compare-bar" class="boot-fill"></div></div>
-          <p id="compare-status" class="note"></p>
-          <button id="compare-open" class="btn btn-ghost" type="button" title="Or drop a file on this card">Open second file (B)…</button>
-          <input id="file-b" type="file" accept=".nxs,.nx5,.h5,.hdf5,.hdf" hidden>
-        </div>
-      </div>
-    </section>
-
-    <section class="psec" data-sec="display">
-      <button class="psec-head" type="button" aria-expanded="true"><svg class="chev" width="12" height="12" viewBox="0 0 12 12" aria-hidden="true"><path d="M2.5 4.5 6 8l3.5-3.5" fill="none" stroke="currentColor" stroke-width="1.4" stroke-linecap="round" stroke-linejoin="round"/></svg><span class="psec-title">Display</span><span id="sum-display" class="psec-sum"></span></button>
-      <div class="psec-body">
-        <div class="inline" style="justify-content: flex-end; margin-top: -6px"><button id="auto" class="btn btn-ghost btn-xs" type="button" title="vmin 0, vmax at the 97th percentile and softening at the median of positive values in the current slices">Auto range</button></div>
-        <div class="prow"><label class="plabel" for="cmap">Colormap</label><select id="cmap"></select></div>
-        <div class="prow"><span class="plabel"></span><canvas id="cmap-bar" class="cbar-panel" width="256" height="1" aria-hidden="true"></canvas></div>
-        <div class="prow"><span class="plabel">Range</span><span class="pair"><input id="vmin" class="num" type="number" step="any" aria-label="vmin" title="vmin"><input id="vmax" class="num" type="number" step="any" aria-label="vmax" title="vmax"></span></div>
-        <div class="prow"><span class="plabel">Scale</span>
-          <div id="scale" class="segmented fill" data-value="asinh" role="group" aria-label="Color scale"><button type="button" data-value="asinh" class="on">Asinh</button><button type="button" data-value="linear">Linear</button><button type="button" data-value="log">Log</button></div></div>
-        <div id="soft-wrap" class="prow" title="Asinh softening: values below it are shown nearly linearly"><label class="plabel" for="soft">Softening</label><input id="soft" class="num" type="number" min="0" step="any"></div>
-        <div class="prow" title="Show ± this many r.l.u. around the origin; empty for the full range"><label class="plabel" for="limit">View ±</label><input id="limit" class="num" type="number" min="0" step="any" placeholder="full range"></div>
-        <label class="switch"><input id="guides" type="checkbox" checked><span class="switch-track"></span><span class="switch-label">Guides where the other slices cut</span></label>
-        <label class="switch" title="Lines at whole-number values of each slice's axes: integer H, K and L on r.l.u. axes"><input id="grid" type="checkbox"><span class="switch-track"></span><span class="switch-label">Integer grid</span></label>
-        <label id="angles-wrap" class="switch" title="Snap direct-cell angles within 1° of 60°, 90° or 120°"><input id="angles" type="checkbox" checked><span class="switch-track"></span><span class="switch-label">Nominal cell angles (60/90/120°)</span></label>
-      </div>
-    </section>
-
     <section class="psec" data-sec="processing">
       <button class="psec-head" type="button" aria-expanded="true"><svg class="chev" width="12" height="12" viewBox="0 0 12 12" aria-hidden="true"><path d="M2.5 4.5 6 8l3.5-3.5" fill="none" stroke="currentColor" stroke-width="1.4" stroke-linecap="round" stroke-linejoin="round"/></svg><span class="psec-title">Processing</span><span id="sum-processing" class="psec-sum"></span></button>
       <div class="psec-body">
@@ -598,9 +578,17 @@ body.dragging.drop-b::after { content: "Drop to compare as dataset B"; }
         <button type="button" data-value="b" title="Show dataset B only">B</button>
       </div>
       <span class="spacer"></span>
-      <span id="legend" class="legend" role="button" tabindex="0" title="Shared color scale: click to set it in the Display section">
-        <span id="legend-min">0</span><canvas id="legend-bar" width="256" height="1" aria-hidden="true"></canvas><span id="legend-max">1</span><span id="legend-scale" class="scale-name">asinh</span>
-      </span>
+      <!-- Display: the shared color scale of the slices; more options in the popover. -->
+      <div class="display-bar" role="group" aria-label="Display">
+        <select id="cmap" aria-label="Colormap" title="Colormap"></select>
+        <input id="vmin" class="num" type="number" step="any" aria-label="vmin" title="Low end of the color scale">
+        <canvas id="legend-bar" width="256" height="1" aria-hidden="true"></canvas>
+        <input id="vmax" class="num" type="number" step="any" aria-label="vmax" title="High end of the color scale">
+        <div id="scale" class="segmented sm" data-value="asinh" role="group" aria-label="Color scale"><button type="button" data-value="asinh" class="on" title="Asinh: nearly linear below the softening value, logarithmic above">asinh</button><button type="button" data-value="linear" title="Linear">lin</button><button type="button" data-value="log" title="Logarithmic">log</button></div>
+        <button id="auto" class="btn btn-ghost btn-xs" type="button" title="vmin 0, vmax at the 97th percentile and softening at the median of positive values in the current slices">Auto</button>
+        <button class="icon-btn" type="button" title="More display options: softening, view range, guides, integer grid, cell angles" aria-haspopup="dialog" aria-expanded="false" data-pop="pop-display">
+          <svg width="15" height="15" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" aria-hidden="true"><path d="M2.5 4.5h11M2.5 8h11M2.5 11.5h11"/><circle cx="5.5" cy="4.5" r="1.5" fill="#fff"/><circle cx="10.5" cy="8" r="1.5" fill="#fff"/><circle cx="7" cy="11.5" r="1.5" fill="#fff"/></svg></button>
+      </div>
       <span class="spacer"></span>
       <div id="layout" class="segmented icons layout-control" data-value="quad" role="group" aria-label="Layout">
         <button type="button" data-value="quad" class="on" title="Four views">
@@ -630,6 +618,17 @@ body.dragging.drop-b::after { content: "Drop to compare as dataset B"; }
     <div><h4>Mask</h4><p>Edge erosion removes measured voxels near unmeasured ones, where detector edges leave spurious values; the outlier cut removes voxels far above the median of their equivalents (1.4826·MAD). The mask acts before averaging.</p></div>
     <div><h4>3-D view</h4><p>The volume is binned by an odd factor with blocks aligned to the origin, symmetrized and masked the same way, and drawn as a transparent isosurface with the current slices as planes.</p></div>
     <div><h4>I(Q)</h4><p>Each shell's intensity is the mean over the voxels with data in it, so gaps and masks do not lower it. Symmetry orbits count with their multiplicity, voxels are split into sub-cells shared between shells, and σ is propagated from the file's uncertainties.</p></div>
+  </div>
+</div>
+
+<div id="pop-display" class="popover" role="dialog" aria-label="Display options" hidden style="width: 300px">
+  <div class="pop-head"><span class="pop-title">Display</span></div>
+  <div class="pop-body">
+    <div id="soft-wrap" class="prow" title="Asinh softening: values below it are shown nearly linearly"><label class="plabel" for="soft">Softening</label><input id="soft" class="num" type="number" min="0" step="any"></div>
+    <div class="prow" title="Show ± this many r.l.u. around the origin; empty for the full range"><label class="plabel" for="limit">View ±</label><input id="limit" class="num" type="number" min="0" step="any" placeholder="full range"></div>
+    <label class="switch"><input id="guides" type="checkbox" checked><span class="switch-track"></span><span class="switch-label">Guides where the other slices cut</span></label>
+    <label class="switch" title="Lines at whole-number values of each slice's axes: integer H, K and L on r.l.u. axes"><input id="grid" type="checkbox"><span class="switch-track"></span><span class="switch-label">Integer grid</span></label>
+    <label id="angles-wrap" class="switch" title="Snap direct-cell angles within 1° of 60°, 90° or 120°"><input id="angles" type="checkbox" checked><span class="switch-track"></span><span class="switch-label">Nominal cell angles (60/90/120°)</span></label>
   </div>
 </div>
 
