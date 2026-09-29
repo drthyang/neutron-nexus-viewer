@@ -205,7 +205,7 @@ export class View3D {
   /**
    * The line cut: `line`, its two ends, `rod`, the ends of the rod of voxels it
    * averages (its first and last bin edges on the line), and `pierce`, where it
-   * passes through the other slices ({ at, axis }: a point, and the display axis
+   * passes through the slices it does not lie in ({ at, axis }: a point, and the display axis
    * normal to that slice), all in display coordinates, and `radius`, the rod's
    * radius in Cartesian units; null hides it.
    */
@@ -233,7 +233,7 @@ export class View3D {
         rods: [shape(rod, solid()), shape(rod, ghost(), 10)],
         ends: [shape(end, solid()), shape(end, solid()), shape(end, ghost(), 10), shape(end, ghost(), 10)],
         // A collar where the rod passes through another slice, lifted off the plane so it does not flicker.
-        collars: [0, 1].map(() => shape(new THREE.RingGeometry(1.05, 2.3, 32), new THREE.MeshBasicMaterial({
+        collars: [0, 1, 2].map(() => shape(new THREE.RingGeometry(1.05, 2.3, 32), new THREE.MeshBasicMaterial({
           color: 0xffffff, side: THREE.DoubleSide, polygonOffset: true, polygonOffsetFactor: -4, polygonOffsetUnits: -4,
         }))),
       };

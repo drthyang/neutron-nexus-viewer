@@ -754,7 +754,7 @@ body.dragging.drop-b::after { content: "Drop to compare as dataset B"; }
   <div class="pop-body">
     <div class="prow" title="Spacing of the cut's points along its axis; empty for that axis's bin width"><label class="plabel" for="cut-step">Step</label><input id="cut-step" class="num" type="number" min="0" step="any" aria-label="Cut step"></div>
     <label class="switch"><input id="cut-band" type="checkbox" checked><span class="switch-track"></span><span class="switch-label">Error band (±σ)</span></label>
-    <p class="note">In <b>Cut</b> mode, drag across a slice to draw a cut, and drag an end to change it; hold Shift to keep it along a lattice direction. The cut lies in its slice's plane and follows the slice's position. Each point averages the voxels in a rod of diameter W around the line, pooled with their symmetry equivalents as in the slices.</p>
+    <p class="note">In <b>Cut</b> mode, drag across a slice to draw a cut, and drag an end to change it; hold Shift to keep it along a lattice direction. A cut drawn in a slice lies in its plane and follows the slice's position; typed ends that share no coordinate make a cut free in 3-D, such as one along (H, H, H). Each point averages the voxels in a rod of diameter W around the line, pooled with their symmetry equivalents as in the slices.</p>
   </div>
 </div>
 

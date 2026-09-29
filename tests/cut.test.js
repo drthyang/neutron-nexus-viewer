@@ -1,7 +1,7 @@
 import assert from 'node:assert/strict';
 import test from 'node:test';
 
-import { cutAxis, cutBand, cutEdges, lineCut } from '../js/cut.js';
+import { cutAxis, cutBand, cutCrossing, cutEdges, lineCut } from '../js/cut.js';
 import { IDENTITY_MAP } from '../js/slab.js';
 import { closeGroup, indexMaps, parseOps, PRESETS } from '../js/symmetry.js';
 
@@ -146,6 +146,28 @@ test('the band is the rod across its slice, W wide', () => {
   // The first two corners straddle the line at its first bin edge.
   const start = [0, 1, 2].map((d) => (band[0][d] + band[3][d]) / 2);
   assert.ok(Math.abs(start[0] - cut.edges[0]) < 1e-12 && Math.abs(start[1] - 0.1) < 1e-12);
+});
+
+test('a rod crossing a slice meets it in an ellipse around the crossing point', () => {
+  // Distance of a display point from the line through a and b, in reciprocal space.
+  const off = (T, a, b, x) => {
+    const A = cart(T, a), D = cart(T, b).map((v, i) => v - A[i]), L = Math.hypot(...D), r = cart(T, x).map((v, i) => v - A[i]);
+    const t = r.reduce((s, v, i) => s + v * D[i], 0) / L;
+    return Math.sqrt(Math.max(0, r.reduce((s, v) => s + v * v, 0) - t * t));
+  };
+  for (const T of [UNIT, HEX]) {
+    for (const [a, b] of [[[0.5, 0, -0.5], [0.5, 0, 0.5]], [[-0.4, -0.3, -0.5], [0.4, 0.3, 0.5]], [[-0.4, -0.4, -0.4], [0.4, 0.4, 0.4]]]) {
+      const cut = makeCut(a, b, { width: 0.2, T }), crossing = cutCrossing(cut, 2, 0.1);
+      assert.ok(Math.abs(crossing.at[2] - 0.1) < 1e-12 && off(T, cut.a, cut.b, crossing.at) < 1e-7, 'on the line');
+      for (const point of crossing.ring) {
+        assert.ok(Math.abs(point[2] - 0.1) < 1e-12, 'in the plane');
+        assert.ok(Math.abs(off(T, cut.a, cut.b, point) - 0.1) < 1e-12, 'on the rod');
+      }
+    }
+  }
+  // A line along the plane, or one that meets it beyond its ends, does not cross it.
+  assert.equal(cutCrossing(makeCut([-0.4, 0, 0], [0.4, 0, 0]), 2, 0), null);
+  assert.equal(cutCrossing(makeCut([0, 0, -0.2], [0, 0, 0.2]), 2, 0.5), null);
 });
 
 test('cutEdges centres bins on the start and steps to the end', () => {

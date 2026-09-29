@@ -35,6 +35,10 @@ export function cutEdges(a, b, dom, step, maxBins = 20000) {
 }
 
 const apply = (T, x) => [0, 1, 2].map((i) => T[3 * i] * x[0] + T[3 * i + 1] * x[1] + T[3 * i + 2] * x[2]);
+const cross = (p, q) => [p[1] * q[2] - p[2] * q[1], p[2] * q[0] - p[0] * q[2], p[0] * q[1] - p[1] * q[0]];
+const unit = (v) => { const size = Math.hypot(...v); return v.map((x) => x / size); };
+/** The unit normal, in reciprocal space, of the planes where display coordinate `fixed` is constant (Ti = T⁻¹). */
+const normalOf = (Ti, fixed) => unit([Ti[3 * fixed], Ti[3 * fixed + 1], Ti[3 * fixed + 2]]);
 
 /** Inverse of a row-major 3×3 matrix. */
 function inverse(T) {
@@ -65,13 +69,37 @@ function rodAxis({ a, b, dom, T }) {
  */
 export function cutBand(cut, fixed) {
   const { a, dom, edges, radius, T } = cut, { A, dir, rate } = rodAxis(cut), Ti = inverse(T);
-  // Across the line within the plane: normal to the line and to the gradient of the fixed coordinate.
-  const g = [Ti[3 * fixed], Ti[3 * fixed + 1], Ti[3 * fixed + 2]];
-  const cross = [g[1] * dir[2] - g[2] * dir[1], g[2] * dir[0] - g[0] * dir[2], g[0] * dir[1] - g[1] * dir[0]];
-  const size = Math.hypot(...cross), across = cross.map((v) => v / size);
+  // Across the line within the plane: normal to the line and to the plane's normal.
+  const across = unit(cross(normalOf(Ti, fixed), dir));
   const t0 = (edges[0] - a[dom]) / rate, t1 = (edges[edges.length - 1] - a[dom]) / rate;
   return [[t0, -radius], [t1, -radius], [t1, radius], [t0, radius]]
     .map(([t, side]) => apply(Ti, A.map((v, i) => v + t * dir[i] + side * across[i])));
+}
+
+/**
+ * Where a cut's rod crosses the plane on which display coordinate `fixed` is
+ * `value` (a slice the cut does not lie in): `at`, the point on its line, and
+ * `ring`, the outline of the rod's section there, an ellipse `radius` across
+ * the line and radius / cos θ along it (θ between the line and the plane's
+ * normal), both in display coordinates. Null when the line runs along the
+ * plane or meets it beyond the rod's ends.
+ */
+export function cutCrossing(cut, fixed, value, points = 48) {
+  const { a, b, dom, edges, radius, T } = cut;
+  if (!(Math.abs(b[fixed] - a[fixed]) > 1e-12)) return null;
+  const f = (value - a[fixed]) / (b[fixed] - a[fixed]), at = a.map((ad, d) => ad + f * (b[d] - ad));
+  if (!(at[dom] >= edges[0] && at[dom] <= edges[edges.length - 1])) return null;
+  const { dir } = rodAxis(cut), Ti = inverse(T), normal = normalOf(Ti, fixed);
+  const cos = dir[0] * normal[0] + dir[1] * normal[1] + dir[2] * normal[2];
+  // In the plane: u along the line's shadow on it (any direction when the line crosses square on), v across.
+  const shadow = dir.map((v, i) => v - cos * normal[i]);
+  const u = Math.hypot(...shadow) > 1e-9 ? unit(shadow) : unit(cross(normal, Math.abs(normal[0]) < 0.9 ? [1, 0, 0] : [0, 1, 0]));
+  const v = cross(normal, u), X = apply(T, at), long = radius / Math.abs(cos);
+  const ring = Array.from({ length: points }, (_, k) => {
+    const c = long * Math.cos((2 * Math.PI * k) / points), s = radius * Math.sin((2 * Math.PI * k) / points);
+    return apply(Ti, X.map((x, i) => x + c * u[i] + s * v[i]));
+  });
+  return { at, ring };
 }
 
 /**

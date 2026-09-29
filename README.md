@@ -35,7 +35,7 @@ short-range-order diffuse scattering condenses into superlattice peaks.
 | Area | What you get | Read more |
 | --- | --- | --- |
 | **Slices** | HK, HL and KL cuts with live slab center and thickness. Click to move the other slices through a point, drag a box to zoom, or drag to pan (pinch on a touch screen); quad, focus and single layouts | [Slice views](docs/USER_GUIDE.md#slice-views) |
-| **Line cuts** | Drag a line across a slice for a 1-D profile of the volume along any direction in its plane, averaged over a rod of adjustable diameter around the line, with symmetry pooling, σ and both datasets; saved as CSV or text | [Line cuts](docs/USER_GUIDE.md#line-cuts) · [Method](docs/METHOD.md#line-cuts) |
+| **Line cuts** | Drag a line across a slice, or type its ends, for a 1-D profile of the volume along any direction in 3-D, such as (H, H, H), averaged over a rod of adjustable diameter around the line, with symmetry pooling, σ and both datasets; saved as CSV or text | [Line cuts](docs/USER_GUIDE.md#line-cuts) · [Method](docs/METHOD.md#line-cuts) |
 | **Symmetry averaging** | Any Laue class or your own operations, closed into a group and applied exactly on the bin grid, with a check that they fit the cell | [Symmetry](docs/METHOD.md#symmetry-averaging) |
 | **Artifact masking** | Removes detector-edge voxels and symmetry outliers before averaging; preview what is removed and export the mask as a NumPy array | [Masking](docs/METHOD.md#masking-detector-edge-artifacts) |
 | **Two-dataset comparison** | A second file, such as another temperature, splits every slice along its diagonal, with shared positions, processing and color scale; hover reads both values | [Comparing](docs/USER_GUIDE.md#comparing-two-datasets) |

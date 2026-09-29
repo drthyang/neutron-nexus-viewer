@@ -1,5 +1,5 @@
 import { COLORMAPS } from './colormaps.js';
-import { cutAxis, cutBand, cutEdges } from './cut.js';
+import { cutAxis, cutBand, cutCrossing, cutEdges } from './cut.js';
 import { exportPlan } from './export.js';
 import { cartesianBasis, nominalCell, planeGeometry, reciprocalMetric } from './nexus.js';
 import { parseBins, powderPlan, qExtent } from './powder.js';
@@ -1962,18 +1962,17 @@ function update3D() {
 /** The line cut in the 3-D view: its line through the slices, inside the rod of voxels it averages. */
 function show3DCut() {
   if (!view3d) return;
-  const p = cutPanel();
   let spec = null;
   try {
-    if (p?.data) spec = cutSpec();
+    if (cut?.line) spec = cutSpec();
   } catch { /* the cut view says why */ }
   if (!spec) {
     view3d.setCut(null);
     return;
   }
   const { a, b, dom, edges, radius } = spec, along = (s) => a.map((ad, d) => ad + ((s - a[dom]) / (b[dom] - a[dom])) * (b[d] - ad));
-  // Where the cut passes through the other two slices.
-  const pierce = panels.filter((q) => q !== p && q.data).flatMap((q) => {
+  // Where the cut passes through the slices it does not lie in.
+  const pierce = panels.filter((q) => q.data).flatMap((q) => {
     const d = q.fixed, t = (q.data.center - a[d]) / (b[d] - a[d]);
     return t > 0 && t < 1 ? [{ at: a.map((ad, i) => ad + t * (b[i] - ad)), axis: d }] : [];
   });
@@ -2814,13 +2813,13 @@ function setupCut() {
     xLabel: () => { const { axis, path } = cutPath(); return `${withUnits(axis)} along ${path}`; },
     yLabel: (log) => (log ? 'Intensity, log scale' : 'Intensity'),
     empty: () => {
-      if (!cut.line) return clickMode === 'cut' ? { text: 'Drag across a slice to draw a cut.' } : null;
+      if (!cut.line) return clickMode === 'cut' ? { text: 'Drag across a slice to draw a cut, or type its ends below.' } : null;
       const busy = cut.a.busy || cut.b.busy, failed = compareShown() === 'b' ? cut.b.error : cut.a.error;
       return { text: busy ? 'Computing the cut…' : failed || 'The cut appears here.', error: !busy && !!failed };
     },
     extras: (data) => {
-      const p = cutPanel(), { unit, scale } = cutWidthUnit(), F = meta.dims[p.fixed];
-      return [`${F.label} = ${fmt(Number(p.center.value))}`, `W ${fmt(cutSpec().radius * 2 * scale)} ${unit}`,
+      const { unit, scale } = cutWidthUnit();
+      return [cutPath().path, `W ${fmt(cutSpec().radius * 2 * scale)} ${unit}`,
         data.order > 1 ? data.symmetry : 'no symmetry', data.masked && mask ? `mask ${pct((mask.edge + mask.outlier) / mask.measured)}` : 'no mask'];
     },
     // The point: its coordinates, and I ± σ with the voxels pooled for each dataset.
@@ -2828,11 +2827,11 @@ function setupCut() {
       const value = (d) => (Number.isFinite(d.intensity[b])
         ? `${fmtValue(d.intensity[b])}${Number.isFinite(d.sigma[b]) ? ` ± ${fmtValue(d.sigma[b])}` : ''} (${d.voxels[b]} vox)`
         : 'no data');
-      const at = cutPoint(cutAt(shellMid(layers[0].data, b)));
+      const at = cutAt(shellMid(layers[0].data, b));
       return `(${at.map((x) => fmt(x)).join(', ')})  →  ${layers.map((l) => `${layers.length > 1 ? `${l.letter} ` : ''}${value(l.data)}`).join(' · ')}`;
     },
-    // The point read here is marked on the slice.
-    onHover: () => { const p = cutPanel(); if (p) drawPanel(p); },
+    // The point read here is marked on the slices the cut lies in.
+    onHover: () => { for (const p of panels) if (cutLiesIn(p)) drawPanel(p); },
   };
   cut.cta.onclick = () => { setClickMode('cut'); persist(); };
   setSegmented(q('.cut-scale'), cutScale);
@@ -2856,8 +2855,36 @@ function setupCut() {
   showCut();
 }
 
-/** The slice the cut lies in, or null without a cut. */
-const cutPanel = () => (cut?.line ? panels.find((p) => p.key === cut.line.key) : null);
+// cut.line = { a, b, key }: the cut's ends in display coordinates, a[dom] ≤ b[dom],
+// and the slice it was drawn in (or typed ends lie in), or null for a cut free
+// in 3-D. A cut in a slice lies in its plane and follows it.
+
+/** The slice the cut was drawn in and follows, or null. */
+const cutPanel = () => (cut?.line?.key ? panels.find((p) => p.key === cut.line.key) : null);
+
+/** The cut's ends in display coordinates, those of a cut in a slice at the slice's current position. */
+function cutEnds() {
+  const { a, b } = cut.line, p = cutPanel();
+  if (!p) return [a, b];
+  const center = Number(p.center.value);
+  return [a, b].map((end) => end.map((v, d) => (d === p.fixed ? center : v)));
+}
+
+/** Whether the cut lies in the plane of slice p. */
+function cutLiesIn(p) {
+  if (!cut?.line) return false;
+  const center = Number(p.center.value);
+  return cutEnds().every((end) => Math.abs(end[p.fixed] - center) < 1e-6);
+}
+
+/** A point (u, v) of slice p's plane in all three display coordinates. */
+function inPlane(p, [u, v]) {
+  const out = [0, 0, 0];
+  out[p.fixed] = Number(p.center.value);
+  out[p.x] = u;
+  out[p.y] = v;
+  return out;
+}
 
 /** Bin width of a display dimension (uniform bins). */
 const binWidth = (dim) => (dim.edges[dim.edges.length - 1] - dim.edges[0]) / (dim.edges.length - 1);
@@ -2883,38 +2910,28 @@ function cutWidthUnit() {
 
 /** The cut's geometry for lineCut() (see cut.js), in display coordinates; throws when its step or width cannot be read. */
 function cutSpec() {
-  const a = cutPoint(cut.line.a), b = cutPoint(cut.line.b), dom = cutAxis(a, b);
+  const [a, b] = cutEnds(), dom = cutAxis(a, b);
   const { T, scale, auto } = cutWidthUnit();
   const step = typedPositive($('cut-step')) ?? binWidth(meta.dims[dom]);
   const width = typedPositive(cut.width) ?? auto;
   return { a, b, dom, edges: cutEdges(a, b, dom, step), radius: width / scale / 2, T };
 }
 
-/** The point of the cut's line (in its plane) where its axis has the value s. */
+/** The point of the cut's line, in display coordinates, where its axis has the value s. */
 function cutAt(s) {
-  const { a, b } = cut.line, dom = cutAxis(a, b), t = (s - a[dom]) / (b[dom] - a[dom]);
-  return [a[0] + t * (b[0] - a[0]), a[1] + t * (b[1] - a[1])];
-}
-
-/** A point of the cut's plane in all three display coordinates. */
-function cutPoint([u, v]) {
-  const p = cutPanel(), out = [0, 0, 0];
-  out[p.fixed] = Number(p.center.value);
-  out[p.x] = u;
-  out[p.y] = v;
-  return out;
+  const [a, b] = cutEnds(), dom = cutAxis(a, b), t = (s - a[dom]) / (b[dom] - a[dom]);
+  return a.map((ad, d) => ad + t * (b[d] - ad));
 }
 
 const pointText = (pt) => pt.map((x) => String(Number(x.toFixed(4)))).join(', ');
 
-/** The cut's axis, and its path as a function of that axis: (H, 0, 1), (H, H, 0) or (H, 0.5H+1, 0). */
+/** The cut's axis, and its path as a function of that axis: (H, 0, 1), (H, H, H) or (H, 0.5H+1, 0). */
 function cutPath() {
-  const p = cutPanel(), { a, b } = cut.line, dom = cutAxis(a, b), axis = meta.dims[dom ? p.y : p.x], other = dom ? p.x : p.y;
-  const slope = (b[1 - dom] - a[1 - dom]) / (b[dom] - a[dom]), offset = a[1 - dom] - slope * a[dom];
+  const [a, b] = cutEnds(), dom = cutAxis(a, b), axis = meta.dims[dom];
   const term = (d) => {
-    if (d === p.fixed) return fmt(Number(p.center.value));
-    if (d !== other) return axis.label;
-    if (Math.abs(slope) < 1e-9) return fmt(offset);
+    if (d === dom) return axis.label;
+    const slope = (b[d] - a[d]) / (b[dom] - a[dom]), offset = a[d] - slope * a[dom];
+    if (Math.abs(slope) < 1e-9) return fmt(a[d]);
     const k = Math.abs(slope - 1) < 1e-9 ? '' : Math.abs(slope + 1) < 1e-9 ? '−' : fmt(slope);
     return `${k}${axis.label}${Math.abs(offset) < 1e-9 ? '' : `${offset > 0 ? '+' : '−'}${fmt(Math.abs(offset))}`}`;
   };
@@ -2951,21 +2968,25 @@ function snapDirection(p, from, to) {
   return [from[0] + k * dir[0], from[1] + k * dir[1]].map((x) => Number(x.toFixed(6)));
 }
 
+/** Make the cut run between points P and Q of slice p's plane (either way round), in that slice. */
+const setCutLine = (p, P, Q) => setCutEnds(inPlane(p, P), inPlane(p, Q), p);
+
 /**
- * Make the cut run between points P and Q of slice p (either way round). The
- * first cut shows in the fourth place; later ones leave it as it is, so a cut
- * can be changed while watching the 3-D view.
+ * Make the cut run between display points P and Q (either way round), in
+ * slice p or, without one, free in 3-D. The first cut shows in the fourth
+ * place; later ones leave it as it is, so a cut can be changed while watching
+ * the 3-D view.
  */
-function setCutLine(p, P, Q) {
-  if (P[0] === Q[0] && P[1] === Q[1]) return;
+function setCutEnds(P, Q, p = null) {
+  if (P.every((v, d) => v === Q[d])) return;
   const dom = cutAxis(P, Q), [a, b] = P[dom] <= Q[dom] ? [P, Q] : [Q, P];
-  const before = cutPanel();
-  cut.line = { key: p.key, a, b };
-  if (before && before !== p) drawPanel(before);
-  if (!before && slot !== 'cut') setSlot('cut');
+  const first = !cut.line;
+  cut.line = { key: p?.key ?? null, a, b };
+  if (first && slot !== 'cut') setSlot('cut');
   syncWidthSlider();
   requestCut();
-  drawPanel(p);
+  // Every slice shows the cut, or where it crosses.
+  panels.forEach(drawPanel);
   show3DCut();
 }
 
@@ -2974,7 +2995,7 @@ function setCutLine(p, P, Q) {
 // a lattice direction from the other end.
 function startCutDrag(p, e) {
   if (e.button !== 0 || !p.inverse) return;
-  const [x, y] = localPoint(p, e), ends = cut.line?.key === p.key ? [cut.line.a, cut.line.b] : [];
+  const [x, y] = localPoint(p, e), ends = cutLiesIn(p) ? cutEnds().map((end) => [end[p.x], end[p.y]]) : [];
   const grabbed = ends.findIndex((end) => { const [ex, ey] = p.project(...end); return Math.hypot(ex - x, ey - y) < CUT_GRAB; });
   p.cutDrag = { x0: x, y0: y, moved: false, fresh: grabbed < 0, anchor: grabbed < 0 ? snapToVoxel(p, p.inverse(x, y)) : ends[1 - grabbed] };
   try { p.canvas.setPointerCapture(e.pointerId); } catch { /* synthetic or already released pointer */ }
@@ -2992,7 +3013,11 @@ function moveCutDrag(p, e) {
   setCutLine(p, d.anchor, e.shiftKey ? snapDirection(p, d.anchor, to) : snapToVoxel(p, to));
 }
 
-/** Apply typed ends: the cut lies in the slice through the coordinate they share, which moves there. */
+/**
+ * Apply typed ends. When they share a coordinate, the cut lies in the slice
+ * through it, which moves there; otherwise it is free in 3-D, like one from
+ * (0, 0, 0) to (2, 2, 2) along (H, H, H).
+ */
 function typeCutEnds() {
   const read = (input) => {
     const values = input.value.replace(/[()[\]]/g, ' ').trim().split(/[\s,]+/).filter(Boolean).map(Number);
@@ -3008,18 +3033,14 @@ function typeCutEnds() {
     error(err.message);
     return;
   }
-  const p = [cutPanel(), ...panels].find((q) => q && Math.abs(P[q.fixed] - Q[q.fixed]) < 1e-9);
-  if (!p) {
-    error(`From and To must share one coordinate (${meta.dims.map((d) => d.label).join(', ')}): the cut lies in the slice through it.`);
-    return;
-  }
   error('');
-  if (Math.abs(Number(p.center.value) - P[p.fixed]) > 1e-9) {
+  const p = [cutPanel(), ...panels].find((q) => q && Math.abs(P[q.fixed] - Q[q.fixed]) < 1e-9);
+  if (p && Math.abs(Number(p.center.value) - P[p.fixed]) > 1e-9) {
     p.center.value = p.slider.value = P[p.fixed];
     paint(p.slider);
     request(p);
   }
-  setCutLine(p, [P[p.x], P[p.y]], [Q[p.x], Q[p.y]]);
+  setCutEnds(P, Q, p ?? null);
 }
 
 // The width slider sets W on a log scale, from half a voxel to 30 voxels.
@@ -3038,8 +3059,7 @@ function syncWidthSlider() {
 
 function changeCutWidth() {
   requestCut();
-  const p = cutPanel();
-  if (p) drawPanel(p);
+  panels.forEach(drawPanel);
   show3DCut();
 }
 
@@ -3109,21 +3129,20 @@ function cutProgress(which, { label, fraction }) {
 /** The cut view's header, fields and button. */
 function showCut() {
   if (!cut) return;
-  const p = cutPanel();
-  cut.cta.hidden = !!p || clickMode === 'cut';
+  cut.cta.hidden = !!cut.line || clickMode === 'cut';
   syncWidthSlider();
-  if (!p) {
+  if (!cut.line) {
     cut.caption.textContent = clickMode === 'cut' ? 'drag across a slice' : '';
     cut.unit.textContent = '';
     return;
   }
-  const { unit, auto, scale } = cutWidthUnit(), dom = cutAxis(cut.line.a, cut.line.b);
+  const [a, b] = cutEnds(), { unit, auto, scale } = cutWidthUnit();
   cut.unit.textContent = unit;
   cut.width.placeholder = String(auto);
-  $('cut-step').placeholder = String(sig(binWidth(meta.dims[dom ? p.y : p.x]), 3));
-  if (document.activeElement !== cut.from) cut.from.value = pointText(cutPoint(cut.line.a));
-  if (document.activeElement !== cut.to) cut.to.value = pointText(cutPoint(cut.line.b));
-  const X = meta.dims[p.x], Y = meta.dims[p.y], F = meta.dims[p.fixed], d = cut.a.data, { path } = cutPath();
+  $('cut-step').placeholder = String(sig(binWidth(meta.dims[cutAxis(a, b)]), 3));
+  if (document.activeElement !== cut.from) cut.from.value = pointText(a);
+  if (document.activeElement !== cut.to) cut.to.value = pointText(b);
+  const d = cut.a.data, { path } = cutPath();
   let width = auto;
   try { width = cutSpec().radius * 2 * scale; } catch { /* the field says why */ }
   if (cut.a.busy || cut.b.busy) {
@@ -3131,7 +3150,7 @@ function showCut() {
   } else if (cut.a.error || !d) {
     cut.caption.textContent = cut.a.error || '';
   } else {
-    cut.caption.textContent = `${X.label}${Y.label} · ${F.label} = ${fmt(Number(p.center.value))} · W ${fmt(width)} ${unit}`
+    cut.caption.textContent = `${path} · W ${fmt(width)} ${unit}`
       + `${d.order > 1 ? ` · ${d.symmetry}` : ''}${d.masked ? ' · masked' : ''}${d.removed ? ' · removed only' : ''}${d.errors ? ' · ±σ' : ''}`;
   }
   cut.caption.title = `Along ${path} from (${cut.from.value}) to (${cut.to.value}), averaging a rod ${fmt(width)} ${unit} across`
@@ -3139,27 +3158,49 @@ function showCut() {
     + `${compare?.ready && cut.b.error ? `\nB: ${cut.b.error}` : ''}`;
 }
 
-/** The cut on its slice: the band it averages, its line and ends, and the point read on its plot. */
+/**
+ * The cut on slice p: in a slice whose plane it lies in, the band where its rod
+ * meets the plane, its line and ends, and the point read on its plot; in the
+ * others, where its rod passes through: the section and the point on its line.
+ */
 function drawCutOverlay(c, p, corners) {
-  if (cutPanel() !== p || !(plotShown(cut) || clickMode === 'cut')) return;
+  if (!cut?.line || !(plotShown(cut) || clickMode === 'cut')) return;
   let spec;
   try { spec = cutSpec(); } catch { return; }
-  const [A, B] = [cut.line.a, cut.line.b].map(([u, v]) => p.project(u, v));
+  const flat = (pt) => p.project(pt[p.x], pt[p.y]);
+  const outline = (points) => {
+    c.beginPath();
+    points.map(flat).forEach(([x, y], i) => (i ? c.lineTo(x, y) : c.moveTo(x, y)));
+    c.closePath();
+    c.fillStyle = 'rgba(255, 255, 255, 0.16)';
+    c.fill();
+    c.setLineDash([4, 3]);
+    c.lineWidth = 1;
+    c.strokeStyle = 'rgba(255, 255, 255, 0.85)';
+    c.stroke();
+    c.setLineDash([]);
+  };
+  const dot = ([x, y], r) => {
+    c.beginPath(); c.arc(x, y, r, 0, 2 * Math.PI);
+    c.fillStyle = '#ffffff'; c.fill();
+    c.lineWidth = 1.5; c.strokeStyle = INK; c.stroke();
+  };
   c.save();
   c.beginPath();
   corners.forEach(([x, y], i) => (i ? c.lineTo(x, y) : c.moveTo(x, y)));
   c.closePath();
   c.clip();
-  c.beginPath();
-  cutBand(spec, p.fixed).map((pt) => p.project(pt[p.x], pt[p.y])).forEach(([x, y], i) => (i ? c.lineTo(x, y) : c.moveTo(x, y)));
-  c.closePath();
-  c.fillStyle = 'rgba(255, 255, 255, 0.16)';
-  c.fill();
-  c.setLineDash([4, 3]);
-  c.lineWidth = 1;
-  c.strokeStyle = 'rgba(255, 255, 255, 0.85)';
-  c.stroke();
-  c.setLineDash([]);
+  if (!cutLiesIn(p)) {
+    const crossing = cutCrossing(spec, p.fixed, Number(p.center.value));
+    if (crossing) {
+      outline(crossing.ring);
+      dot(flat(crossing.at), 3.5);
+    }
+    c.restore();
+    return;
+  }
+  const [A, B] = cutEnds().map(flat);
+  outline(cutBand(spec, p.fixed));
   // A white line on a dark one, so it shows on dark and bright colors alike.
   c.lineCap = 'round';
   for (const [color, width] of [['rgba(18, 24, 33, 0.6)', 4], ['#ffffff', 2]]) {
@@ -3169,14 +3210,10 @@ function drawCutOverlay(c, p, corners) {
   }
   c.restore();
   c.save();
-  for (const [x, y] of [A, B]) {
-    c.beginPath(); c.arc(x, y, 4.5, 0, 2 * Math.PI);
-    c.fillStyle = '#ffffff'; c.fill();
-    c.lineWidth = 1.5; c.strokeStyle = INK; c.stroke();
-  }
+  for (const end of [A, B]) dot(end, 4.5);
   const data = cut.at !== null && shownLayers(cut)[0]?.data;
   if (data) {
-    const [x, y] = p.project(...cutAt(shellMid(data, cut.at)));
+    const [x, y] = flat(cutAt(shellMid(data, cut.at)));
     c.beginPath(); c.arc(x, y, 5.5, 0, 2 * Math.PI);
     c.lineWidth = 2.5; c.strokeStyle = '#ffffff'; c.stroke();
     c.lineWidth = 1.5; c.strokeStyle = CURVE.A; c.stroke();
@@ -3210,9 +3247,11 @@ function cutTable() {
   const sets = [['A', sourceName, cut.a.data]];
   if (compare?.ready && cut.b.data) sets.push(['B', compare.name, cut.b.data]);
   const data = sets[0][2];
+  // Positions are sums of steps: rounding leaves 1e-16 where 0 is meant.
+  const clean = (x) => (Math.abs(x) < 1e-9 ? 0 : x);
   const rows = Array.from(data.intensity, (_, k) => {
     const s = shellMid(data, k);
-    return [s, ...cutPoint(cutAt(s)), ...sets.flatMap(([, , d]) => [d.intensity[k], d.sigma[k], d.voxels[k]])];
+    return [clean(s), ...cutAt(s).map(clean), ...sets.flatMap(([, , d]) => [d.intensity[k], d.sigma[k], d.voxels[k]])];
   });
   const values = sets.length > 1 ? sets.flatMap(([k]) => [`I_${k}`, `sigma_${k}`, `voxels_${k}`]) : ['I', 'sigma', 'voxels'];
   return { sets, data, rows, values };
@@ -3236,12 +3275,13 @@ function cutCSV() {
 function cutText() {
   const { sets, data, rows, values } = cutTable();
   const both = sets.length > 1, p = cutPanel(), spec = cutSpec(), { axis, path } = cutPath(), { unit, scale } = cutWidthUnit();
-  const X = meta.dims[p.x], Y = meta.dims[p.y], F = meta.dims[p.fixed], step = (data.edges[data.edges.length - 1] - data.edges[0]) / data.intensity.length;
+  const step = (data.edges[data.edges.length - 1] - data.edges[0]) / data.intensity.length;
+  const where = p ? `drawn in the ${meta.dims[p.x].label}-${meta.dims[p.y].label} slice at ${meta.dims[p.fixed].label} = ${String(Number(spec.a[p.fixed].toPrecision(7)))}` : 'in 3-D';
   const num = (x) => (Number.isFinite(x) ? String(Number(x.toPrecision(7))) : 'nan');
   const lines = [
     `# Line cut along ${path} of ${sets.map(([k, name]) => (both ? `${k} = ${name}` : name)).join(' and ')}`,
     `# Written by NeXus Viewer (https://drthyang.github.io/neutron-nexus-viewer/) on ${new Date().toISOString()}`,
-    `# From (${pointText(spec.a)}) to (${pointText(spec.b)}), drawn in the ${X.label}-${Y.label} slice at ${F.label} = ${num(spec.a[p.fixed])}`,
+    `# From (${pointText(spec.a)}) to (${pointText(spec.b)}), ${where}`,
     `# Points every ${num(step)} in ${axis.label}; each averages the voxels whose centres lie in a rod of diameter ${num(2 * spec.radius * scale)} ${unit || 'units'}`,
     `#   around the line (within ${num(spec.radius * scale)} of it, in any direction across it) and project within ±${num(step / 2)} ${axis.label} of the point.`,
     `# Symmetry: ${symmetry.ops.length > 1 ? `${symmetry.name} (${symmetry.ops.length} operations), equivalent voxels pooled` : 'none'}`,
