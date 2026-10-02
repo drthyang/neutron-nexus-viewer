@@ -294,7 +294,7 @@ function openFile(file) {
   setFileName($('loading-name'), file.name);
   $('loading-size').textContent = mb(file.size);
   progress('Starting', 0);
-  document.title = `${file.name} · NeXus Slice Viewer`;
+  document.title = `${file.name} · NeXus Viewer`;
   worker = new Worker(new URL('./worker.js', import.meta.url), { type: 'module' });
   worker.onmessage = ({ data }) => handlers[data.type]?.(data);
   worker.onerror = (e) => {
