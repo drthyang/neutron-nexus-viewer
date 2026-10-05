@@ -175,7 +175,7 @@ input[type=range]::-moz-range-track { background: transparent; }
 .brand-glyph { display: grid; place-items: center; width: 3rem; height: 3rem; border-radius: 0.8rem; background: linear-gradient(145deg, var(--surface), var(--surface-3)); border: 1px solid var(--border-strong); color: var(--accent); }
 .brand b { font-size: 1.4rem; font-weight: 700; text-transform: uppercase; letter-spacing: 0.06em; white-space: nowrap; }
 .vdiv { width: 1px; height: 2.2rem; background: var(--border); flex: none; }
-/* Datasets: a chip per file (A, and B when comparing) with its name over one line of facts, joined by the split icon. */
+/* Datasets: a chip per file (A, and B, C, D when comparing) with its name over one line of facts, joined by the split icon. */
 .datasets { display: flex; align-items: center; gap: 0.4rem; min-width: 0; flex: 0 1 auto; }
 .ds { position: relative; display: flex; align-items: center; gap: 0.9rem; min-width: 0; max-width: 42rem; height: 4rem; padding: 0 1.2rem 0 1rem; border: 1px solid var(--border-strong); border-radius: 0.9rem; background: var(--surface-2); color: var(--text); font: inherit; text-align: left; overflow: hidden; transition: background 120ms ease, border-color 120ms ease; }
 button.ds { cursor: pointer; }
@@ -189,7 +189,9 @@ button.ds:hover, .ds-b:has(.ds-main:hover) { background: var(--surface-3); }
 .ds-warn { display: inline-grid; place-items: center; width: 1.6rem; height: 1.6rem; border-radius: 50%; background: var(--amber); color: #fff; font-size: 1.05rem; font-weight: 700; flex: none; cursor: help; }
 .ds-add { height: 4rem; border-style: dashed; color: var(--text-3); }
 .file-sep { display: grid; place-items: center; width: 2.2rem; flex: none; color: var(--text-3); }
+.split-icon { display: inline-flex; }
 body.comparing .ds { max-width: 40rem; }
+body.comparing-more .ds { max-width: 28rem; }
 .pill { display: inline-flex; align-items: center; height: 2.2rem; padding: 0 0.8rem; border-radius: 999px; background: var(--surface-2); border: 1px solid var(--border); font-family: var(--font-mono); font-size: 1.1rem; color: var(--text-2); white-space: nowrap; }
 .spacer { flex: 1; min-width: 0.8rem; }
 /* File names, shortened by app.js to fit their box. */
@@ -419,7 +421,7 @@ body.dragging::after {
   content: "Drop to open"; position: fixed; inset: 1.2rem; z-index: 70; border: 2px dashed var(--accent); border-radius: 1.6rem;
   background: rgba(238, 241, 245, 0.9); display: grid; place-items: center; font-size: 1.8rem; font-weight: 600; color: var(--accent-hi); pointer-events: none;
 }
-body.dragging.drop-b::after { content: "Drop to compare as dataset B"; }
+body.dragging.drop-b::after { content: "Drop to compare as dataset " attr(data-drop); }
 @media (prefers-reduced-motion: reduce) { * { animation: none !important; transition: none !important; } }
 
 /* ---- smaller screens ----------------------------------------------------------------- */
@@ -508,7 +510,7 @@ body.dragging.drop-b::after { content: "Drop to compare as dataset B"; }
     <b>NeXus viewer</b>
   </span>
   <span class="vdiv hide-sm"></span>
-  <!-- The datasets: A, and B when comparing (or a button to add one), each with its name and one line of facts; the full details are under ⓘ. -->
+  <!-- The datasets: A, and B, C, D when comparing (and a button to add one), each with its name and one line of facts; the full details are under ⓘ. -->
   <div class="datasets">
     <button id="open" class="ds" type="button" title="Open a .nxs file">
       <svg class="ds-icon" width="15" height="15" viewBox="0 0 18 18" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linejoin="round" aria-hidden="true"><path d="M2 5.5V14a1 1 0 0 0 1 1h12a1 1 0 0 0 1-1V7a1 1 0 0 0-1-1H9L7.5 4H3a1 1 0 0 0-1 1.5Z"/></svg>
@@ -516,11 +518,14 @@ body.dragging.drop-b::after { content: "Drop to compare as dataset B"; }
       <span class="ds-text"><span id="dataset-name" class="fname ds-name">Open .nxs file…</span><span id="dataset-facts" class="ds-facts" hidden></span></span>
     </button>
     <span id="file-sep" class="file-sep hide-sm" title="Compared: each slice is split along its diagonal" hidden><svg width="14" height="14" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linejoin="round" aria-hidden="true"><path d="M1.75 1.75v12.5h12.5Z" fill="currentColor" opacity="0.3" stroke="none"/><rect x="1.75" y="1.75" width="12.5" height="12.5" rx="1"/><path d="M2.25 2.25l11.5 11.5"/></svg></span>
-    <div id="dataset-b" class="ds ds-b hide-sm" hidden>
-      <button id="compare-button" class="ds-main" type="button"><span class="ab-tag">B</span><span class="ds-text"><span id="compare-name" class="fname ds-name"></span><span id="compare-facts" class="ds-facts"></span></span></button>
-      <span id="compare-warn" class="ds-warn" hidden>!</span>
-      <button id="compare-close" class="icon-btn" type="button" title="Remove B"><svg width="11" height="11" viewBox="0 0 12 12" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" aria-hidden="true"><path d="M2.5 2.5l7 7M9.5 2.5l-7 7"/></svg></button>
-    </div>
+    <!-- Datasets B, C and D: app.js makes a chip from this template for each. -->
+    <template id="ds-template">
+      <div class="ds ds-b hide-sm" hidden>
+        <button class="ds-main" type="button"><span class="ab-tag"></span><span class="ds-text"><span class="fname ds-name"></span><span class="ds-facts"></span></span></button>
+        <span class="ds-warn" hidden>!</span>
+        <button class="icon-btn" type="button"><svg width="11" height="11" viewBox="0 0 12 12" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" aria-hidden="true"><path d="M2.5 2.5l7 7M9.5 2.5l-7 7"/></svg></button>
+      </div>
+    </template>
     <button id="compare-open" class="btn btn-ghost ds-add hide-sm" type="button" hidden title="Compare with a second file (B): every slice is split along its diagonal, and I(Q) shows both. Or drop a file here.">
       <svg width="14" height="14" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linejoin="round" aria-hidden="true"><path d="M1.75 1.75v12.5h12.5Z" fill="currentColor" opacity="0.22" stroke="none"/><rect x="1.75" y="1.75" width="12.5" height="12.5" rx="1.5"/><path d="M2.25 2.25l11.5 11.5"/></svg>Compare…</button>
   </div>
@@ -667,8 +672,10 @@ body.dragging.drop-b::after { content: "Drop to compare as dataset B"; }
       <div id="compare-view" class="segmented" data-value="split" role="group" aria-label="Datasets shown" hidden>
         <button type="button" data-value="a" title="Show dataset A only">A</button>
         <button type="button" data-value="split" class="on" title="Split each slice along its diagonal: A below, B above">
-          <svg width="14" height="14" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linejoin="round" aria-hidden="true"><path d="M1.75 1.75v12.5h12.5Z" fill="currentColor" opacity="0.3" stroke="none"/><rect x="1.75" y="1.75" width="12.5" height="12.5" rx="1"/><path d="M2.25 2.25l11.5 11.5"/></svg><span class="hide-md">Split</span></button>
+          <span class="split-icon"><svg width="14" height="14" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linejoin="round" aria-hidden="true"><path d="M1.75 1.75v12.5h12.5Z" fill="currentColor" opacity="0.3" stroke="none"/><rect x="1.75" y="1.75" width="12.5" height="12.5" rx="1"/><path d="M2.25 2.25l11.5 11.5"/></svg></span><span class="hide-md">Split</span></button>
         <button type="button" data-value="b" title="Show dataset B only">B</button>
+        <button type="button" data-value="c" title="Show dataset C only" hidden>C</button>
+        <button type="button" data-value="d" title="Show dataset D only" hidden>D</button>
       </div>
       <span class="spacer"></span>
       <!-- Display: the shared color scale of the slices; more options in the popover. -->

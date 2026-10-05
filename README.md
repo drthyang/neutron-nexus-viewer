@@ -38,7 +38,7 @@ short-range-order diffuse scattering condenses into superlattice peaks.
 | **Line cuts** | Drag a line across a slice, or type its ends, for a 1-D profile of the volume along any direction in 3-D, such as (H, H, H), averaged over a rod of adjustable diameter around the line, with symmetry pooling, σ and both datasets; saved as CSV or text | [Line cuts](docs/USER_GUIDE.md#line-cuts) · [Method](docs/METHOD.md#line-cuts) |
 | **Symmetry averaging** | Any Laue class or your own operations, closed into a group and applied exactly on the bin grid, with a check that they fit the cell | [Symmetry](docs/METHOD.md#symmetry-averaging) |
 | **Artifact masking** | Removes detector-edge voxels and symmetry outliers before averaging; preview what is removed and export the mask as a NumPy array | [Masking](docs/METHOD.md#masking-detector-edge-artifacts) |
-| **Two-dataset comparison** | A second file, such as another temperature, splits every slice along its diagonal, with shared positions, processing and color scale; hover reads both values | [Comparing](docs/USER_GUIDE.md#comparing-two-datasets) |
+| **Comparing up to four datasets** | Other files, such as other temperatures: a second one splits every slice along its diagonal, three or four share it in quadrants, with shared positions, processing and color scale; hover reads every value, and I(Q) and line cuts overlay them | [Comparing](docs/USER_GUIDE.md#comparing-datasets) |
 | **3-D view** | A transparent isosurface of the processed volume, with the current slices as planes and the line cut, inside the rod it averages, passing through them | [3-D view](docs/USER_GUIDE.md#3-d-view) |
 | **I(Q)** | The processed volume reduced to 1-D, on request: the mean intensity per \|Q\| shell over the voxels with data, with symmetry orbits weighted by multiplicity, split voxels, propagated σ and shell coverage; saved as text | [I(Q)](docs/USER_GUIDE.md#iq) · [Method](docs/METHOD.md#powder-average-iq) |
 | **Hand-off to NEBULA3D** | One click sends the masked, symmetrized volume to [NEBULA3D](https://github.com/drthyang/nebula3d)'s 3D-ΔPDF pipeline in a new tab, or saves it as a file | [Export](docs/USER_GUIDE.md#export-for-nebula3d) |
@@ -54,7 +54,7 @@ short-range-order diffuse scattering condenses into superlattice peaks.
    **Zoom** or **Move** to explore, and **Focus** to show one view large.
 4. For a 1-D profile, switch the header to **Cut** and drag across a slice: the cut
    appears in the fourth view, and follows the slice as you move it.
-5. To compare, click **Compare…** next to the file in the top bar and open a second file.
+5. To compare, click **Compare…** next to the file in the top bar and open a second file: each slice is split along its diagonal. Add a third and fourth file to share each slice in quadrants.
 6. For a 3D-ΔPDF, choose **Open in NEBULA3D** in the **Export** section:
    [NEBULA3D](https://drthyang.github.io/nebula3d/) opens with the volume loaded.
 

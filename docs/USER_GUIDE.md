@@ -6,7 +6,7 @@
 
 - **Local file**: click the dataset button or drop a `.nxs` or `.h5` file anywhere on the page. The file is read in the browser and never uploaded.
 - **Example**: *Try the example* on the start page (or `?demo`) opens one synthetic hexagonal crystal at two temperatures, compared in split view with 6/mmm averaging and a 1-voxel edge mask. At 300 K (`examples/demo_300K.nxs`), short-range order gives diffuse rods along L at the M points; at 10 K (`examples/demo_10K.nxs`), they condense into superlattice peaks at even L. Both have coverage gaps, which symmetry averaging fills, and bright detector-edge voxels, which the mask removes: set the Laue class to *None* and *Clear* the mask to see the raw data.
-- **Links**: `?url=https://…/file.nxs` downloads and opens a file, and `&compare=https://…/other.nxs` adds a second file to compare. `&sym=6/mmm` applies a Laue class, and `&mask=1` (or `&mask=1,5`) applies a mask with that erosion radius (and outlier cut). The host must allow cross-origin requests.
+- **Links**: `?url=https://…/file.nxs` downloads and opens a file, and `&compare=https://…/other.nxs` adds a file to compare (repeat it, up to three times, for B, C and D). `&sym=6/mmm` applies a Laue class, and `&mask=1` (or `&mask=1,5`) applies a mask with that erosion radius (and outlier cut). The host must allow cross-origin requests.
 
 The histogram is held in memory as float32. A 401³ volume needs about 260 MB and takes 1–2 s to read.
 
@@ -24,7 +24,7 @@ The histogram is held in memory as float32. A 401³ volume needs about 260 MB an
 
 ## The screen
 
-- **Top bar**: the datasets, then the status and ⓘ for the full dataset details, a summary of the method and links to these guides. The status also shows work in progress (building a mask, I(Q), the NEBULA3D export, opening B): the job that started first and how far it is, with the number of others ("Mask · 45% +1"), and a thin bar along the bottom edge of the top bar for all of them together; hover it for the list. Each dataset is a chip with its file name over one line of facts: the cell (angles other than 90°), the grid and the measured fraction; hover for the details, such as the reciprocal lattice, bin widths and mask. Click A to open another file, or *Compare…* to add a second one (B); see [Comparing](#comparing-two-datasets). Long file names are shortened in the middle.
+- **Top bar**: the datasets, then the status and ⓘ for the full dataset details, a summary of the method and links to these guides. The status also shows work in progress (building a mask, I(Q), the NEBULA3D export, opening B, C or D): the job that started first and how far it is, with the number of others ("Mask · 45% +1"), and a thin bar along the bottom edge of the top bar for all of them together; hover it for the list. Each dataset is a chip with its file name over one line of facts: the cell (angles other than 90°), the grid and the measured fraction; hover for the details, such as the reciprocal lattice, bin widths and mask. Click A to open another file, or *Compare…* to add another one (B, C, D); see [Comparing](#comparing-datasets). Long file names are shortened in the middle.
 - **Control panel** (left, collapsible; each section folds to a one-line summary), in the order you work:
   - **Processing**: the pipeline *Measured voxels → Mask → Symmetry average → Views → NEBULA3D*, followed by the Symmetry and Mask controls. Active stages are highlighted, and clicking a stage jumps to its controls.
   - **Export**: the last step: I(Q), the volume reduced to 1-D, and handing the processed volume to NEBULA3D.
@@ -123,19 +123,25 @@ I(Q) reduces the masked, symmetrized volume to one dimension: the mean intensity
 - **Comparing**: both datasets are reduced on the same shells, each with its own grid, cell and mask, and drawn as two curves; *A / Split / B* chooses which are shown.
 - **Download** (in the view's header or the Export section) saves a text file, `<file>_IQ.dat` (when comparing, the two names joined with their shared words once: `demo_300K` and `demo_10K` give `demo_300K_vs_10K_IQ.dat`): a commented header with the file, cell, shells (also as Rebin parameters, to reproduce them in Mantid), symmetry, mask and normalization, then one row per shell with Q (the shell centre, the midpoint of its edges), I, σ, coverage and the number of voxels with data, for A and B when comparing. `numpy.loadtxt` reads it directly. *Save PNG* exports the plot at 3× with a title and a legend.
 
-## Comparing two datasets
+## Comparing datasets
 
-*Compare…* in the top bar, or dropping a file on it, opens a second dataset next to the first (A). Every slice is then cut along its diagonal, from the top-left to the bottom-right corner of the view: A fills the lower-left half and B the upper-right half. A white gap marks the cut, B's half is hatched where it has no data, and tags in the corners name the files.
+Up to four datasets can be compared, such as one crystal at four temperatures. *Compare…* in the top bar, or dropping a file on it, opens another dataset next to the first (A), as B, then C and D.
 
-B then gets its own chip in the top bar, after A and the split icon, with its facts. While it loads, and while its mask is built, the chip shows the step, and the status in the top bar the progress; an amber *!* marks warnings (hover to read them).
+- **Two datasets** split every slice along its diagonal, from the top-left to the bottom-right corner of the view: A fills the lower-left half and B the upper-right half.
+- **Three or four** share every slice in quadrants about the center of the view: A lower left, B lower right, C upper left and D upper right. With three, the fourth quadrant stays empty. With a symmetric pattern centered in the view, as for a Laue class with mirror planes, the quadrants show equivalent regions.
 
-- **Shared**: slice positions and thickness, zoom and pan, symmetry, mask settings and the color scale apply to both datasets, so the two halves are directly comparable. *Auto range* pools both.
-- **A / Split / B** in the workspace header shows one dataset over the whole view, or the split.
-- **Hover** reads both datasets at the cursor, the one under it first. View headers show the coverage of each.
-- **Processing**: B has its own worker and mask, built with the same parameters on its own data. Symmetry operations are mapped onto B's grid; if they do not fit it, B is used as measured and the card says so.
-- **Axes**: B is drawn on A's axes and lattice geometry. Files should share the same axes (for example both `[H,0,0]`, `[0,K,0]`, `[0,0,L]`); the grids may differ. When B has A's axes in another order, such as a NEBULA3D volume (L, K, H) next to the Mantid file it came from (K, L, H), B is read in A's order. B's chip warns when the axis names differ.
+White gaps mark the cuts, the other datasets' parts are hatched where they have no data, and tags in the corners name the files. The quadrants follow the visible window, so zooming or panning moves the center they meet at.
+
+Each dataset gets its own chip in the top bar, after A and the split icon, with its facts. While it loads, and while its mask is built, its chip shows the step, and the status in the top bar the progress; an amber *!* marks warnings (hover to read them).
+
+- **Shared**: slice positions and thickness, zoom and pan, symmetry, mask settings and the color scale apply to every dataset, so their parts are directly comparable. *Auto range* pools them all.
+- **A / Split / B / C / D** in the workspace header shows one dataset over the whole view, or the split.
+- **Hover** reads every dataset at the cursor, the one under it first. View headers show the coverage of each.
+- **I(Q) and line cuts** draw one curve per dataset (A blue, B amber, C green, D violet), and the saved files have columns for each.
+- **Processing**: each dataset has its own worker and mask, built with the same parameters on its own data. Symmetry operations are mapped onto each grid; if they do not fit one, that dataset is used as measured and its chip says so.
+- **Axes**: all datasets are drawn on A's axes and lattice geometry. Files should share the same axes (for example all `[H,0,0]`, `[0,K,0]`, `[0,0,L]`); the grids may differ. A dataset with A's axes in another order, such as a NEBULA3D volume (L, K, H) next to the Mantid file it came from (K, L, H), is read in A's order. A chip warns when its axis names differ from A's.
 - **3-D view**: the isosurface is A's; the slice planes show the same split as the views.
-- **Replace**: click B's chip to swap in another file. **Remove** (× on the chip, which also cancels a loading B) returns to a single dataset. Opening a new file as A also removes B.
+- **Replace**: click a chip to swap in another file. **Remove** (× on the chip, which also cancels a loading dataset) frees its letter for the next *Compare…*; the others keep theirs. Opening a new file as A removes them all.
 
 ## Export for NEBULA3D
 

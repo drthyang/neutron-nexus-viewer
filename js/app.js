@@ -28,6 +28,9 @@ const ICONS = {
   reset: svg('<path d="M2.8 8a5.2 5.2 0 1 0 1.6-3.8"/><path d="M2.5 2.5v3h3"/>'),
   gear: svg('<path d="M2.5 4.5h11M2.5 8h11M2.5 11.5h11"/><circle cx="5.5" cy="4.5" r="1.5" fill="#fff"/><circle cx="10.5" cy="8" r="1.5" fill="#fff"/><circle cx="7" cy="11.5" r="1.5" fill="#fff"/>'),
   download: svg('<path d="M8 2.5v8M4.75 7.25 8 10.5l3.25-3.25"/><path d="M2.5 11v1.5a1 1 0 0 0 1 1h9a1 1 0 0 0 1-1V11"/>'),
+  // How compared datasets share a slice: split along the diagonal (two), or quadrants (three or four).
+  diagonal: svg('<path d="M1.75 1.75v12.5h12.5Z" fill="currentColor" opacity="0.3" stroke="none"/><rect x="1.75" y="1.75" width="12.5" height="12.5" rx="1"/><path d="M2.25 2.25l11.5 11.5"/>', 14),
+  quadrants: svg('<path d="M1.75 8h6.25v6.25H1.75Z" fill="currentColor" opacity="0.3" stroke="none"/><rect x="1.75" y="1.75" width="12.5" height="12.5" rx="1"/><path d="M8 1.75v12.5M1.75 8h12.5"/>', 14),
 };
 
 let worker = null, meta = null, panels = [], settings = null, sourceName = '', sourceSize = 0, autoscaled = false;
@@ -42,15 +45,20 @@ const views = {};
 let clickMode = 'navigate';
 // 3-D view state: the lazily loaded View3D, its elements and the isosurface request queue.
 let view3d = null, iso = null;
-// I(Q) and line cut views: their elements, zoom and one request queue per dataset (`a`, `b`).
+// I(Q) and line cut views: their elements, zoom and one request queue per dataset
+// (`a` for A, `more[i]` for the dataset in slot i).
 // The 3-D view, I(Q) and the cut share the fourth place in the layouts; `slot` is the one shown.
 let powder = null, cut = null, slot = '3d', powderScale = 'linear', cutScale = 'linear';
 const SLOT_VIEWS = ['3d', 'iq', 'cut'];
 // Counts mask rebuilds, so I(Q) is recomputed after each.
 let maskVersion = 0;
-// Second dataset (B) for comparison, with its own worker, index maps and mask.
-// `compareView` is what the slices show: 'split' (A below the diagonal, B above), 'a' or 'b'.
-let compare = null, compareView = 'split', pendingCompare = null;
+// Datasets compared with A: B, C and D in slots 0, 1 and 2 (null when empty), each
+// with its own worker, index maps and mask. `compareView` is what the slices show:
+// 'split' (all of them: two split along the diagonal, A below; three or four in
+// quadrants, A, B, C, D from lower left to upper right), or one alone, 'a' … 'd'.
+// `pendingCompare` holds the URLs to open as B, C and D once A is ready.
+let slots = [null, null, null], compareView = 'split', pendingCompare = [];
+const LETTERS = ['A', 'B', 'C', 'D'];
 // Symmetry and mask to apply once the next file opens (?sym= and ?mask=, or the demo).
 let pendingProcessing = null;
 const DEMO = { url: 'examples/demo_300K.nxs', compare: 'examples/demo_10K.nxs', sym: '6/mmm', mask: '1' };
@@ -62,7 +70,21 @@ let exportJob = null, handoff = null;
 // ?nebula3d= points Open in NEBULA3D at another deployment (a local dev server).
 const NEBULA3D_URL = new URLSearchParams(location.search).get('nebula3d') || 'https://drthyang.github.io/nebula3d/';
 const newLayer = () => ({ data: null, version: 0, busy: false, wanted: null, image: null, imageKey: null, error: '' });
-const compareShown = () => (compare?.ready ? compareView : null);
+const others = () => slots.filter(Boolean);
+const readyOthers = () => slots.filter((d) => d?.ready);
+/** What the slices show while comparing ('split', or the letter of one dataset that is ready), or null. */
+function compareShown() {
+  if (!readyOthers().length) return null;
+  const k = 'abcd'.indexOf(compareView);
+  return k > 0 && !slots[k - 1]?.ready ? 'split' : compareView;
+}
+/** The dataset shown alone (0 for A, 1–3 for B–D), or 0 while showing several. */
+const shownIndex = () => Math.max(0, 'abcd'.indexOf(compareShown()));
+/** Dataset k (0 for A) of a panel or plot: A's layer is the panel itself (a plot's `a`), the others in `more`. */
+const layerOf = (obj, k) => (k ? obj.more[k - 1] : obj.a ?? obj);
+const workerOf = (k) => (k ? slots[k - 1].worker : worker);
+/** Letters or names in running text: "A", "A and B", "A, B and C". */
+const listText = (items) => (items.length > 1 ? `${items.slice(0, -1).join(', ')} and ${items.at(-1)}` : items[0] ?? '');
 
 // ---- Formatting -------------------------------------------------------------
 
@@ -271,8 +293,8 @@ function fail(message) {
 
 function openFile(file) {
   worker?.terminate();
-  compare?.worker?.terminate();
-  compare = null;
+  for (const d of others()) d.worker?.terminate();
+  slots = [null, null, null];
   exportJob = null;
   jobs.clear();
   showCompare();
@@ -351,8 +373,8 @@ const handlers = {
     redraw();
     panels.forEach(request);
     setup3D();
-    if (pendingCompare) openCompareURL(pendingCompare);
-    pendingCompare = null;
+    for (const url of pendingCompare) openCompareURL(url);
+    pendingCompare = [];
     applyPendingProcessing();
   },
   slice: (msg) => {
@@ -405,8 +427,8 @@ const handlers = {
     $('mask-apply').disabled = false;
     mask = stats ? { ...stats, radius, k, group } : null;
     maskVersion++;
-    // B may have opened while this mask was being built.
-    if (compare?.ready && compare.maskRequested !== `${radius},${k}`) sendCompareMask(radius, k);
+    // Other datasets may have opened while this mask was being built.
+    for (const d of readyOthers()) if (d.maskRequested !== `${radius},${k}`) sendCompareMask(d, radius, k);
     $('mask-clear').disabled = $('mask-download').disabled = $('mask-removed').disabled = !mask;
     if (!mask) $('mask-removed').checked = false;
     showMask(seconds);
@@ -453,28 +475,34 @@ const handlers = {
     $('export-status').className = 'note error';
     $('export-status').textContent = message;
   },
-  'progress-powder': (msg) => powderProgress('a', msg),
-  powder: (msg) => powderResult('a', msg),
-  'powder-error': ({ message }) => powderResult('a', null, message),
-  'progress-cut': (msg) => cutProgress('a', msg),
-  cut: (msg) => cutResult('a', msg),
-  'cut-error': ({ message }) => cutResult('a', null, message),
+  'progress-powder': (msg) => powderProgress(0, msg),
+  powder: (msg) => powderResult(0, msg),
+  'powder-error': ({ message }) => powderResult(0, null, message),
+  'progress-cut': (msg) => cutProgress(0, msg),
+  cut: (msg) => cutResult(0, msg),
+  'cut-error': ({ message }) => cutResult(0, null, message),
 };
 
-/** Ask for the panel's slice of dataset 'a', 'b' or 'both' (B only when it is loaded). */
+/**
+ * Ask for the panel's slice of dataset 'a', of one other dataset (its slot
+ * object), or of 'both' (every dataset that is loaded) with the cut.
+ */
 function request(p, which = 'both') {
   const center = Number(p.center.value), thickness = Number(p.width.value);
   if (!Number.isFinite(center) || !Number.isFinite(thickness) || thickness <= 0) {
     p.caption.textContent = 'Enter a finite center and a positive thickness.';
     return;
   }
-  if (which !== 'b') {
+  const one = typeof which === 'object' ? which : null;
+  if (!one) {
     p.wanted = { center, thickness };
     if (!p.busy) send(p);
   }
-  if (which !== 'a' && compare?.ready) {
-    p.b.wanted = { center, thickness };
-    if (!p.b.busy) sendB(p);
+  for (const d of which === 'a' ? [] : readyOthers()) {
+    if (one && one !== d) continue;
+    const layer = p.more[d.slot];
+    layer.wanted = { center, thickness };
+    if (!layer.busy) sendOther(p, d);
   }
   // The cut lies in its slice's plane and follows it.
   if (which === 'both' && cutPanel() === p) requestCut();
@@ -491,17 +519,17 @@ function send(p) {
   });
 }
 
-function sendB(p) {
-  const b = p.b, q = b.wanted;
-  b.wanted = null;
-  b.busy = true;
-  compare.worker.postMessage({
+function sendOther(p, d) {
+  const layer = p.more[d.slot], q = layer.wanted;
+  layer.wanted = null;
+  layer.busy = true;
+  d.worker.postMessage({
     type: 'slice', id: ++requestId, fixed: p.fixed, ...q,
-    maps: compare.maps, symmetry: compare.maps.length > 1 ? symmetry.name : '1', removed: $('mask-removed').checked,
+    maps: d.maps, symmetry: d.maps.length > 1 ? symmetry.name : '1', removed: $('mask-removed').checked,
   });
 }
 
-/** View header: position, bins and coverage, and B's coverage when comparing. */
+/** View header: position, bins and coverage, and the other datasets' coverage when comparing. */
 function showCaption(p) {
   const F = meta.dims[p.fixed], d = p.data;
   if (!d) return;
@@ -510,10 +538,11 @@ function showCaption(p) {
     + `${x.order > 1 ? `, averaged over ${x.symmetry} (${x.order} operations)` : ''}${x.removed ? ', removed voxels only' : ''}`;
   let text = `${d.bins} bin${d.bins === 1 ? '' : 's'} · ${pct(d.coverage)}${d.order > 1 ? ` · ${d.symmetry}` : ''}${d.removed ? ' · removed only' : ''}`;
   let title = slab(d);
-  if (compare?.ready) {
-    const b = p.b.data;
-    text = `A ${text} | B ${b ? pct(b.coverage) : p.b.error ? 'no data' : '…'}`;
-    title = `A: ${title}\nB: ${b ? slab(b) : p.b.error || 'loading'}`;
+  const more = readyOthers();
+  if (more.length) {
+    const layers = more.map((o) => [o.letter, p.more[o.slot]]);
+    text = `A ${text} | ${layers.map(([k, l]) => `${k} ${l.data ? pct(l.data.coverage) : l.error ? 'no data' : '…'}`).join(' | ')}`;
+    title = `A: ${title}\n${layers.map(([k, l]) => `${k}: ${l.data ? slab(l.data) : l.error || 'loading'}`).join('\n')}`;
   }
   p.caption.textContent = text;
   p.caption.title = title;
@@ -524,19 +553,20 @@ const stemOf = (name) => name.replace(/\.[^.]+$/, '');
 const stem = () => stemOf(sourceName);
 
 /**
- * Two file stems as one name: the words they share once, and the ones that
- * differ as "A_vs_B" (demo_300K and demo_10K give demo_300K_vs_10K).
+ * File stems as one name: the words they all share once, and the ones that
+ * differ as "A_vs_B_vs_C" (demo_300K and demo_10K give demo_300K_vs_10K).
  */
-function pairStem(a, b) {
+function setStem(stems) {
+  if (stems.length < 2) return stems[0] ?? '';
   const words = (s) => s.match(/[^_\-. ]+|[_\-. ]+/g) ?? [];
   const trim = (parts) => parts.join('').replace(/^[_\-. ]+|[_\-. ]+$/g, '');
-  const wa = words(a), wb = words(b);
+  const ws = stems.map(words), n = Math.min(...ws.map((w) => w.length));
   let head = 0, tail = 0;
-  while (head < Math.min(wa.length, wb.length) && wa[head] === wb[head]) head++;
-  while (tail < Math.min(wa.length, wb.length) - head && wa[wa.length - 1 - tail] === wb[wb.length - 1 - tail]) tail++;
-  const midA = trim(wa.slice(head, wa.length - tail)), midB = trim(wb.slice(head, wb.length - tail));
-  if (!midA || !midB) return `${a}_vs_${b}`;
-  return [trim(wa.slice(0, head)), `${midA}_vs_${midB}`, trim(wa.slice(wa.length - tail))].filter(Boolean).join('_');
+  while (head < n && ws.every((w) => w[head] === ws[0][head])) head++;
+  while (tail < n - head && ws.every((w) => w[w.length - 1 - tail] === ws[0][ws[0].length - 1 - tail])) tail++;
+  const mids = ws.map((w) => trim(w.slice(head, w.length - tail)));
+  if (mids.some((m) => !m)) return stems.join('_vs_');
+  return [trim(ws[0].slice(0, head)), mids.join('_vs_'), trim(ws[0].slice(ws[0].length - tail))].filter(Boolean).join('_');
 }
 
 // ---- Viewer setup -------------------------------------------------------------
@@ -551,7 +581,7 @@ function describe() {
   const recip = recipOf(lattice);
   $('dataset-facts').textContent = datasetFacts(meta);
   $('dataset-facts').hidden = false;
-  $('open').title = `${compare ? 'Dataset A: ' : ''}${sourceName} (${mb(sourceSize)})\n${datasetDetails(meta, mask)}\nClick to open another file.`;
+  $('open').title = `${others().length ? 'Dataset A: ' : ''}${sourceName} (${mb(sourceSize)})\n${datasetDetails(meta, mask)}\nClick to open another file.`;
   $('pipe-measured').textContent = `${(stats.valid / 1e6).toFixed(1)} M · ${pct(stats.fraction)} of the grid`;
 
   // Full details in the info popover.
@@ -571,11 +601,11 @@ function describe() {
   }
   items.push(['Symmetry', symmetry.ops.length > 1 ? `${symmetry.name} (${symmetry.ops.length} operations)` : 'none']);
   items.push(['Mask', mask ? `${pct((mask.edge + mask.outlier) / mask.measured)} of voxels removed` : 'none']);
-  if (compare?.ready) {
-    const B = compare.meta, l = B.lattice;
-    items.push(['Compare (B)', `${compare.name} (${mb(compare.size)})\n${[0, 1, 2].map((d) => B.shape[2 - d]).join(' × ')} bins, ${pct(B.stats.fraction)} measured`
+  for (const o of readyOthers()) {
+    const M = o.meta, l = M.lattice;
+    items.push([`Compare (${o.letter})`, `${o.name} (${mb(o.size)})\n${[0, 1, 2].map((d) => M.shape[2 - d]).join(' × ')} bins, ${pct(M.stats.fraction)} measured`
       + (l ? `\na ${l.a.toFixed(4)}, b ${l.b.toFixed(4)}, c ${l.c.toFixed(4)} Å, γ ${l.gamma.toFixed(3)}°` : '')
-      + (compare.mask ? `\nmask: ${pct((compare.mask.edge + compare.mask.outlier) / compare.mask.measured)} removed` : '')]);
+      + (o.mask ? `\nmask: ${pct((o.mask.edge + o.mask.outlier) / o.mask.measured)} removed` : '')]);
   }
   $('info-meta').innerHTML = items.map(([k, v]) => `<dt>${escapeHTML(k)}</dt><dd>${escapeHTML(v).replace(/\n/g, '<br>')}</dd>`).join('');
   updateStates();
@@ -636,7 +666,9 @@ function updateStates() {
     ? `${removed} removed${mask.radius ? ` · edge ${mask.radius}` : ''}${mask.k ? ` · ${mask.k}σ outliers` : ''}${$('mask-removed').checked ? ' · showing removed' : ''}`
     : 'off — all measured voxels';
   // One-line summaries shown on collapsed panel sections.
-  $('pipe-views').textContent = compare?.ready ? '3 slices, A | B split + 3-D (A) + I(Q)' : '3 slices + 3-D + I(Q)';
+  const shown = ['A', ...readyOthers().map((o) => o.letter)];
+  $('pipe-views').textContent = shown.length > 1
+    ? `3 slices, ${shown.join(' | ')} ${others().length > 1 ? 'quadrants' : 'split'} + 3-D (A) + I(Q)` : '3 slices + 3-D + I(Q)';
   $('sum-processing').textContent = `${mask ? `mask ${removed}` : 'no mask'} · ${sym ? symmetry.name : 'no symmetry'}`;
 }
 
@@ -728,7 +760,7 @@ function setupViewer() {
     shell.section.append(foot);
     const q = shell.q;
     const p = {
-      fixed, x, y, step, lo, hi, version: 0, key, section: shell.section, zoom: null, drag: null, pinch: null, cutDrag: null, pointers: new Map(), b: newLayer(),
+      fixed, x, y, step, lo, hi, version: 0, key, section: shell.section, zoom: null, drag: null, pinch: null, cutDrag: null, pointers: new Map(), more: [newLayer(), newLayer(), newLayer()],
       zoomReset: q('.zoom-reset'), slider: q('.slider'), center: q('.center'), wslider: q('.wslider'), width: q('.width'),
       caption: q('.view-caption'), pos: q('.view-pos'), angle: q('.view-angle'), canvas: q('canvas'), hover: q('.overlay-chip'),
     };
@@ -842,7 +874,7 @@ function setupPowder() {
   const q = shell.q;
   powder = {
     canvas: q('canvas'), hover: q('.overlay-chip'), caption: q('.view-caption'), zoomReset: q('.zoom-reset'),
-    slider: q('.pq-slider'), bins: q('.pq-bins'), qmin: q('.pq-qmin'), qmax: q('.pq-qmax'), a: newCurveLayer(), b: newCurveLayer(),
+    slider: q('.pq-slider'), bins: q('.pq-bins'), qmin: q('.pq-qmin'), qmax: q('.pq-qmax'), a: newCurveLayer(), more: [newCurveLayer(), newCurveLayer(), newCurveLayer()],
     compute: q('.view-cta'), requested: false, stale: true, download: false, plan: null, zoom: null, drag: null, view: null, at: null, step: null,
     // As a plot (see drawCurves()):
     xMin: 0, title: 'I(Q)',
@@ -851,7 +883,7 @@ function setupPowder() {
     empty: () => {
       // Before it is asked for, the view holds only its Compute button.
       if (!powder.compute.hidden) return null;
-      const busy = powder.a.busy || powder.b.busy, failed = compareShown() === 'b' ? powder.b.error : powder.a.error;
+      const busy = [powder.a, ...powder.more].some((l) => l.busy), failed = layerOf(powder, shownIndex()).error;
       return { text: busy ? 'Computing I(Q)…' : failed || 'I(Q) appears here once computed.', error: !busy && !!failed };
     },
     extras: (data) => [binsLabel(powder.plan.bins), `voxels split ${data.split}³`, data.order > 1 ? data.symmetry : 'no symmetry',
@@ -1135,7 +1167,7 @@ function autoRange() {
   // Signed data (a ΔPDF) uses the magnitudes of all values, on a range symmetric about 0.
   const positive = [], signed = !!meta.signed;
   for (const p of panels) {
-    for (const layer of compare?.ready ? [p, p.b] : [p]) {
+    for (const layer of [p, ...readyOthers().map((o) => p.more[o.slot])]) {
       for (const v of layer.data?.values ?? []) if (v > 0 || (signed && v < 0)) positive.push(Math.abs(v));
     }
   }
@@ -1184,7 +1216,7 @@ function viewRange(dim, limit) {
   return lo < hi ? [lo, hi] : [e[0], e[e.length - 1]];
 }
 
-/** The colored image of one dataset's slice (a panel, or its B layer `p.b`), cached. */
+/** The colored image of one dataset's slice (a panel, or another dataset's layer in `p.more`), cached. */
 function layerImage(p, s) {
   const key = `${p.version}|${s.cmap}|${s.scale}|${s.min}|${s.max}|${s.soft}`;
   if (p.imageKey === key) return p.image;
@@ -1247,22 +1279,24 @@ function draw(p, canvas, w, h, dpr, exporting = false) {
     };
   }
 
-  // Intensity images, clipped to the view parallelogram. When comparing, the
-  // diagonal from its top-left to its bottom-right corner splits it: A below, B above.
+  // Intensity images, clipped to the view parallelogram, or to each dataset's
+  // part of it when comparing (see splitLayout()).
   const corners = box.map(([u, v]) => project(u, v));
-  const path = (pts) => {
+  const path = (...polygons) => {
     c.beginPath();
-    pts.forEach(([a, b], i) => (i ? c.lineTo(a, b) : c.moveTo(a, b)));
-    c.closePath();
+    for (const pts of polygons) {
+      pts.forEach(([a, b], i) => (i ? c.lineTo(a, b) : c.moveTo(a, b)));
+      c.closePath();
+    }
   };
   path(corners);
   c.fillStyle = MISSING;
   c.fill();
-  const shown = compareShown();
-  if (shown === 'split' || shown === 'b') {
-    // B's half is hatched parallel to the cut, so it stands out where it has no data.
+  const shown = compareShown(), split = splitLayout(u0, u1, v0, v1), onCanvas = (pts) => pts.map(([u, v]) => project(u, v));
+  if (split.hatch.length) {
+    // The other datasets' parts are hatched along the diagonal, so they stand out where they have no data.
     c.save();
-    path(shown === 'split' ? corners.slice(1) : corners);
+    path(...split.hatch.map(onCanvas));
     c.clip();
     const [ax, ay] = corners[3], len = Math.hypot(corners[1][0] - ax, corners[1][1] - ay);
     const d = [(corners[1][0] - ax) / len, (corners[1][1] - ay) / len], n = [-d[1], d[0]];
@@ -1278,14 +1312,13 @@ function draw(p, canvas, w, h, dpr, exporting = false) {
     c.stroke();
     c.restore();
   }
-  const layers = shown === 'split' ? [[p, meta.dims, [corners[0], corners[1], corners[3]]], [p.b, compare.meta.dims, corners.slice(1)]]
-    : shown === 'b' ? [[p.b, compare.meta.dims, corners]] : [[p, meta.dims, corners]];
-  for (const [layer, dims, clip] of layers) {
+  for (const [k, part] of split.parts) {
+    const layer = layerOf(p, k), dims = k ? slots[k - 1].meta.dims : meta.dims;
     if (!layer.data) continue;
     const { rows, cols } = layer.data, ex = dims[p.x].edges, ey = dims[p.y].edges;
     const dx = (ex[ex.length - 1] - ex[0]) / cols, dy = (ey[ey.length - 1] - ey[0]) / rows;
     c.save();
-    path(clip);
+    path(onCanvas(part));
     c.clip();
     const [x0, y0] = project(ex[0], ey[0]);
     c.transform(sx * g.lx * dx, 0, sx * g.ly * g.cos * dy, -sy * g.ly * sin * dy, x0, y0);
@@ -1335,8 +1368,8 @@ function draw(p, canvas, w, h, dpr, exporting = false) {
     c.restore();
   }
 
-  // The cut along the diagonal (a white gap with dark edges) and dataset tags when comparing.
-  if (shown === 'split') {
+  // The cuts between the datasets' parts (a white gap with dark edges) and dataset tags when comparing.
+  if (split.lines.length) {
     c.save();
     c.lineCap = 'butt';
     c.shadowColor = 'rgba(18, 24, 33, 0.25)';
@@ -1344,15 +1377,21 @@ function draw(p, canvas, w, h, dpr, exporting = false) {
     for (const [color, width] of [['rgba(18, 24, 33, 0.75)', 4.5], ['#ffffff', 2.5]]) {
       c.strokeStyle = color;
       c.lineWidth = width;
-      c.beginPath(); c.moveTo(...corners[3]); c.lineTo(...corners[1]); c.stroke();
+      c.beginPath();
+      for (const [from, to] of split.lines) { c.moveTo(...project(...from)); c.lineTo(...project(...to)); }
+      c.stroke();
       c.shadowColor = 'transparent';
     }
     c.restore();
   }
   if (shown) {
+    // Each tag sits in its part's corner of the view: [corner, along, side, left, down].
     const room = 0.45 * Math.hypot(corners[1][0] - corners[0][0], corners[1][1] - corners[0][1]);
-    if (shown !== 'b') datasetTag(c, 'A', sourceName, corners[0], corners[1], corners[3], room, false);
-    if (shown !== 'a') datasetTag(c, 'B', compare.name, corners[2], corners[3], corners[1], room, true);
+    const at = { 0: [0, 1, 3, false, false], 1: [1, 0, 2, true, false], 2: [2, 3, 1, true, true], 3: [3, 2, 0, false, true] };
+    for (const [k, , corner] of split.parts) {
+      const [i, along, side, left, down] = at[corner];
+      datasetTag(c, LETTERS[k], k ? slots[k - 1].name : sourceName, corners[i], corners[along], corners[side], room, left, down);
+    }
   }
   if (!exporting) drawCutOverlay(c, p, corners);
 
@@ -1397,7 +1436,7 @@ function draw(p, canvas, w, h, dpr, exporting = false) {
   c.textAlign = 'left';
   c.textBaseline = 'alphabetic';
   c.font = `650 14px ${SANS}`;
-  const d = shown === 'b' && p.b.data ? p.b.data : p.data;
+  const d = layerOf(p, shownIndex()).data ?? p.data;
   const title = `${F.label} = ${fmt(d.center)}`;
   c.fillText(title, 10, 24);
   const titleWidth = c.measureText(title).width;
@@ -1429,11 +1468,42 @@ function draw(p, canvas, w, h, dpr, exporting = false) {
 }
 
 /**
+ * How the visible window [u0, u1] × [v0, v1] is shared when comparing, in plot
+ * coordinates: `parts`, [k, polygon, corner] for each dataset k shown (0 for A)
+ * with the view corner (0–3, from (u0, v0) counterclockwise) where its tag
+ * goes; `lines` that divide the parts; and `hatch`, the polygons outside A's
+ * part. Two datasets split the window along the diagonal from (u0, v1) to
+ * (u1, v0), A below; three or four take its quadrants about the center, A lower
+ * left, B lower right, C upper left and D upper right (a quadrant stays empty
+ * until its dataset is loaded). One dataset alone fills it.
+ */
+function splitLayout(u0, u1, v0, v1) {
+  const shown = compareShown(), box = [[u0, v0], [u1, v0], [u1, v1], [u0, v1]];
+  if (shown !== 'split') {
+    const k = shownIndex();
+    return { parts: [[k, box, k ? 2 : 0]], lines: [], hatch: k ? [box] : [] };
+  }
+  const ready = [0, ...readyOthers().map((d) => d.slot + 1)];
+  if (others().length < 2) {
+    const above = [box[1], box[2], box[3]];
+    return { parts: [[0, [box[0], box[1], box[3]], 0], [ready[1], above, 2]], lines: [[box[3], box[1]]], hatch: [above] };
+  }
+  const um = (u0 + u1) / 2, vm = (v0 + v1) / 2;
+  const quad = (a, b, c, d) => [[a, c], [b, c], [b, d], [a, d]];
+  const quadrants = [quad(u0, um, v0, vm), quad(um, u1, v0, vm), quad(u0, um, vm, v1), quad(um, u1, vm, v1)];
+  return {
+    parts: ready.map((k) => [k, quadrants[k], [0, 1, 3, 2][k]]),
+    lines: [[[um, v0], [um, v1]], [[u0, vm], [u1, vm]]],
+    hatch: quadrants.slice(1),
+  };
+}
+
+/**
  * A dataset tag (letter and file name) inside the view corner `at`, offset
  * toward its neighbouring corners `along` (same row) and `side` (same column).
- * The tag grows up and right from a bottom corner, or down and left when `flip`.
+ * The tag grows right and up from the corner, or to the left / down when `left` / `down`.
  */
-function datasetTag(c, letter, name, at, along, side, room, flip) {
+function datasetTag(c, letter, name, at, along, side, room, left = false, down = false) {
   const unit = ([x, y]) => {
     const n = Math.hypot(x - at[0], y - at[1]) || 1;
     return [(x - at[0]) / n, (y - at[1]) / n];
@@ -1443,27 +1513,27 @@ function datasetTag(c, letter, name, at, along, side, room, flip) {
   c.save();
   c.font = `600 12px ${SANS}`;
   const h = 26, badge = 20, maxText = room - badge - 16;
-  // A long name keeps the part that differs from the other dataset's name.
+  // A long name keeps the part that differs from another dataset's name (A's, or B's for A).
   const fits = (t) => c.measureText(t).width <= maxText;
-  const text = maxText > 24 ? shortenName(name, fits, name === sourceName ? compare?.name : sourceName) : '';
+  const text = maxText > 24 ? shortenName(name, fits, name === sourceName ? others()[0]?.name : sourceName) : '';
   const tw = text && fits(text) ? c.measureText(text).width : 0;
-  const w = 3 + badge + (tw ? 7 + tw + 9 : 3), left = flip ? x - w : x, top = flip ? y : y - h;
+  const w = 3 + badge + (tw ? 7 + tw + 9 : 3), x0 = left ? x - w : x, top = down ? y : y - h;
   c.fillStyle = 'rgba(255, 255, 255, 0.9)';
   c.strokeStyle = 'rgba(18, 24, 33, 0.18)';
   c.lineWidth = 1;
-  c.beginPath(); c.roundRect(left, top, w, h, 6); c.fill(); c.stroke();
+  c.beginPath(); c.roundRect(x0, top, w, h, 6); c.fill(); c.stroke();
   c.fillStyle = INK;
-  c.beginPath(); c.roundRect(left + 3, top + 3, badge, badge, 5); c.fill();
+  c.beginPath(); c.roundRect(x0 + 3, top + 3, badge, badge, 5); c.fill();
   c.fillStyle = '#ffffff';
   c.textAlign = 'center';
   c.textBaseline = 'middle';
   c.font = `700 12.5px ${SANS}`;
-  c.fillText(letter, left + 3 + badge / 2, top + h / 2 + 0.5);
+  c.fillText(letter, x0 + 3 + badge / 2, top + h / 2 + 0.5);
   if (tw) {
     c.font = `600 12px ${SANS}`;
     c.fillStyle = INK2;
     c.textAlign = 'left';
-    c.fillText(text, left + 3 + badge + 7, top + h / 2 + 0.5);
+    c.fillText(text, x0 + 3 + badge + 7, top + h / 2 + 0.5);
   }
   c.restore();
 }
@@ -1550,11 +1620,16 @@ function hover(p, e) {
     text = read(p, meta.dims);
     if (text === null) { p.hover.hidden = true; return; }
   } else {
-    // Both datasets, the one under the cursor first.
-    const a = `A ${read(p, meta.dims) ?? 'no data'}`, b = `B ${read(p.b, compare.meta.dims) ?? 'no data'}`;
-    const [u0, u1, v0, v1] = p.view;
-    const inB = shown === 'b' || (shown === 'split' && (pt[0] - u0) / (u1 - u0) + (pt[1] - v0) / (v1 - v0) > 1);
-    text = inB ? `${b} · ${a}` : `${a} · ${b}`;
+    // Every dataset, the one under the cursor (or shown alone) first.
+    const sets = [0, ...readyOthers().map((d) => d.slot + 1)];
+    const [u0, u1, v0, v1] = p.view, um = (u0 + u1) / 2, vm = (v0 + v1) / 2;
+    let under = shownIndex();
+    if (shown === 'split') {
+      under = others().length > 1 ? (pt[0] > um ? 1 : 0) + (pt[1] > vm ? 2 : 0)
+        : (pt[0] - u0) / (u1 - u0) + (pt[1] - v0) / (v1 - v0) > 1 ? sets[1] : 0;
+    }
+    const order = sets.includes(under) ? [under, ...sets.filter((k) => k !== under)] : sets;
+    text = order.map((k) => `${LETTERS[k]} ${read(layerOf(p, k), k ? slots[k - 1].meta.dims : meta.dims) ?? 'no data'}`).join(' · ');
   }
   const X = meta.dims[p.x], Y = meta.dims[p.y];
   p.hover.textContent = `${X.label} ${fmt(pt[0])}  ${Y.label} ${fmt(pt[1])}  →  ${text}`;
@@ -1581,10 +1656,11 @@ function savePNG(p) {
   out.toBlob((blob) => download(blob, `${shownStem()}_${X.label}${Y.label}_${F.label}=${p.data.center}.png`));
 }
 
-/** File names of what the views show: A, B, or both (see pairStem). */
+/** File names of what the views show: one dataset, or all of them (see setStem). */
 function shownStem() {
-  const names = { a: stem(), b: stemOf(compare?.name ?? ''), split: pairStem(stem(), stemOf(compare?.name ?? '')) };
-  return names[compareShown() ?? 'a'];
+  const shown = compareShown();
+  if (shown !== 'split') return shownIndex() ? stemOf(slots[shownIndex() - 1].name) : stem();
+  return setStem([stem(), ...readyOthers().map((d) => stemOf(d.name))]);
 }
 
 function download(blob, name) {
@@ -1614,10 +1690,8 @@ function applySymmetry() {
   const preset = PRESETS.find(([, gens]) => groupKey(closeGroup(parseOps(gens))) === key);
   $('sym-preset').value = preset ? preset[0] : 'custom';
   symmetry = { name: preset ? preset[0] : 'custom', ops, maps };
-  if (compare?.ready) {
-    Object.assign(compare, compareMaps());
-    showCompare();
-  }
+  for (const d of readyOthers()) Object.assign(d, compareMaps(d));
+  if (readyOthers().length) showCompare();
   showSymmetry();
   describe();
   panels.forEach(request);
@@ -1675,7 +1749,7 @@ function applyMask(clear = false) {
   $('mask-status').className = 'note';
   $('mask-status').textContent = radius || k ? 'Building mask…' : 'Clearing mask…';
   worker.postMessage({ type: 'mask', id: ++requestId, radius, k, maps: symmetry.maps, symmetry: symmetry.name });
-  if (compare?.ready) sendCompareMask(radius, k);
+  for (const d of readyOthers()) sendCompareMask(d, radius, k);
 }
 
 function showMask(seconds) {
@@ -1719,7 +1793,7 @@ function showExport() {
     sym ? `${symmetry.name} averaged` : 'not symmetrized',
     mask ? `mask ${pct((mask.edge + mask.outlier) / mask.measured)}` : 'no mask',
   ];
-  if (compare?.ready) parts.push('dataset A');
+  if (readyOthers().length) parts.push('dataset A');
   const warnings = [];
   if (!sym) warnings.push('NEBULA3D expects a symmetrized volume: choose a Laue class first.');
   if (voxels > 80e6) warnings.push(`NEBULA3D in the browser handles up to about 80 M voxels; this is ${Math.round(voxels / 1e6)} M, so use its desktop app.`);
@@ -1988,14 +2062,15 @@ function show3DCut() {
 
 /**
  * The texture of a slice plane in the 3-D view, on A's pixel grid. When
- * comparing, it matches the 2-D view: split along the diagonal of the visible
- * range (u, v), or B alone.
+ * comparing, it matches the 2-D view: the datasets' parts of the visible range
+ * (u, v), see splitLayout(), or one dataset alone.
  */
 function sliceTexture(p, s, u, v) {
-  const shown = compareShown(), a = layerImage(p, s);
-  if (!shown || shown === 'a') return { image: a, key: p.imageKey };
-  const b = p.b.data ? layerImage(p.b, s) : null;
-  const key = `${p.imageKey}|${b ? p.b.imageKey : '-'}|${shown}|${u}|${v}`;
+  const shown = compareShown();
+  if (!shown || shown === 'a') return { image: layerImage(p, s), key: p.imageKey };
+  const split = splitLayout(u[0], u[1], v[0], v[1]);
+  const images = split.parts.map(([k, part]) => [k, part, layerOf(p, k).data ? layerImage(layerOf(p, k), s) : null]);
+  const key = `${images.map(([k, , image]) => (image ? layerOf(p, k).imageKey : '-')).join('|')}|${shown}|${others().length}|${u}|${v}`;
   if (p.textureKey === key) return { image: p.texture, key };
   const { rows, cols } = p.data, ex = meta.dims[p.x].edges, ey = meta.dims[p.y].edges;
   const dx = (ex[ex.length - 1] - ex[0]) / cols, dy = (ey[ey.length - 1] - ey[0]) / rows;
@@ -2011,25 +2086,23 @@ function sliceTexture(p, s, u, v) {
     c.clip();
   };
   c.imageSmoothingEnabled = false;
-  if (shown === 'split') {
+  for (const [k, part, image] of images) {
+    if (!image) continue;
+    // Each dataset's image placed on A's pixel grid, clipped to its part.
+    const dims = k ? slots[k - 1].meta.dims : meta.dims, bx = dims[p.x].edges, by = dims[p.y].edges, { rows: rb, cols: cb } = layerOf(p, k).data;
     c.save();
-    clip([px(u[0], v[0]), px(u[1], v[0]), px(u[0], v[1])]);
-    c.drawImage(a, 0, 0);
-    c.restore();
-  }
-  if (b) {
-    const bx = compare.meta.dims[p.x].edges, by = compare.meta.dims[p.y].edges, { rows: rb, cols: cb } = p.b.data;
-    c.save();
-    if (shown === 'split') clip([px(u[1], v[0]), px(u[1], v[1]), px(u[0], v[1])]);
+    if (shown === 'split') clip(part.map(([uu, vv]) => px(uu, vv)));
     c.transform((bx[bx.length - 1] - bx[0]) / cb / dx, 0, 0, (by[by.length - 1] - by[0]) / rb / dy, (bx[0] - ex[0]) / dx, (by[0] - ey[0]) / dy);
     c.imageSmoothingEnabled = false;
-    c.drawImage(b, 0, 0);
+    c.drawImage(image, 0, 0);
     c.restore();
   }
-  if (shown === 'split') {
+  if (split.lines.length) {
     c.strokeStyle = '#ffffff';
     c.lineWidth = Math.max(1, Math.max(cols, rows) / 120);
-    c.beginPath(); c.moveTo(...px(u[0], v[1])); c.lineTo(...px(u[1], v[0])); c.stroke();
+    c.beginPath();
+    for (const [from, to] of split.lines) { c.moveTo(...px(...from)); c.lineTo(...px(...to)); }
+    c.stroke();
   }
   p.texture = canvas;
   p.textureKey = key;
@@ -2056,15 +2129,15 @@ function applyPendingProcessing() {
 
 /** The example: a synthetic crystal at 300 K (A) and 10 K (B), symmetrized and masked. */
 function openDemo() {
-  pendingCompare = DEMO.compare;
+  pendingCompare = [DEMO.compare];
   pendingProcessing = { sym: DEMO.sym, mask: DEMO.mask };
   openURL(DEMO.url);
 }
 
 // ---- I(Q) ---------------------------------------------------------------------------------
 
-// Curve colors of datasets A and B: the accent and the H-axis hue.
-const CURVE = { A: '#2f74e6', B: '#d98a0b' };
+// Curve colors of datasets A to D: the accent, the H- and L-axis hues, and violet.
+const CURVE = { A: '#2f74e6', B: '#d98a0b', C: '#13a36b', D: '#8e44c9' };
 const newCurveLayer = () => ({ data: null, key: '', busy: false, wanted: null, error: '', progress: null });
 
 /**
@@ -2078,8 +2151,8 @@ function requestPowder() {
 }
 
 /**
- * Send the I(Q) requests when they are due. B gets A's shells, which by default
- * reach the farther of the two grids; its mask is built first.
+ * Send the I(Q) requests when they are due. The other datasets get A's shells,
+ * which by default reach the farthest of the grids; their masks are built first.
  */
 function updatePowder() {
   if (!powder?.stale || !((powder.requested && plotShown(powder)) || powder.download)) return;
@@ -2091,21 +2164,23 @@ function updatePowder() {
     return x;
   };
   const split = Number($('iq-split').dataset.value);
-  let plan, planB = null, errorB = '', shells;
+  // Per other dataset: its |Q| extent, then its plan on A's shells, or why it has none.
+  const more = readyOthers().map((d) => ({ d, extent: null, plan: null, error: '' }));
+  let plan, shells;
   try {
     const bins = parseBins(powder.bins.value), qmin = read(powder.qmin, true), qmax = read(powder.qmax);
-    let top = qExtent(meta.dims, meta.lattice).top, extentB = null;
-    if (compare?.ready) {
+    let top = qExtent(meta.dims, meta.lattice).top;
+    for (const o of more) {
       try {
-        extentB = qExtent(compare.meta.dims, compare.meta.lattice);
-        top = Math.max(top, extentB.top);
+        o.extent = qExtent(o.d.meta.dims, o.d.meta.lattice);
+        top = Math.max(top, o.extent.top);
       } catch (err) {
-        errorB = err.message;
+        o.error = err.message;
       }
     }
     plan = powderPlan(meta.dims, meta.lattice, { bins, qmin, qmax: qmax ?? top, split });
     shells = JSON.stringify([plan.bins, qmin, qmax ?? top, split]);
-    if (extentB) planB = powderPlan(compare.meta.dims, compare.meta.lattice, { edges: plan.edges, split });
+    for (const o of more) if (o.extent) o.plan = powderPlan(o.d.meta.dims, o.d.meta.lattice, { edges: plan.edges, split });
   } catch (err) {
     Object.assign(powder.a, { data: null, error: err.message, key: '' });
     powder.plan = null;
@@ -2117,11 +2192,13 @@ function updatePowder() {
   powder.plan = plan;
   const group = groupKey(symmetry.ops);
   queuePowder(powder.a, worker, { plan, maps: symmetry.maps, symmetry: symmetry.name }, `${shells}|${group}|${maskVersion}`);
-  if (planB && !compare.maskBusy) {
-    queuePowder(powder.b, compare.worker, { plan: planB, maps: compare.maps, symmetry: compare.maps.length > 1 ? symmetry.name : '1' },
-      `${shells}|${group}|${compare.maps.length}|${compare.maskVersion ?? 0}`);
-  } else if (errorB) {
-    Object.assign(powder.b, { data: null, error: errorB, key: '' });
+  for (const { d, plan: own, error: why } of more) {
+    if (own && !d.maskBusy) {
+      queuePowder(powder.more[d.slot], d.worker, { plan: own, maps: d.maps, symmetry: d.maps.length > 1 ? symmetry.name : '1' },
+        `${shells}|${group}|${d.maps.length}|${d.maskVersion ?? 0}`);
+    } else if (why) {
+      Object.assign(powder.more[d.slot], { data: null, error: why, key: '' });
+    }
   }
   showPowder();
   finishPowderDownload();
@@ -2202,33 +2279,33 @@ function queuePowder(layer, w, request, key) {
 }
 
 function sendPowder(layer, w) {
-  const q = layer.wanted, b = layer === powder.b;
+  const q = layer.wanted, k = layer === powder.a ? 0 : powder.more.indexOf(layer) + 1;
   layer.wanted = null;
   layer.busy = true;
   layer.progress = null;
-  setJob(b ? 'iq-b' : 'iq-a', b ? 'I(Q) B' : 'I(Q)', 'Starting', 0);
+  setJob(`iq-${'abcd'[k]}`, k ? `I(Q) ${LETTERS[k]}` : 'I(Q)', 'Starting', 0);
   w.postMessage({ type: 'powder', id: ++requestId, ...q });
 }
 
-/** I(Q) of dataset `which` ('a' or 'b') has arrived, or failed with `message`. */
-function powderResult(which, msg, message = '') {
-  const layer = powder?.[which];
-  if (!layer) return;
+/** I(Q) of dataset k (0 for A) has arrived, or failed with `message`. */
+function powderResult(k, msg, message = '') {
+  if (!powder) return;
+  const layer = layerOf(powder, k);
   layer.busy = false;
   layer.progress = null;
   Object.assign(layer, msg ? { data: msg, error: '' } : { data: null, error: message });
-  if (layer.wanted) sendPowder(layer, which === 'a' ? worker : compare.worker);
-  else endJob(`iq-${which}`);
+  if (layer.wanted) sendPowder(layer, workerOf(k));
+  else endJob(`iq-${'abcd'[k]}`);
   showPowder();
   drawPlot(powder);
   finishPowderDownload();
 }
 
-function powderProgress(which, { label, fraction }) {
-  const layer = powder?.[which];
+function powderProgress(k, { label, fraction }) {
+  const layer = powder && layerOf(powder, k);
   if (!layer?.busy) return;
   layer.progress = { label, fraction };
-  setJob(`iq-${which}`, which === 'a' ? 'I(Q)' : 'I(Q) B', label, fraction);
+  setJob(`iq-${'abcd'[k]}`, k ? `I(Q) ${LETTERS[k]}` : 'I(Q)', label, fraction);
   showPowder();
 }
 
@@ -2240,7 +2317,7 @@ function showPowder() {
     $('powder-state').textContent = text;
     $('powder-state').className = `state ${kind}`.trim();
   };
-  const layers = [['A', powder.a], ...(compare?.ready ? [['B', powder.b]] : [])];
+  const layers = [['A', powder.a], ...readyOthers().map((d) => [d.letter, powder.more[d.slot]])];
   const working = layers.filter(([, l]) => l.busy);
   powder.compute.hidden = powder.requested || !!powder.a.error;
   if (working.length) {
@@ -2248,7 +2325,7 @@ function showPowder() {
     const label = working.find(([, l]) => l.progress)?.[1].progress.label ?? 'Starting';
     state('busy', 'working…');
     statusEl.className = 'note';
-    statusEl.textContent = `${label}${compare?.ready ? ` (${working.map(([k]) => k).join(', ')})` : ''}… ${Math.round(100 * fraction)}%`;
+    statusEl.textContent = `${label}${layers.length > 1 ? ` (${working.map(([k]) => k).join(', ')})` : ''}… ${Math.round(100 * fraction)}%`;
     powder.caption.textContent = `computing… ${Math.round(100 * fraction)}%`;
     powder.caption.title = '';
     return;
@@ -2272,11 +2349,11 @@ function showPowder() {
     A.masked && mask ? `mask ${pct((mask.edge + mask.outlier) / mask.measured)}` : 'no mask',
     ...(errors.every(([, t]) => t === errors[0][1]) ? [errors[0][1].replace('the file', sets.length > 1 ? 'the files' : 'the file')] : errors.map(([k, t]) => `${k}: ${t}`)),
   ];
-  const warnings = compare?.ready && powder.b.error ? [`B: ${powder.b.error}`] : [];
+  const warnings = layers.slice(1).filter(([, l]) => l.error).map(([k, l]) => `${k}: ${l.error}`);
   if (powder.stale) warnings.push('Settings changed: it is recomputed when its view is shown.');
   state(powder.stale ? '' : 'ok', powder.stale ? 'out of date' : 'ready');
   statusEl.className = warnings.length ? 'note warn' : 'note';
-  statusEl.textContent = `${sets.length > 1 ? 'A and B: ' : ''}${facts.join(' · ')}.${warnings.length ? ` ${warnings.join(' ')}` : ''}`;
+  statusEl.textContent = `${sets.length > 1 ? `${listText(sets.map(([k]) => k))}: ` : ''}${facts.join(' · ')}.${warnings.length ? ` ${warnings.join(' ')}` : ''}`;
   powder.caption.textContent = `${A.split > 1 ? `${A.split}³ split` : 'centres'}${A.order > 1 ? ` · ${A.symmetry}` : ''}${A.masked ? ' · masked' : ''}${A.errors ? ' · ±σ' : ''}`;
   powder.caption.title = `${facts.join('\n')}\nVoxels split into ${A.split}³ sub-cells · ${sets.map(([k, l]) => `${sets.length > 1 ? `${k} ` : ''}${l.data.seconds.toFixed(1)} s`).join(', ')}`;
 }
@@ -2299,18 +2376,21 @@ function downloadPowder() {
 }
 
 function finishPowderDownload() {
-  if (!powder?.download || powder.stale || compare?.maskBusy) return;
-  if ([powder.a, ...(compare?.ready ? [powder.b] : [])].some((l) => l.busy || l.wanted)) return;
+  if (!powder?.download || powder.stale || others().some((d) => d.maskBusy)) return;
+  if ([powder.a, ...readyOthers().map((d) => powder.more[d.slot])].some((l) => l.busy || l.wanted)) return;
   powder.download = false;
   if (!powder.a.data) return;
-  const both = compare?.ready && powder.b.data;
-  download(new Blob([powderText()], { type: 'text/plain' }), `${both ? pairStem(stem(), stemOf(compare.name)) : stem()}_IQ.dat`);
+  download(new Blob([powderText()], { type: 'text/plain' }), `${setStem(curveSets(powder).map(([, name]) => stemOf(name)))}_IQ.dat`);
+}
+
+/** The datasets with a curve in `plot` (I(Q) or the cut), A first: [letter, file name, data]. */
+function curveSets(plot) {
+  return [['A', sourceName, plot.a.data], ...readyOthers().map((d) => [d.letter, d.name, plot.more[d.slot].data])].filter(([, , data]) => data);
 }
 
 /** I(Q) as text: a commented header, then Q and, per dataset, I, σ, coverage and voxels. */
 function powderText() {
-  const sets = [['A', sourceName, powder.a.data]];
-  if (compare?.ready && powder.b.data) sets.push(['B', compare.name, powder.b.data]);
+  const sets = curveSets(powder);
   const both = sets.length > 1, { edges, split, frame } = sets[0][2], l = meta.lattice, bins = powder.plan.bins;
   const rows = Math.max(...sets.map(([, , d]) => lastShell(d))) + 1;
   // The same shells as Rebin parameters, with a single step's range written out.
@@ -2318,7 +2398,7 @@ function powderText() {
   const num = (x) => (Number.isFinite(x) ? String(Number(x.toPrecision(7))) : 'nan');
   const columns = both ? sets.flatMap(([k]) => [`I_${k}`, `sigma_${k}`, `coverage_${k}`, `voxels_${k}`]) : ['I', 'sigma', 'coverage', 'voxels'];
   const lines = [
-    `# I(Q), the powder average of ${sets.map(([k, name]) => (both ? `${k} = ${name}` : name)).join(' and ')}`,
+    `# I(Q), the powder average of ${listText(sets.map(([k, name]) => (both ? `${k} = ${name}` : name)))}`,
     `# Written by NeXus Viewer (https://drthyang.github.io/neutron-nexus-viewer/) on ${new Date().toISOString()}`,
     frame === 'HKL'
       ? `# |Q| in 1/Angstrom, with 2*pi, from the cell (${l.source}): a b c = ${[l.a, l.b, l.c].map((x) => x.toFixed(4)).join(' ')} Angstrom, alpha beta gamma = ${[l.alpha, l.beta, l.gamma].map((x) => x.toFixed(3)).join(' ')} deg`
@@ -2359,12 +2439,11 @@ function powderText() {
 //   readout(b, layers)       the hover text for bin b
 //   onHover()                optional: called when `at` changes
 
-/** The curves of a plot shown: A, and B when comparing (following A / Split / B). */
+/** The curves of a plot shown: every dataset when comparing, or the one shown alone (following A / Split / B …). */
 function shownLayers(plot) {
-  const shown = compareShown(), out = [];
-  if (plot.a.data && shown !== 'b') out.push({ letter: 'A', name: sourceName, data: plot.a.data, color: CURVE.A });
-  if (shown && shown !== 'a' && plot.b.data) out.push({ letter: 'B', name: compare.name, data: plot.b.data, color: CURVE.B });
-  return out;
+  const shown = compareShown(), only = shown && shown !== 'split' ? shownIndex() : null;
+  return curveSets(plot).filter(([letter]) => only === null || LETTERS[only] === letter)
+    .map(([letter, name, data]) => ({ letter, name, data, color: CURVE[letter] }));
 }
 
 /**
@@ -2812,7 +2891,7 @@ function setupCut() {
   cut = {
     canvas: q('canvas'), hover: q('.overlay-chip'), caption: q('.view-caption'), zoomReset: q('.zoom-reset'), cta: q('.view-cta'),
     from: q('.cut-from'), to: q('.cut-to'), width: q('.cut-width'), wslider: q('.cut-wslider'), unit: q('.cut-unit'),
-    a: newCurveLayer(), b: newCurveLayer(), line: null, stale: false, download: false, zoom: null, drag: null, view: null, at: null,
+    a: newCurveLayer(), more: [newCurveLayer(), newCurveLayer(), newCurveLayer()], line: null, stale: false, download: false, zoom: null, drag: null, view: null, at: null,
     // As a plot (see drawCurves()):
     xMin: -Infinity, title: 'Line cut',
     log: () => cutScale === 'log', band: () => $('cut-band').checked, cover: () => false,
@@ -2821,7 +2900,7 @@ function setupCut() {
     yLabel: (log) => (log ? 'Intensity, log scale' : 'Intensity'),
     empty: () => {
       if (!cut.line) return clickMode === 'cut' ? { text: 'Drag across a slice to draw a cut, or type its ends below.' } : null;
-      const busy = cut.a.busy || cut.b.busy, failed = compareShown() === 'b' ? cut.b.error : cut.a.error;
+      const busy = [cut.a, ...cut.more].some((l) => l.busy), failed = layerOf(cut, shownIndex()).error;
       return { text: busy ? 'Computing the cut…' : failed || 'The cut appears here.', error: !busy && !!failed };
     },
     extras: (data) => {
@@ -3081,7 +3160,7 @@ function requestCut() {
   showCut();
 }
 
-/** Send the cut requests when they are due: to A's worker, and B's once its mask is built. */
+/** Send the cut requests when they are due: to A's worker, and the others' once their masks are built. */
 function updateCut() {
   if (!cut?.stale || !cut.line || !plotShown(cut)) return;
   cut.stale = false;
@@ -3090,15 +3169,15 @@ function updateCut() {
     spec = cutSpec();
   } catch (err) {
     Object.assign(cut.a, { data: null, error: err.message });
-    cut.b.data = null;
+    for (const layer of cut.more) layer.data = null;
     showCut();
     drawPlot(cut);
     return;
   }
   const removed = $('mask-removed').checked;
   queueCut(cut.a, worker, { cut: spec, maps: symmetry.maps, symmetry: symmetry.name, removed });
-  if (compare?.ready && !compare.maskBusy) {
-    queueCut(cut.b, compare.worker, { cut: spec, maps: compare.maps, symmetry: compare.maps.length > 1 ? symmetry.name : '1', removed });
+  for (const d of readyOthers()) {
+    if (!d.maskBusy) queueCut(cut.more[d.slot], d.worker, { cut: spec, maps: d.maps, symmetry: d.maps.length > 1 ? symmetry.name : '1', removed });
   }
 }
 
@@ -3115,22 +3194,22 @@ function sendCut(layer, w) {
   w.postMessage({ type: 'cut', id: ++requestId, ...q });
 }
 
-/** The cut of dataset `which` ('a' or 'b') has arrived, or failed with `message`. */
-function cutResult(which, msg, message = '') {
-  const layer = cut?.[which];
-  if (!layer) return;
+/** The cut of dataset k (0 for A) has arrived, or failed with `message`. */
+function cutResult(k, msg, message = '') {
+  if (!cut) return;
+  const layer = layerOf(cut, k);
   layer.busy = false;
   Object.assign(layer, msg ? { data: msg, error: '' } : { data: null, error: message });
-  if (layer.wanted) sendCut(layer, which === 'a' ? worker : compare.worker);
-  else endJob(`cut-${which}`);
+  if (layer.wanted) sendCut(layer, workerOf(k));
+  else endJob(`cut-${'abcd'[k]}`);
   showCut();
   drawPlot(cut);
   finishCutDownload();
 }
 
 /** The first cut of a file reads its uncertainties, which takes a moment on large files. */
-function cutProgress(which, { label, fraction }) {
-  if (cut?.[which]?.busy) setJob(`cut-${which}`, which === 'a' ? 'Cut' : 'Cut B', label, fraction);
+function cutProgress(k, { label, fraction }) {
+  if (cut && layerOf(cut, k).busy) setJob(`cut-${'abcd'[k]}`, k ? `Cut ${LETTERS[k]}` : 'Cut', label, fraction);
 }
 
 /** The cut view's header, fields and button. */
@@ -3152,7 +3231,7 @@ function showCut() {
   const d = cut.a.data, { path } = cutPath();
   let width = auto;
   try { width = cutSpec().radius * 2 * scale; } catch { /* the field says why */ }
-  if (cut.a.busy || cut.b.busy) {
+  if ([cut.a, ...cut.more].some((l) => l.busy)) {
     cut.caption.textContent = 'computing…';
   } else if (cut.a.error || !d) {
     cut.caption.textContent = cut.a.error || '';
@@ -3162,7 +3241,7 @@ function showCut() {
   }
   cut.caption.title = `Along ${path} from (${cut.from.value}) to (${cut.to.value}), averaging a rod ${fmt(width)} ${unit} across`
     + `${d ? `; ${d.intensity.length} points in ${d.seconds.toFixed(2)} s` : ''}`
-    + `${compare?.ready && cut.b.error ? `\nB: ${cut.b.error}` : ''}`;
+    + readyOthers().filter((o) => cut.more[o.slot].error).map((o) => `\n${o.letter}: ${cut.more[o.slot].error}`).join('');
 }
 
 /**
@@ -3218,12 +3297,12 @@ function drawCutOverlay(c, p, corners) {
   c.restore();
   c.save();
   for (const end of [A, B]) dot(end, 4.5);
-  const data = cut.at !== null && shownLayers(cut)[0]?.data;
-  if (data) {
-    const [x, y] = flat(cutAt(shellMid(data, cut.at)));
+  const first = cut.at !== null && shownLayers(cut)[0];
+  if (first) {
+    const [x, y] = flat(cutAt(shellMid(first.data, cut.at)));
     c.beginPath(); c.arc(x, y, 5.5, 0, 2 * Math.PI);
     c.lineWidth = 2.5; c.strokeStyle = '#ffffff'; c.stroke();
-    c.lineWidth = 1.5; c.strokeStyle = CURVE.A; c.stroke();
+    c.lineWidth = 1.5; c.strokeStyle = first.color; c.stroke();
   }
   c.restore();
 }
@@ -3237,11 +3316,11 @@ function downloadCut(format) {
 }
 
 function finishCutDownload() {
-  if (!cut?.download || cut.stale || [cut.a, ...(compare?.ready ? [cut.b] : [])].some((l) => l.busy || l.wanted)) return;
+  if (!cut?.download || cut.stale || [cut.a, ...readyOthers().map((d) => cut.more[d.slot])].some((l) => l.busy || l.wanted)) return;
   const format = cut.download;
   cut.download = false;
   if (!cut.a.data) return;
-  const both = compare?.ready && cut.b.data, name = `${both ? pairStem(stem(), stemOf(compare.name)) : stem()}_cut_${cutFileName()}`;
+  const name = `${setStem(curveSets(cut).map(([, file]) => stemOf(file)))}_cut_${cutFileName()}`;
   if (format === 'csv') download(new Blob([cutCSV()], { type: 'text/csv' }), `${name}.csv`);
   else download(new Blob([cutText()], { type: 'text/plain' }), `${name}.dat`);
 }
@@ -3251,8 +3330,7 @@ function finishCutDownload() {
  * coordinates, and I, σ and voxels of each dataset shown (named in `values`).
  */
 function cutTable() {
-  const sets = [['A', sourceName, cut.a.data]];
-  if (compare?.ready && cut.b.data) sets.push(['B', compare.name, cut.b.data]);
+  const sets = curveSets(cut);
   const data = sets[0][2];
   // Positions are sums of steps: rounding leaves 1e-16 where 0 is meant.
   const clean = (x) => (Math.abs(x) < 1e-9 ? 0 : x);
@@ -3286,7 +3364,7 @@ function cutText() {
   const where = p ? `drawn in the ${meta.dims[p.x].label}-${meta.dims[p.y].label} slice at ${meta.dims[p.fixed].label} = ${String(Number(spec.a[p.fixed].toPrecision(7)))}` : 'in 3-D';
   const num = (x) => (Number.isFinite(x) ? String(Number(x.toPrecision(7))) : 'nan');
   const lines = [
-    `# Line cut along ${path} of ${sets.map(([k, name]) => (both ? `${k} = ${name}` : name)).join(' and ')}`,
+    `# Line cut along ${path} of ${listText(sets.map(([k, name]) => (both ? `${k} = ${name}` : name)))}`,
     `# Written by NeXus Viewer (https://drthyang.github.io/neutron-nexus-viewer/) on ${new Date().toISOString()}`,
     `# From (${pointText(spec.a)}) to (${pointText(spec.b)}), ${where}`,
     `# Points every ${num(step)} in ${axis.label}; each averages the voxels whose centres lie in a rod of diameter ${num(2 * spec.radius * scale)} ${unit || 'units'}`,
@@ -3302,62 +3380,73 @@ function cutText() {
   return `${lines.join('\n')}\n`;
 }
 
-// ---- Comparing two datasets ---------------------------------------------------------------
+// ---- Comparing datasets -------------------------------------------------------------------
 
-/** Open a second file (B) in its own worker; its slices follow A's positions and processing. */
-function openCompare(file) {
-  if (!panels.length) return; // viewer not ready yet
-  closeCompare();
+const freeSlot = () => slots.indexOf(null);
+
+/**
+ * Open a file as dataset B, C or D (`slot` 0, 1 or 2, by default the first free
+ * one; a dataset there is replaced) in its own worker; its slices follow A's
+ * positions and processing.
+ */
+function openCompare(file, slot = freeSlot()) {
+  if (!panels.length || slot < 0) return; // viewer not ready yet, or no slot free
+  closeCompare(slot);
   const w = new Worker(new URL('./worker.js', import.meta.url), { type: 'module' });
-  const current = compare = {
-    worker: w, name: file.name, size: file.size, meta: null, ready: false, autoscaled: false,
-    maps: [IDENTITY_MAP], mapsNote: '', mask: null, maskNote: '', maskBusy: false,
+  const d = slots[slot] = {
+    slot, letter: LETTERS[slot + 1], worker: w, name: file.name, size: file.size, meta: null, ready: false, autoscaled: false,
+    maps: [IDENTITY_MAP], mapsNote: '', mask: null, maskNote: '', maskBusy: false, work: null,
   };
-  w.onmessage = ({ data }) => { if (compare === current) compareHandlers[data.type]?.(data); };
+  const on = compareHandlers(d);
+  w.onmessage = ({ data }) => { if (slots[slot] === d) on[data.type]?.(data); };
   w.onerror = (e) => {
     e.preventDefault();
-    if (compare !== current) return;
-    closeCompare();
-    error(`Dataset B: ${e.message || 'the HDF5 reader could not start.'}`);
+    if (slots[slot] !== d) return;
+    closeCompare(slot);
+    error(`Dataset ${d.letter}: ${e.message || 'the HDF5 reader could not start.'}`);
   };
-  // B's axes, if they are A's in another order, are displayed in A's order.
-  w.postMessage({ type: 'open', file, order: meta.dims.map((d) => d.label) });
-  compareWork('open-b', 'Opening', 0);
+  // Axes that are A's in another order are displayed in A's order.
+  w.postMessage({ type: 'open', file, order: meta.dims.map((x) => x.label) });
+  compareWork(d, 'open', 'Opening', 0);
 }
 
-/** Work on B (`key` 'open-b' or 'mask-b'): a job in the top bar, and the step under B's name. */
-function compareWork(key, step, fraction) {
-  setJob(key, key === 'mask-b' ? 'Mask B' : 'Opening B', step, fraction);
-  showCompare(step, fraction);
+/** Work on dataset d (`kind` 'open' or 'mask'): a job in the top bar, and the step under its name. */
+function compareWork(d, kind, step, fraction) {
+  setJob(`${kind}-${d.letter.toLowerCase()}`, `${kind === 'mask' ? 'Mask' : 'Opening'} ${d.letter}`, step, fraction);
+  d.work = { step, fraction };
+  showCompare();
 }
 
-async function openCompareURL(url) {
-  if (!panels.length) return;
-  closeCompare();
-  const current = compare = { worker: null, name: urlName(url), ready: false };
-  compareWork('open-b', 'Downloading', 0);
+async function openCompareURL(url, slot = freeSlot()) {
+  if (!panels.length || slot < 0) return;
+  closeCompare(slot);
+  const d = slots[slot] = { slot, letter: LETTERS[slot + 1], worker: null, name: urlName(url), ready: false, work: null };
+  compareWork(d, 'open', 'Downloading', 0);
   try {
-    const file = await fetchFile(url, (got, total) => { if (compare === current) compareWork('open-b', `Downloading ${downloaded(got, total)}`, total ? got / total : 0); });
-    if (compare === current) openCompare(file);
+    const file = await fetchFile(url, (got, total) => { if (slots[slot] === d) compareWork(d, 'open', `Downloading ${downloaded(got, total)}`, total ? got / total : 0); });
+    if (slots[slot] === d) openCompare(file, slot);
   } catch (err) {
-    if (compare !== current) return;
-    closeCompare();
+    if (slots[slot] !== d) return;
+    closeCompare(slot);
     error(`Could not download ${url}: ${err.message}. The server must allow cross-origin requests.`);
   }
 }
 
-function closeCompare() {
-  compare?.worker?.terminate();
-  compare = null;
-  endJob('open-b', 'mask-b', 'iq-b', 'cut-b');
+/** Remove the dataset in `slot` (B, C or D), if any. */
+function closeCompare(slot) {
+  slots[slot]?.worker?.terminate();
+  slots[slot] = null;
+  const l = 'bcd'[slot];
+  if (compareView === l) compareView = 'split';
+  endJob(`open-${l}`, `mask-${l}`, `iq-${l}`, `cut-${l}`);
   for (const p of panels) {
-    p.b = newLayer();
+    p.more[slot] = newLayer();
     showCaption(p);
   }
   showCompare();
   if (meta && panels.length) {
-    powder.b = newCurveLayer();
-    cut.b = newCurveLayer();
+    powder.more[slot] = newCurveLayer();
+    cut.more[slot] = newCurveLayer();
     showCut();
     requestPowder();
     describe();
@@ -3365,131 +3454,168 @@ function closeCompare() {
   }
 }
 
-/** The symmetry's index maps on B's grid, or the identity (with a note) when they do not fit it. */
-function compareMaps() {
+/** The symmetry's index maps on dataset d's grid, or the identity (with a note) when they do not fit it. */
+function compareMaps(d) {
   if (symmetry.ops.length === 1) return { maps: [IDENTITY_MAP], mapsNote: '' };
   try {
-    return { maps: indexMaps(symmetry.ops, compare.meta.dims), mapsNote: '' };
+    return { maps: indexMaps(symmetry.ops, d.meta.dims), mapsNote: '' };
   } catch (err) {
-    return { maps: [IDENTITY_MAP], mapsNote: `Symmetry not applied to B: ${err.message}` };
+    return { maps: [IDENTITY_MAP], mapsNote: `Symmetry not applied to ${d.letter}: ${err.message}` };
   }
 }
 
-function sendCompareMask(radius, k) {
-  const kb = compare.maps.length >= 3 ? k : 0;
-  compare.maskNote = k && !kb ? 'Outlier cut not applied to B: it needs a symmetry of at least 3 operations that fits B\'s grid.' : '';
-  compare.maskBusy = true;
-  compare.maskRequested = `${radius},${k}`;
-  compare.worker.postMessage({ type: 'mask', id: ++requestId, radius, k: kb, maps: compare.maps, symmetry: symmetry.name });
-  compareWork('mask-b', 'Building mask', 0);
+function sendCompareMask(d, radius, k) {
+  const kd = d.maps.length >= 3 ? k : 0;
+  d.maskNote = k && !kd ? `Outlier cut not applied to ${d.letter}: it needs a symmetry of at least 3 operations that fits ${d.letter}'s grid.` : '';
+  d.maskBusy = true;
+  d.maskRequested = `${radius},${k}`;
+  d.worker.postMessage({ type: 'mask', id: ++requestId, radius, k: kd, maps: d.maps, symmetry: symmetry.name });
+  compareWork(d, 'mask', 'Building mask', 0);
 }
 
-const compareHandlers = {
-  progress: ({ label, fraction }) => compareWork('open-b', label, fraction),
-  meta: ({ info }) => { compare.meta = info; },
-  ready: ({ stats, seconds }) => {
-    Object.assign(compare.meta, { stats, seconds });
-    compare.ready = true;
-    endJob('open-b');
-    Object.assign(compare, compareMaps());
-    for (const p of panels) p.b = newLayer();
-    // B gets A's mask before its first slices.
-    if (mask) sendCompareMask(mask.radius, mask.k);
-    else panels.forEach((p) => request(p, 'b'));
-    if (compare.maskBusy) showCompare('Building mask', 0);
-    else showCompare();
-    powder.b = newCurveLayer();
-    cut.b = newCurveLayer();
-    requestPowder();
-    requestCut();
-    describe();
-    redraw();
-  },
-  slice: (msg) => {
-    const p = panels.find((q) => q.fixed === msg.fixed);
-    if (!p) return;
-    Object.assign(p.b, { busy: false, data: msg, error: '', version: p.b.version + 1 });
-    showCaption(p);
-    if (p.b.wanted) sendB(p);
-    // Once B's first slices are in, the automatic range covers both datasets.
-    if (!compare.autoscaled && panels.every((q) => q.b.data || q.b.error)) {
-      compare.autoscaled = true;
-      if (rangeIsAuto) autoRange();
-    }
-    redraw();
-  },
-  error: ({ fixed, message }) => {
-    const p = panels.find((q) => q.fixed === fixed);
-    if (!p) {
-      closeCompare();
-      error(`Dataset B: ${message}`);
-      return;
-    }
-    Object.assign(p.b, { busy: false, data: null, error: message, version: p.b.version + 1 });
-    showCaption(p);
-    if (p.b.wanted) sendB(p);
-    redraw();
-  },
-  'progress-mask': ({ label, fraction }) => compareWork('mask-b', label, fraction),
-  mask: ({ stats, radius, k }) => {
-    compare.maskBusy = false;
-    endJob('mask-b');
-    compare.mask = stats ? { ...stats, radius, k } : null;
-    compare.maskVersion = (compare.maskVersion ?? 0) + 1;
-    showCompare();
-    describe();
-    panels.forEach((p) => request(p, 'b'));
-    requestPowder();
-    requestCut();
-  },
-  'mask-error': ({ message }) => {
-    compare.maskBusy = false;
-    endJob('mask-b');
-    compare.maskNote = `Mask for B failed: ${message}`;
-    showCompare();
-    panels.forEach((p) => request(p, 'b'));
-    requestPowder();
-    requestCut();
-  },
-  'progress-powder': (msg) => powderProgress('b', msg),
-  powder: (msg) => powderResult('b', msg),
-  'powder-error': ({ message }) => powderResult('b', null, message),
-  'progress-cut': (msg) => cutProgress('b', msg),
-  cut: (msg) => cutResult('b', msg),
-  'cut-error': ({ message }) => cutResult('b', null, message),
-};
+/** The handlers of dataset d's worker messages. */
+function compareHandlers(d) {
+  const k = d.slot + 1, l = d.letter.toLowerCase();
+  const done = (kind) => {
+    d.work = null;
+    endJob(`${kind}-${l}`);
+  };
+  return {
+    progress: ({ label, fraction }) => compareWork(d, 'open', label, fraction),
+    meta: ({ info }) => { d.meta = info; },
+    ready: ({ stats, seconds }) => {
+      Object.assign(d.meta, { stats, seconds });
+      d.ready = true;
+      done('open');
+      Object.assign(d, compareMaps(d));
+      for (const p of panels) p.more[d.slot] = newLayer();
+      // It gets A's mask before its first slices.
+      if (mask) sendCompareMask(d, mask.radius, mask.k);
+      else panels.forEach((p) => request(p, d));
+      showCompare();
+      powder.more[d.slot] = newCurveLayer();
+      cut.more[d.slot] = newCurveLayer();
+      requestPowder();
+      requestCut();
+      describe();
+      redraw();
+    },
+    slice: (msg) => {
+      const p = panels.find((q) => q.fixed === msg.fixed);
+      if (!p) return;
+      const layer = p.more[d.slot];
+      Object.assign(layer, { busy: false, data: msg, error: '', version: layer.version + 1 });
+      showCaption(p);
+      if (layer.wanted) sendOther(p, d);
+      // Once its first slices are in, the automatic range covers it too.
+      if (!d.autoscaled && panels.every((q) => q.more[d.slot].data || q.more[d.slot].error)) {
+        d.autoscaled = true;
+        if (rangeIsAuto) autoRange();
+      }
+      redraw();
+    },
+    error: ({ fixed, message }) => {
+      const p = panels.find((q) => q.fixed === fixed);
+      if (!p) {
+        closeCompare(d.slot);
+        error(`Dataset ${d.letter}: ${message}`);
+        return;
+      }
+      const layer = p.more[d.slot];
+      Object.assign(layer, { busy: false, data: null, error: message, version: layer.version + 1 });
+      showCaption(p);
+      if (layer.wanted) sendOther(p, d);
+      redraw();
+    },
+    'progress-mask': ({ label, fraction }) => compareWork(d, 'mask', label, fraction),
+    mask: ({ stats, radius, k: cutK }) => {
+      d.maskBusy = false;
+      done('mask');
+      d.mask = stats ? { ...stats, radius, k: cutK } : null;
+      d.maskVersion = (d.maskVersion ?? 0) + 1;
+      showCompare();
+      describe();
+      panels.forEach((p) => request(p, d));
+      requestPowder();
+      requestCut();
+    },
+    'mask-error': ({ message }) => {
+      d.maskBusy = false;
+      done('mask');
+      d.maskNote = `Mask for ${d.letter} failed: ${message}`;
+      showCompare();
+      panels.forEach((p) => request(p, d));
+      requestPowder();
+      requestCut();
+    },
+    'progress-powder': (msg) => powderProgress(k, msg),
+    powder: (msg) => powderResult(k, msg),
+    'powder-error': ({ message }) => powderResult(k, null, message),
+    'progress-cut': (msg) => cutProgress(k, msg),
+    cut: (msg) => cutResult(k, msg),
+    'cut-error': ({ message }) => cutResult(k, null, message),
+  };
+}
+
+// The chips of B, C and D in the top bar, made from the template in index.html.
+const chips = [0, 1, 2].map((slot) => {
+  const root = $('ds-template').content.firstElementChild.cloneNode(true);
+  root.dataset.slot = slot;
+  root.querySelector('.ab-tag').textContent = LETTERS[slot + 1];
+  $('compare-open').before(root);
+  const q = (sel) => root.querySelector(sel);
+  return { root, main: q('.ds-main'), name: q('.ds-name'), facts: q('.ds-facts'), warn: q('.ds-warn'), close: q('.icon-btn') };
+});
 
 /**
- * Dataset B in the top bar (or the Compare button that adds it) and the
- * A / Split / B control. `step` and `fraction` describe work in progress on B
- * (loading or masking), shown under its name with a thin bar.
+ * The datasets compared with A in the top bar (each chip shows its name and
+ * facts, or the work in progress on it), the Compare button that adds one, and
+ * the A / Split / B … control.
  */
-function showCompare(step = '', fraction = null) {
-  const ready = !!compare?.ready;
-  document.body.classList.toggle('comparing', ready);
-  $('dataset-b').hidden = !compare;
-  $('compare-open').hidden = !!compare || !panels.length;
-  $('compare-view').hidden = $('file-sep').hidden = !ready;
-  $('dataset-tag').hidden = !compare;
-  if (sourceName) setFileName($('dataset-name'), sourceName, compare?.name ?? null);
+function showCompare() {
+  const list = others(), ready = readyOthers(), quadrants = list.length > 1;
+  document.body.classList.toggle('comparing', ready.length > 0);
+  document.body.classList.toggle('comparing-more', list.length > 1);
+  $('compare-open').hidden = list.length === slots.length || !panels.length;
+  $('compare-open').title = `Compare with ${list.length ? 'another' : 'a second'} file (${LETTERS[freeSlot() + 1] ?? 'D'}): two datasets split every slice along its diagonal, `
+    + 'three or four share it in quadrants, and I(Q) and the cut show them all. Or drop a file here.';
+  $('compare-view').hidden = $('file-sep').hidden = !ready.length;
+  $('file-sep').innerHTML = quadrants ? ICONS.quadrants : ICONS.diagonal;
+  $('file-sep').title = quadrants ? 'Compared: each slice is shared in quadrants, A, B, C, D from lower left to upper right' : 'Compared: each slice is split along its diagonal';
+  for (const button of $('compare-view').querySelectorAll('button')) {
+    const k = 'abcd'.indexOf(button.dataset.value);
+    if (k > 0) button.hidden = !slots[k - 1]?.ready;
+  }
+  const splitButton = $('compare-view').querySelector('[data-value="split"]');
+  splitButton.title = quadrants
+    ? 'Share each slice in quadrants: A lower left, B lower right, C upper left, D upper right'
+    : 'Split each slice along its diagonal: A below, the other dataset above';
+  splitButton.querySelector('.split-icon').innerHTML = quadrants ? ICONS.quadrants : ICONS.diagonal;
+  setSegmented($('compare-view'), compareShown() ?? 'split');
+  $('dataset-tag').hidden = !list.length;
+  if (sourceName) setFileName($('dataset-name'), sourceName, list[0]?.name ?? null);
   const title3d = views['3d']?.section.querySelector('.view-title');
-  if (title3d) title3d.textContent = ready ? 'Isosurface · A' : 'Isosurface';
-  if (!compare) return;
-  setFileName($('compare-name'), compare.name, sourceName);
-  const stepText = step && `${step}${fraction > 0 ? ` · ${Math.round(100 * fraction)}%` : '…'}`;
-  $('compare-facts').textContent = stepText || (ready ? datasetFacts(compare.meta) : 'Opening…');
-  $('compare-close').title = ready ? 'Remove B' : 'Cancel';
-  // Warnings about B: its axes, and processing that could not be applied to it.
-  const labels = (dims) => dims.map((d) => d.label).join(' ');
-  const warnings = [];
-  if (ready && labels(compare.meta.dims) !== labels(meta.dims)) warnings.push(`B's axes (${labels(compare.meta.dims)}) differ from A's (${labels(meta.dims)}); B is drawn on A's axes.`);
-  if (compare.mapsNote) warnings.push(compare.mapsNote);
-  if (compare.maskNote) warnings.push(compare.maskNote);
-  $('compare-warn').hidden = !warnings.length;
-  $('compare-warn').title = warnings.join('\n');
-  $('compare-button').title = `Dataset B: ${compare.name}${compare.size ? ` (${mb(compare.size)})` : ''}`
-    + `${ready ? `\n${datasetDetails(compare.meta, compare.mask)}` : ''}${warnings.length ? `\n${warnings.join('\n')}` : ''}`
-    + '\nSlice positions, symmetry, mask settings and the color scale apply to both datasets.\nClick to replace B with another file.';
+  if (title3d) title3d.textContent = ready.length ? 'Isosurface · A' : 'Isosurface';
+  const labels = (dims) => dims.map((x) => x.label).join(' ');
+  slots.forEach((d, slot) => {
+    const chip = chips[slot];
+    chip.root.hidden = !d;
+    if (!d) return;
+    setFileName(chip.name, d.name, sourceName);
+    const step = d.work && `${d.work.step}${d.work.fraction > 0 ? ` · ${Math.round(100 * d.work.fraction)}%` : '…'}`;
+    chip.facts.textContent = step || (d.ready ? datasetFacts(d.meta) : 'Opening…');
+    chip.close.title = d.ready ? `Remove ${d.letter}` : 'Cancel';
+    // Warnings: its axes, and processing that could not be applied to it.
+    const warnings = [];
+    if (d.ready && labels(d.meta.dims) !== labels(meta.dims)) warnings.push(`${d.letter}'s axes (${labels(d.meta.dims)}) differ from A's (${labels(meta.dims)}); ${d.letter} is drawn on A's axes.`);
+    if (d.mapsNote) warnings.push(d.mapsNote);
+    if (d.maskNote) warnings.push(d.maskNote);
+    chip.warn.hidden = !warnings.length;
+    chip.warn.title = warnings.join('\n');
+    chip.main.title = `Dataset ${d.letter}: ${d.name}${d.size ? ` (${mb(d.size)})` : ''}`
+      + `${d.ready ? `\n${datasetDetails(d.meta, d.mask)}` : ''}${warnings.length ? `\n${warnings.join('\n')}` : ''}`
+      + `\nSlice positions, symmetry, mask settings and the color scale apply to all datasets.\nClick to replace ${d.letter} with another file.`;
+  });
 }
 
 // ---- Startup -------------------------------------------------------------------------
@@ -3538,14 +3664,24 @@ $('open').onclick = $('open-intro').onclick = () => $('file').click();
 $('open-example').onclick = openDemo;
 $('file').onchange = () => {
   if ($('file').files[0]) {
-    pendingCompare = pendingProcessing = null;
+    pendingCompare = [];
+    pendingProcessing = null;
     openFile($('file').files[0]);
   }
   $('file').value = '';
 };
-$('compare-open').onclick = $('compare-button').onclick = () => $('file-b').click();
-$('file-b').onchange = () => { if ($('file-b').files[0]) openCompare($('file-b').files[0]); $('file-b').value = ''; };
-$('compare-close').onclick = closeCompare;
+// The file chosen next opens as the dataset in `fileSlot`: added by Compare…, or replacing a chip's.
+let fileSlot = 0;
+const chooseFile = (slot) => {
+  fileSlot = slot;
+  $('file-b').click();
+};
+$('compare-open').onclick = () => chooseFile(freeSlot());
+chips.forEach((chip, slot) => {
+  chip.main.onclick = () => chooseFile(slot);
+  chip.close.onclick = () => closeCompare(slot);
+});
+$('file-b').onchange = () => { if ($('file-b').files[0]) openCompare($('file-b').files[0], fileSlot); $('file-b').value = ''; };
 segmented($('compare-view'), (value) => {
   compareView = value;
   redraw();
@@ -3628,33 +3764,43 @@ for (const item of $('pop-cut-download').querySelectorAll('[data-format]')) {
 $('cut-step').onchange = changeCutWidth;
 $('cut-step').onkeydown = (e) => { if (e.key === 'Enter') e.target.blur(); };
 
-// Dropping a file opens it, or opens it as dataset B over B's chip or the Compare button.
-const dropsOnB = (e) => panels.length > 0 && !!e.target.closest?.('#dataset-b, #compare-open');
+// Dropping a file opens it, or opens it as dataset B, C or D over that dataset's
+// chip (replacing it) or over the Compare button (as the next free one).
+const dropSlot = (e) => {
+  if (!panels.length) return -1;
+  const chip = e.target.closest?.('.ds-b');
+  if (chip) return Number(chip.dataset.slot);
+  return e.target.closest?.('#compare-open') ? freeSlot() : -1;
+};
 document.addEventListener('dragover', (e) => {
   e.preventDefault();
+  const slot = dropSlot(e);
   document.body.classList.add('dragging');
-  document.body.classList.toggle('drop-b', dropsOnB(e));
+  document.body.classList.toggle('drop-b', slot >= 0);
+  if (slot >= 0) document.body.dataset.drop = LETTERS[slot + 1];
 });
 document.addEventListener('dragleave', (e) => { if (!e.relatedTarget) document.body.classList.remove('dragging', 'drop-b'); });
 document.addEventListener('drop', (e) => {
   e.preventDefault();
   document.body.classList.remove('dragging', 'drop-b');
-  const file = e.dataTransfer?.files?.[0];
+  const file = e.dataTransfer?.files?.[0], slot = dropSlot(e);
   if (!file) return;
-  if (dropsOnB(e)) openCompare(file);
+  if (slot >= 0) openCompare(file, slot);
   else {
-    pendingCompare = pendingProcessing = null;
+    pendingCompare = [];
+    pendingProcessing = null;
     openFile(file);
   }
 });
 
-// ?url= opens a remote file, ?compare= a second one as dataset B, and ?sym=
-// (a Laue class, such as 6/mmm) and ?mask= (erosion radius, optionally ",k"
-// for the outlier cut) process them. ?demo opens the example.
+// ?url= opens a remote file, ?compare= (up to three times) the files to compare
+// it with as datasets B, C and D, and ?sym= (a Laue class, such as 6/mmm) and
+// ?mask= (erosion radius, optionally ",k" for the outlier cut) process them.
+// ?demo opens the example.
 const params = new URLSearchParams(location.search), remote = params.get('url');
 if (params.has('demo')) openDemo();
 else if (remote) {
-  pendingCompare = params.get('compare');
+  pendingCompare = params.getAll('compare').slice(0, slots.length);
   pendingProcessing = { sym: params.get('sym'), mask: params.get('mask') };
   openURL(remote);
 }
