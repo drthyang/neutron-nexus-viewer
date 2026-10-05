@@ -1,7 +1,7 @@
 import { COLORMAPS } from './colormaps.js';
 import { cutAxis, cutBand, cutCrossing, cutEdges } from './cut.js';
 import { exportPlan } from './export.js';
-import { cartesianBasis, nominalCell, planeGeometry, reciprocalMetric } from './nexus.js';
+import { cartesianBasis, isDirect, nominalCell, planeGeometry, reciprocalMetric } from './nexus.js';
 import { parseBins, powderPlan, qExtent } from './powder.js';
 import { IDENTITY_MAP } from './slab.js';
 import { closeGroup, formatOp, indexMaps, metricChange, parseOps, PRESETS } from './symmetry.js';
@@ -31,6 +31,8 @@ const ICONS = {
 };
 
 let worker = null, meta = null, panels = [], settings = null, sourceName = '', sourceSize = 0, autoscaled = false;
+// The colormap last chosen (and saved); signed data opens with coolwarm instead.
+let cmapChoice = 'magma';
 let requestId = 0, symmetry = NO_SYMMETRY, mask = null;
 // Workspace layout: 'quad', 'focus' or 'single', around the primary view ('hk', 'hl', 'kl' or '3d').
 let layout = 'quad', primary = 'hk', lastMulti = 'quad';
@@ -682,6 +684,8 @@ const slotSwitch = (key) => `<div class="segmented slot-switch" role="group" ari
     `<button type="button" data-value="${k}"${k === key ? ' class="on"' : ` title="${title}"`}>${label}</button>`).join('')}</div>`;
 
 function setupViewer() {
+  // A diverging colormap for signed data (a ΔPDF), the chosen one otherwise.
+  $('cmap').value = meta.signed ? 'coolwarm' : cmapChoice;
   describe();
   $('angles-wrap').hidden = !LAYOUT.some(([, x, y]) => planeGeometry(meta.dims, meta.lattice, x, y).lattice);
   // Placeholders until the first three slices arrive and autoRange() runs.
@@ -1128,16 +1132,19 @@ function scaler(s) {
 }
 
 function autoRange() {
-  const positive = [];
+  // Signed data (a ΔPDF) uses the magnitudes of all values, on a range symmetric about 0.
+  const positive = [], signed = !!meta.signed;
   for (const p of panels) {
-    for (const layer of compare?.ready ? [p, p.b] : [p]) for (const v of layer.data?.values ?? []) if (v > 0) positive.push(v);
+    for (const layer of compare?.ready ? [p, p.b] : [p]) {
+      for (const v of layer.data?.values ?? []) if (v > 0 || (signed && v < 0)) positive.push(Math.abs(v));
+    }
   }
   positive.sort((a, b) => a - b);
   const quantile = (q) => positive[Math.min(positive.length - 1, Math.floor(q * positive.length))];
   // Bragg peaks dominate the top percentiles, so a 97th-percentile ceiling
   // with the median as asinh softening keeps diffuse intensity visible.
   const vmax = positive.length ? sig(quantile(0.97)) : 1;
-  $('vmin').value = $('scale').dataset.value === 'log' ? sig(vmax / 1000) : 0;
+  $('vmin').value = $('scale').dataset.value === 'log' ? sig(vmax / 1000) : signed ? -vmax : 0;
   $('vmax').value = vmax;
   $('soft').value = positive.length ? sig(quantile(0.5), 1) : sig(vmax / 20);
   rangeIsAuto = true;
@@ -1507,7 +1514,7 @@ function redraw() {
     const g = geometry(p), angle = Math.acos(clamp(g.cos, -1, 1)) * 180 / Math.PI;
     p.angle.hidden = !g.lattice || Math.abs(angle - 90) < 0.5;
     p.angle.textContent = `∠ ${angle.toFixed(1)}°`;
-    p.angle.title = `Angle between the ${meta.dims[p.x].label} and ${meta.dims[p.y].label} axes (reciprocal lattice, ${settings.angles} cell angles)`;
+    p.angle.title = `Angle between the ${meta.dims[p.x].label} and ${meta.dims[p.y].label} axes (${isDirect(meta.dims[p.x]) ? 'direct' : 'reciprocal'} lattice, ${settings.angles} cell angles)`;
     drawPanel(p);
   }
   paintColorbar();
@@ -1625,7 +1632,7 @@ function showSymmetry() {
     statusEl.textContent = 'No symmetry averaging: each voxel is used as measured.';
   } else {
     let text = `${ops.length} operations; equivalent voxels are pooled with equal weight.`;
-    const hkl = meta.dims.every((d) => d.basis);
+    const hkl = meta.dims.every((d) => d.basis) || meta.dims.every((d) => isDirect(d) && d.length > 0);
     if (meta.lattice && hkl) {
       const change = metricChange(ops, meta.lattice);
       if (change > 0.02) {
@@ -1636,7 +1643,7 @@ function showSymmetry() {
         text += ` Cell metric (${meta.lattice.source}) preserved to ${(100 * change).toFixed(2)}%.`;
       }
     } else if (!hkl) {
-      text += ' Axes have no HKL basis, so operations act on the display axes directly.';
+      text += ' Axes have no HKL basis or cell axes, so operations act on the display axes directly.';
     }
     statusEl.textContent = text;
   }
@@ -3313,7 +3320,8 @@ function openCompare(file) {
     closeCompare();
     error(`Dataset B: ${e.message || 'the HDF5 reader could not start.'}`);
   };
-  w.postMessage({ type: 'open', file });
+  // B's axes, if they are A's in another order, are displayed in A's order.
+  w.postMessage({ type: 'open', file, order: meta.dims.map((d) => d.label) });
   compareWork('open-b', 'Opening', 0);
 }
 
@@ -3494,6 +3502,7 @@ function restore() {
   try { saved = JSON.parse(localStorage.getItem('nxv-settings')) ?? {}; } catch { /* storage unavailable */ }
   if (['asinh', 'linear', 'log'].includes(saved.scale)) setSegmented($('scale'), saved.scale);
   if (saved.cmap in LUTS) $('cmap').value = saved.cmap;
+  cmapChoice = $('cmap').value;
   if (typeof saved.angles === 'boolean') $('angles').checked = saved.angles;
   if (typeof saved.guides === 'boolean') $('guides').checked = saved.guides;
   if (typeof saved.grid === 'boolean') $('grid').checked = saved.grid;
@@ -3515,7 +3524,7 @@ function restore() {
 
 function persist() {
   const values = {
-    cmap: $('cmap').value, scale: $('scale').dataset.value, angles: $('angles').checked, guides: $('guides').checked, grid: $('grid').checked, clickMode,
+    cmap: cmapChoice, scale: $('scale').dataset.value, angles: $('angles').checked, guides: $('guides').checked, grid: $('grid').checked, clickMode,
     iqScale: powderScale, iqSplit: $('iq-split').dataset.value, iqBand: $('iq-band').checked, iqCoverage: $('iq-coverage').checked,
     cutScale, cutBand: $('cut-band').checked,
   };
@@ -3543,6 +3552,7 @@ segmented($('compare-view'), (value) => {
 });
 $('error-close').onclick = () => error('');
 for (const id of ['cmap', 'vmin', 'vmax', 'soft', 'limit', 'angles', 'guides', 'grid']) $(id).addEventListener('input', redraw);
+$('cmap').addEventListener('change', () => { cmapChoice = $('cmap').value; });
 for (const id of ['cmap', 'angles', 'guides', 'grid']) $(id).addEventListener('change', persist);
 for (const id of ['vmin', 'vmax', 'soft']) $(id).addEventListener('input', () => { rangeIsAuto = false; });
 $('angles').addEventListener('change', () => { if (meta) { describe(); requestCut(); } });

@@ -4,7 +4,7 @@ import test from 'node:test';
 
 import h5wasm from 'h5wasm/node';
 
-import { cellFromUB, describeFile, loadVariance, loadVolume, nominalCell, parseBasis, planeGeometry, reciprocalMetric } from '../js/nexus.js';
+import { cartesianBasis, cellFromUB, describeFile, loadVariance, loadVolume, nominalCell, parseBasis, planeGeometry, reciprocalMetric } from '../js/nexus.js';
 import { powderPlan } from '../js/powder.js';
 import { averageSlab, IDENTITY_MAP, selectBins } from '../js/slab.js';
 import { closeGroup, indexMaps, parseOps } from '../js/symmetry.js';
@@ -13,10 +13,10 @@ const fixture = (name) => new URL(`./fixtures/${name}`, import.meta.url).pathnam
 const expected = JSON.parse(readFileSync(fixture('expected.json')));
 await h5wasm.ready;
 
-function open(name) {
+function open(name, options) {
   const file = new h5wasm.File(fixture(name), 'r');
   try {
-    const info = describeFile(file);
+    const info = describeFile(file, options);
     return { info, ...loadVolume(file, info), variance: loadVariance(file, info) };
   } finally {
     file.close();
@@ -43,7 +43,7 @@ test('Mantid MDHistoWorkspace fixture matches the Python reference', () => {
   const loaded = open('mdhisto_small.nxs');
   const { info } = loaded;
   assert.equal(info.signal, '/MDHistoWorkspace/data/signal');
-  assert.equal(info.mask, '/MDHistoWorkspace/data/mask');
+  assert.deepEqual(info.mask, { path: '/MDHistoWorkspace/data/mask', valid: false });
   assert.deepEqual(info.shape, [7, 9, 11]);
   assert.deepEqual(info.dims.map((d) => d.label), ['H', 'K', 'L']);
   assert.deepEqual(info.dims.map((d) => d.edges.length), [12, 10, 8]);
@@ -82,6 +82,99 @@ test('plain NXdata fixture: size-1 axis dropped, centers become edges', () => {
   // Axes in Å⁻¹ give |Q| without a cell.
   assert.equal(powderPlan(info.dims, info.lattice).frame, 'Q');
   checkCases(loaded, expected.nxdata_small);
+});
+
+test('NEBULA3D volume: (H, K, L) storage, mask 1 = valid, sigma, UB with 2π', () => {
+  const loaded = open('nebula3d_small.h5');
+  const { info } = loaded;
+  assert.equal(info.signal, '/entry/data');
+  assert.deepEqual(info.mask, { path: '/entry/mask', valid: true });
+  assert.deepEqual(info.errors, { path: '/entry/sigma', squared: false });
+  // Displayed fastest storage axis first, as for Mantid's D0, D1, D2.
+  assert.deepEqual(info.shape, [5, 7, 9]);
+  assert.deepEqual(info.dims.map((d) => d.label), ['L', 'K', 'H']);
+  assert.ok(info.dims.every((d) => d.units === 'r.l.u.' && d.frame === 'HKL'));
+  assert.ok(Math.abs(info.dims[2].edges[0] + 0.5) < 1e-12);
+  assert.equal(info.signed, false);
+  // ub_matrix carries 2π; the cell is that of the UB without it.
+  assert.equal(info.lattice.source, 'UB');
+  for (const [k, v] of Object.entries({ a: 5.91, b: 10.42, c: 24.79, alpha: 89.55, beta: 90.61, gamma: 90.63 })) {
+    assert.ok(Math.abs(info.lattice[k] - v) < 1e-9, k);
+  }
+  checkCases(loaded, expected.nebula3d_small);
+  // σ is squared when read.
+  let known = 0;
+  loaded.volume.forEach((v, i) => {
+    if (Number.isNaN(v)) return;
+    assert.ok(loaded.variance[i] > 0.0001 && loaded.variance[i] < 1.5, `voxel ${i}`);
+    known++;
+  });
+  assert.equal(known, loaded.stats.valid);
+});
+
+test('NEBULA3D 3D-ΔPDF: real-space axes along a, b, c, cell from lat_*, signed', () => {
+  const loaded = open('nebula3d_dpdf_small.h5');
+  const { info } = loaded;
+  assert.equal(info.signal, '/data');
+  assert.equal(info.mask, null);
+  assert.equal(info.errors, null);
+  assert.equal(loaded.variance, null);
+  assert.equal(info.signed, true);
+  assert.deepEqual(info.dims.map((d) => d.label), ['z', 'y', 'x']);
+  assert.deepEqual(info.dims.map((d) => [d.frame, d.units, d.axis, d.length]), [['direct', 'Å', 2, 6], ['direct', 'Å', 1, 4], ['direct', 'Å', 0, 4]]);
+  assert.deepEqual([info.lattice.a, info.lattice.gamma, info.lattice.source], [4, 120, 'lat_* attributes']);
+  checkCases(loaded, expected.nebula3d_dpdf_small);
+  // The x-y section is drawn at γ = 120°, the others at 90°.
+  assert.ok(Math.abs(planeGeometry(info.dims, info.lattice, 2, 1).cos + 0.5) < 1e-12);
+  assert.ok(Math.abs(planeGeometry(info.dims, info.lattice, 0, 1).cos) < 1e-12);
+  const { T, lattice } = cartesianBasis(info.dims, info.lattice);
+  assert.equal(lattice, false);
+  const column = (d) => [T[d], T[3 + d], T[6 + d]];
+  assert.ok(Math.abs(column(2).reduce((s, v, i) => s + v * column(1)[i], 0) + 0.5) < 1e-12);
+  // The 6-fold axis, h+k,-h,l on reciprocal coordinates, is x-y,x,z on these:
+  // it sends (x, y, z) = (0.5, 0, 0) to (0.5, 0.5, 0).
+  const maps = indexMaps(closeGroup(parseOps('h+k,-h,l')), info.dims);
+  assert.equal(maps.length, 6);
+  const index = (x, y, z) => [z / 0.6 + 3, y / 0.5 + 4, x / 0.5 + 4].map(Math.round);
+  const apply = ({ M, t }, i) => [0, 1, 2].map((d) => M[3 * d] * i[0] + M[3 * d + 1] * i[1] + M[3 * d + 2] * i[2] + t[d]);
+  const sixfold = indexMaps(parseOps('h+k,-h,l'), info.dims)[0];
+  assert.deepEqual(apply(sixfold, index(0.5, 0, 0)), index(0.5, 0.5, 0));
+  assert.ok(maps.every((m) => String(apply(m, index(0, 0, 0))) === String(index(0, 0, 0))));
+});
+
+test('3D-ΔPDF in the Mantid layout (NEBULA3D): x, y, z in Å along a, b, c, zero errors count as none', () => {
+  const loaded = open('mdhisto_dpdf_small.nxs');
+  const { info } = loaded;
+  assert.deepEqual(info.dims.map((d) => d.label), ['z', 'y', 'x']);
+  assert.deepEqual(info.dims.map((d) => [d.frame, d.units, d.axis]), [['direct', 'Å', 2], ['direct', 'Å', 1], ['direct', 'Å', 0]]);
+  assert.equal(info.signed, true);
+  assert.equal(info.lattice.source, 'UB');
+  assert.ok(Math.abs(info.lattice.gamma - 120) < 1e-9 && Math.abs(info.dims[0].length - 6) < 1e-9);
+  assert.ok(Math.abs(planeGeometry(info.dims, info.lattice, 2, 1).cos + 0.5) < 1e-9);
+  // errors_squared is there (Mantid needs it) but all zero: no uncertainties.
+  assert.ok(info.errors);
+  assert.equal(loaded.variance, null);
+  checkCases(loaded, expected.mdhisto_dpdf_small);
+});
+
+test('a dataset opened with another\'s axis order is read transposed to it', () => {
+  const plain = open('mdhisto_small.nxs');
+  const aligned = open('mdhisto_small.nxs', { order: ['L', 'K', 'H'] });
+  assert.deepEqual(aligned.info.dims.map((d) => d.label), ['L', 'K', 'H']);
+  assert.deepEqual(aligned.info.shape, [11, 9, 7]);
+  assert.deepEqual(aligned.stats, plain.stats);
+  // Storage is (L, K, H); the aligned volume is held as (H, K, L).
+  for (let l = 0; l < 7; l++) {
+    for (let k = 0; k < 9; k++) {
+      for (let h = 0; h < 11; h++) {
+        const a = aligned.volume[(h * 9 + k) * 7 + l], p = plain.volume[(l * 9 + k) * 11 + h];
+        assert.ok(Object.is(a, p) || a === p, `${h} ${k} ${l}`);
+        assert.ok(Object.is(aligned.variance[(h * 9 + k) * 7 + l], plain.variance[(l * 9 + k) * 11 + h]));
+      }
+    }
+  }
+  // Labels that are not a reordering of the file's axes leave it as it is.
+  assert.deepEqual(open('mdhisto_small.nxs', { order: ['x', 'y', 'z'] }).info.dims.map((d) => d.label), ['H', 'K', 'L']);
 });
 
 test('parseBasis reads Mantid axis names', () => {

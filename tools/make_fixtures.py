@@ -142,10 +142,85 @@ def nxdata(rng):
     return cases(squeezed, np.zeros(squeezed.shape, np.int8), edges, specs)
 
 
+def centers_to_edges(c):
+    mid = (c[1:] + c[:-1]) / 2
+    return np.concatenate([[c[0] - (c[1] - c[0]) / 2], mid, [c[-1] + (c[-1] - c[-2]) / 2]])
+
+
+def nebula(rng):
+    """NEBULA3D volume: /entry, storage (H, K, L), bin centers, mask True = valid, sigma, UB with 2*pi."""
+    shape = (5, 7, 9)
+    signal = rng.normal(5, 2, shape)
+    signal[rng.random(shape) < 0.05] = np.nan
+    valid = rng.random(shape) > 0.1
+    sigma = np.abs(rng.normal(0.5, 0.1, shape))
+    axes = dict(h_axis=np.linspace(-0.4, 0.4, 5), k_axis=np.linspace(-0.3, 0.3, 7), l_axis=np.linspace(-1, 1, 9))
+    params = dict(a=5.91, b=10.42, c=24.79, alpha=89.55, beta=90.61, gamma=90.63)
+    with h5py.File(OUT / 'nebula3d_small.h5', 'w') as f:
+        entry = f.create_group('entry')
+        kw = dict(compression='gzip', compression_opts=1, shuffle=True)
+        entry.create_dataset('data', data=signal, **kw)
+        entry.create_dataset('sigma', data=sigma, **kw)
+        entry.create_dataset('mask', data=valid, **kw)
+        for name, values in axes.items():
+            entry.create_dataset(name, data=values)
+        entry.create_dataset('ub_matrix', data=2 * np.pi * orientation_matrix(**params))
+        entry.attrs['instrument'] = 'synthetic'
+    # Displayed fastest storage axis first: L, K, H.
+    edges = [centers_to_edges(axes[k]) for k in ('l_axis', 'k_axis', 'h_axis')]
+    specs = [(2, 0.0, 0.3, True), (1, 0.1, 0.25, False), (0, -0.5, 0.6, True)]
+    return cases(signal, (~valid).astype(np.int8), edges, specs)
+
+
+def nebula_dpdf(rng):
+    """NEBULA3D 3D-DeltaPDF: root data (x, y, z), FFT-grid centers in Angstrom, hexagonal cell in lat_* attributes."""
+    shape = (8, 8, 6)
+    data = rng.normal(0, 1, shape)
+    axes = dict(x_axis=(np.arange(8) - 4) * 0.5, y_axis=(np.arange(8) - 4) * 0.5, z_axis=(np.arange(6) - 3) * 0.6)
+    with h5py.File(OUT / 'nebula3d_dpdf_small.h5', 'w') as f:
+        f.create_dataset('data', data=data, compression='gzip', compression_opts=4)
+        for name, values in axes.items():
+            f.create_dataset(name, data=values)
+        f.attrs.update(q_max=5.0, apodization='gaussian', source_file='synthetic_backfilled.h5')
+        for k, v in dict(a=4.0, b=4.0, c=6.0, alpha=90.0, beta=90.0, gamma=120.0).items():
+            f.attrs[f'lat_{k}'] = v
+    edges = [centers_to_edges(axes[k]) for k in ('z_axis', 'y_axis', 'x_axis')]
+    specs = [(2, 0.0, 0.5, False), (0, 0.6, 0.6, False)]   # inversion by index reversal needs a grid symmetric about 0
+    return cases(data, np.zeros(shape, np.int8), edges, specs)
+
+
+def mdhisto_dpdf(rng):
+    """3D-DeltaPDF in the Mantid layout, as NEBULA3D writes it: axes x, y, z in Angstrom
+    (D2, D1, D0), errors_squared all zero, the cell in the oriented lattice's UB."""
+    shape = (8, 8, 6)
+    data = rng.normal(0, 1, shape)
+    axes = dict(x=(np.arange(8) - 4) * 0.5, y=(np.arange(8) - 4) * 0.5, z=(np.arange(6) - 3) * 0.6)
+    params = dict(a=4.0, b=4.0, c=6.0, alpha=90.0, beta=90.0, gamma=120.0)
+    with h5py.File(OUT / 'mdhisto_dpdf_small.nxs', 'w') as f:
+        entry = f.create_group('MDHistoWorkspace')
+        entry.attrs['NX_class'] = 'NXentry'
+        group = entry.create_group('data')
+        group.attrs['NX_class'] = 'NXdata'
+        ds = group.create_dataset('signal', data=data)
+        ds.attrs['signal'] = 1
+        ds.attrs['axes'] = np.bytes_('D2:D1:D0')
+        group.create_dataset('errors_squared', data=np.zeros(shape))
+        group.create_dataset('mask', data=np.zeros(shape, np.int8))
+        for i, name in enumerate(['z', 'y', 'x']):
+            d = group.create_dataset(f'D{i}', data=centers_to_edges(axes[name]))
+            d.attrs.update(frame=np.bytes_('General Frame'), long_name=np.bytes_(name), units=np.bytes_('Angstrom'))
+        cell = entry.create_group('experiment0/sample/oriented_lattice')
+        cell.attrs['NX_class'] = 'NXcrystal'
+        cell.create_dataset('orientation_matrix', data=orientation_matrix(**params))
+    edges = [centers_to_edges(axes[k]) for k in ('z', 'y', 'x')]
+    return cases(data, np.zeros(shape, np.int8), edges, [(2, 0.0, 0.5, False), (1, 0.4, 0.4, False)])
+
+
 def main():
     OUT.mkdir(parents=True, exist_ok=True)
     rng = np.random.default_rng(20260928)
-    expected = dict(mdhisto_small=mdhisto(rng), nxdata_small=nxdata(rng))
+    expected = dict(mdhisto_small=mdhisto(rng), nxdata_small=nxdata(rng), nebula3d_small=nebula(rng),
+                    nebula3d_dpdf_small=nebula_dpdf(rng), mdhisto_dpdf_small=mdhisto_dpdf(rng))
     (OUT / 'expected.json').write_text(json.dumps(expected))
     print('wrote', *sorted(p.name for p in OUT.iterdir()))
 

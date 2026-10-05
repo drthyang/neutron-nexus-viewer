@@ -4,7 +4,7 @@
 
 ## Opening data
 
-- **Local file**: click the dataset button or drop a `.nxs` file anywhere on the page. The file is read in the browser and never uploaded.
+- **Local file**: click the dataset button or drop a `.nxs` or `.h5` file anywhere on the page. The file is read in the browser and never uploaded.
 - **Example**: *Try the example* on the start page (or `?demo`) opens one synthetic hexagonal crystal at two temperatures, compared in split view with 6/mmm averaging and a 1-voxel edge mask. At 300 K (`examples/demo_300K.nxs`), short-range order gives diffuse rods along L at the M points; at 10 K (`examples/demo_10K.nxs`), they condense into superlattice peaks at even L. Both have coverage gaps, which symmetry averaging fills, and bright detector-edge voxels, which the mask removes: set the Laue class to *None* and *Clear* the mask to see the raw data.
 - **Links**: `?url=https://…/file.nxs` downloads and opens a file, and `&compare=https://…/other.nxs` adds a second file to compare. `&sym=6/mmm` applies a Laue class, and `&mask=1` (or `&mask=1,5`) applies a mask with that erosion radius (and outlier cut). The host must allow cross-origin requests.
 
@@ -13,7 +13,12 @@ The histogram is held in memory as float32. A 401³ volume needs about 260 MB an
 ## Supported files
 
 - **Mantid `MDHistoWorkspace`** (`SaveMD`): `/MDHistoWorkspace/data/signal`, `mask` and `D0`–`D2`, and `errors_squared` for the uncertainties of I(Q). The cell comes from the UB matrix in `experiment0/sample/oriented_lattice/orientation_matrix`, falling back to `unit_cell_*`. Axis names such as `[H,0,0]` or `[H,H,0]` give the basis vectors for the oblique geometry.
-- **Any other `NXdata` group with a 3-D signal**, found through `@signal`, and `@axes` on the group or the signal. Axes may hold bin edges or bin centers. Size-1 dimensions are ignored, so a 4-D workspace with one integrated axis works. Without an HKL frame and a unit cell, the axes are drawn rectangular.
+- **Any other `NXdata` group with a 3-D signal**, found through `@signal`, and `@axes` on the group or the signal. Axes may hold bin edges or bin centers. Size-1 dimensions are ignored, so a 4-D workspace with one integrated axis works. Without an HKL frame and a unit cell, the axes are drawn rectangular. Axes named `x`, `y` and `z` in Å are taken as real space along the cell axes a, b and c (a 3D-ΔPDF; see below).
+- **[NEBULA3D](https://github.com/drthyang/nebula3d) files** written before it adopted the Mantid layout, which have no `NXdata`:
+  - *Volumes* (`_ringremoved.h5`, `_braggpunched.h5`, `_backfilled.h5`, `_flattened.h5`): `/entry/data` in (H, K, L) order, `mask` (1 = valid), `sigma` (standard deviations, squared for I(Q) and line cuts), bin-center axes `h_axis`, `k_axis`, `l_axis`, and `ub_matrix`, which includes 2π.
+  - *3D-ΔPDFs* (`_delta_pdf.h5`): `/data` with `x_axis`, `y_axis`, `z_axis` in Å along a, b and c, and the cell in the `lat_a` … `lat_gamma` attributes. Sections are drawn at the cell angles, and symmetry operations act on x, y, z as the real-space form of the given h, k, l operations. A ΔPDF changes sign, so it opens with the coolwarm colormap on a color range symmetric about 0. I(Q) and the NEBULA3D export need reciprocal-space axes and are not available for it.
+
+  As with Mantid's D0, D1, D2, the axes are listed fastest-varying first: L, K, H for volumes, z, y, x for ΔPDFs.
 - **Compression**: deflate (gzip), shuffle and the other filters built into HDF5. Plugin filters (LZ4, Blosc, bitshuffle) are not supported.
 - **Limits**: 3-D histograms up to about 3.5 GB as float32. The signal is shown as stored, with no `num_events` normalization. Non-uniform bins are drawn as if uniform.
 
@@ -128,7 +133,7 @@ B then gets its own chip in the top bar, after A and the split icon, with its fa
 - **A / Split / B** in the workspace header shows one dataset over the whole view, or the split.
 - **Hover** reads both datasets at the cursor, the one under it first. View headers show the coverage of each.
 - **Processing**: B has its own worker and mask, built with the same parameters on its own data. Symmetry operations are mapped onto B's grid; if they do not fit it, B is used as measured and the card says so.
-- **Axes**: B is drawn on A's axes and lattice geometry. Files should share the same axes (for example both `[H,0,0]`, `[0,K,0]`, `[0,0,L]`); the grids may differ. B's chip warns when the axis names differ.
+- **Axes**: B is drawn on A's axes and lattice geometry. Files should share the same axes (for example both `[H,0,0]`, `[0,K,0]`, `[0,0,L]`); the grids may differ. When B has A's axes in another order, such as a NEBULA3D volume (L, K, H) next to the Mantid file it came from (K, L, H), B is read in A's order. B's chip warns when the axis names differ.
 - **3-D view**: the isosurface is A's; the slice planes show the same split as the views.
 - **Replace**: click B's chip to swap in another file. **Remove** (× on the chip, which also cancels a loading B) returns to a single dataset. Opening a new file as A also removes B.
 

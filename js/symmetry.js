@@ -127,12 +127,17 @@ export function metricChange(ops, cell) {
 /**
  * Express each operation as an integer affine map on display-dimension bin
  * indices: i' = M i + t. dims[d].basis.vec gives the HKL basis vector of
- * display axis d; without bases the operations act on the axes directly.
- * Throws when an operation does not send bin centers onto bin centers.
+ * display axis d. Real-space axes along a, b and c (dims[d].axis, with their
+ * cell lengths dims[d].length in Å) transform as x -> W x with W = R^T on
+ * fractional coordinates. Without either, the operations act on the axes
+ * directly. Throws when an operation does not send bin centers onto bin centers.
  */
 export function indexMaps(ops, dims) {
+  const direct = dims.every((d) => d.frame === 'direct' && d.length > 0);
   const B = dims.every((d) => d.basis) ? transpose(dims.flatMap((d) => d.basis.vec)) : IDENTITY;
   const Binv = inverse(B);
+  // W[i][j] = R[j][i] between the cell axes of display axes d and e, scaled to Å.
+  const directMap = (R) => dims.flatMap((d) => dims.map((e) => R[3 * e.axis + d.axis] * d.length / e.length));
   const n = dims.map((d) => d.edges.length - 1);
   const w = dims.map((d, i) => (d.edges[n[i]] - d.edges[0]) / n[i]);
   const c0 = dims.map((d, i) => d.edges[0] + w[i] / 2);
@@ -145,7 +150,7 @@ export function indexMaps(ops, dims) {
   });
   const near = (x) => Math.abs(x - Math.round(x)) < 1e-3;
   return ops.map((R) => {
-    const A = multiply(Binv, multiply(R, B));
+    const A = direct ? directMap(R) : multiply(Binv, multiply(R, B));
     const M = new Int32Array(9), t = new Int32Array(3);
     for (let d = 0; d < 3; d++) {
       let offset = -c0[d];

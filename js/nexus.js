@@ -4,11 +4,25 @@
 // (/MDHistoWorkspace/data/{signal,mask,D0,D1,D2}). Any NXdata group with a
 // 3-D signal and bin-edge or bin-center axes also works. Size-1 dimensions
 // are dropped, so a 4-D workspace with one integrated axis is accepted.
+// Files without NXdata written by NEBULA3D (https://github.com/drthyang/nebula3d)
+// open too: its reciprocal-space volumes (/entry/{data, sigma, mask, h_axis,
+// k_axis, l_axis, ub_matrix}) and its real-space 3D-ΔPDFs (/{data, x_axis,
+// y_axis, z_axis} with the cell in lat_* attributes).
 //
-// Display dimension d lives on storage axis keep[2 - d]; for Mantid files
-// (signal axes "D2:D1:D0") this makes dims[0] = D0, dims[1] = D1, dims[2] = D2.
+// The volume is held in the order of info.shape, the storage axes listed in
+// info.keep, and display dimension d lives on storage axis keep[2 - d]. For
+// Mantid files (signal axes "D2:D1:D0") keep is in storage order, which makes
+// dims[0] = D0, dims[1] = D1, dims[2] = D2. When keep is not in storage order
+// (a dataset aligned to another's axes, see alignDims()), the volume is a
+// transpose of the stored array, reordered as it is read.
 
 const MAX_VOLUME_BYTES = 3.5e9;
+const NEBULA3D_AXES = [
+  { names: ['h_axis', 'k_axis', 'l_axis'], longNames: ['[H,0,0]', '[0,K,0]', '[0,0,L]'], units: 'r.l.u.', frame: 'HKL' },
+  { names: ['x_axis', 'y_axis', 'z_axis'], longNames: ['x', 'y', 'z'], units: 'Å', frame: 'direct' },
+];
+// Real-space axes along a, b and c in Å, as NEBULA3D writes its 3D-ΔPDFs in the Mantid layout.
+const DIRECT_NAME = /^[xyz]$/i, ANGSTROM = /^(Å|Angstroms?)$/i;
 
 const str = (v) => {
   if (v == null) return '';
@@ -43,8 +57,12 @@ function* groups(node, path, depth) {
   }
 }
 
-/** Describe the largest 3-D histogram in the file, or throw a readable error. */
-export function describeFile(file) {
+/**
+ * Describe the largest 3-D histogram in the file, or throw a readable error.
+ * With `order` (the labels of another dataset's display axes), axes that are
+ * the same set in another order are reordered to match it.
+ */
+export function describeFile(file, { order = null } = {}) {
   const found = [];
   const problems = [];
   for (const [group, path] of groups(file, '/', 4)) {
@@ -56,14 +74,40 @@ export function describeFile(file) {
       problems.push(`${path}: ${err.message}`);
     }
   }
+  if (!found.length && !problems.length) {
+    const info = describeNebula(file);
+    if (info) return order ? alignDims(info, order) : info;
+  }
   if (!found.length) {
     throw new Error(problems.length ? problems.join(' ')
-      : 'No NXdata group with a 3-D signal was found. Expected a Mantid MDHistoWorkspace saved with SaveMD.');
+      : 'No 3-D histogram was found: expected a Mantid MDHistoWorkspace saved with SaveMD, an NXdata group with a 3-D signal, or a NEBULA3D volume or 3D-ΔPDF.');
   }
-  const info = found.sort((a, b) => b.voxels - a.voxels)[0];
-  const entry = info.group.split('/').slice(0, -1).join('/') || '/';
-  info.lattice = findLattice(file, entry);
-  return info;
+  const best = found.sort((a, b) => b.voxels - a.voxels)[0];
+  const entry = best.group.split('/').slice(0, -1).join('/') || '/';
+  const info = withCell(best, findLattice(file, entry));
+  return order ? alignDims(info, order) : info;
+}
+
+/**
+ * Attach the unit cell (or null): it gives axes along the direct lattice their
+ * length in Å, and marks real-space data `signed` (a ΔPDF changes sign, so it
+ * is shown on a range symmetric about 0).
+ */
+function withCell(info, lattice) {
+  const real = info.dims.every(isDirect);
+  const dims = real ? info.dims.map((d) => ({ ...d, length: lattice ? [lattice.a, lattice.b, lattice.c][d.axis] : null })) : info.dims;
+  return { ...info, dims, lattice, signed: real };
+}
+
+/**
+ * Display `info`'s axes in the order of the labels `order` when they are the
+ * same three axes, by changing which storage axis each display dimension reads.
+ */
+export function alignDims(info, order) {
+  const at = order.map((label) => info.dims.findIndex((d) => d.label === label));
+  if (at.some((i) => i < 0) || new Set(at).size !== 3 || at.every((i, d) => i === d)) return info;
+  const keep = [0, 1, 2].map((j) => info.keep[2 - at[2 - j]]);
+  return { ...info, keep, shape: keep.map((a) => info.storageShape[a]), dims: at.map((i) => info.dims[i]) };
 }
 
 function describeNXdata(group, path) {
@@ -96,7 +140,8 @@ function describeNXdata(group, path) {
     const node = keys.includes(key) ? group.get(key) : null;
     return isDataset(node) && String(node.shape) === String(shape);
   };
-  const mask = sameShape('mask') ? join(path, 'mask') : null;
+  // Mantid's mask: nonzero marks a masked voxel.
+  const mask = sameShape('mask') ? { path: join(path, 'mask'), valid: false } : null;
   // Uncertainties: Mantid writes variances (errors_squared), NeXus standard deviations (errors).
   const squared = ['errors_squared', `${name}_errors_squared`].find(sameShape);
   const plain = ['errors', `${name}_errors`].find(sameShape);
@@ -121,6 +166,11 @@ function describeNXdata(group, path) {
     const basis = parseBasis(longName);
     return { name: axisName ?? `axis${axis}`, longName, units, frame, edges, basis, label: shortLabel(longName, basis) };
   });
+  // Axes x, y and z in Å (a 3D-ΔPDF) lie along the direct lattice vectors a, b and c.
+  const xyz = dims.map((d) => (DIRECT_NAME.test(d.longName) && ANGSTROM.test(d.units) ? 'xyz'.indexOf(d.longName.toLowerCase()) : -1));
+  if (xyz.every((a) => a >= 0) && new Set(xyz).size === 3) {
+    dims.forEach((d, i) => Object.assign(d, { frame: 'direct', units: 'Å', axis: xyz[i], label: 'xyz'[xyz[i]] }));
+  }
 
   const chunks = signal.metadata?.chunks ?? null;
   return {
@@ -137,6 +187,76 @@ function describeNXdata(group, path) {
     voxels,
     dims,
   };
+}
+
+/**
+ * A NEBULA3D volume or 3D-ΔPDF: a group with a 3-D `data` and one bin-center
+ * axis per storage axis, h_axis, k_axis, l_axis (r.l.u.) or x_axis, y_axis,
+ * z_axis (Å along the direct axes a, b, c), in C order with H or x slowest.
+ * Volumes add `mask` (nonzero = valid), `sigma` (standard deviations) and
+ * `ub_matrix` (with 2π); ΔPDFs store the direct cell as lat_* attributes.
+ * Returns null when the file has no such group.
+ */
+function describeNebula(file) {
+  for (const [group, path] of groups(file, '/', 2)) {
+    const keys = group.keys();
+    const kind = NEBULA3D_AXES.find((k) => k.names.every((name) => keys.includes(name)));
+    if (!kind || !keys.includes('data')) continue;
+    const signal = group.get('data');
+    const shape = signal?.shape ?? [];
+    if (!isDataset(signal) || shape.length !== 3) continue;
+    if (![0, 1].includes(signal.metadata?.type)) throw new Error(`${join(path, 'data')} is not numeric (${JSON.stringify(signal.dtype)}).`);
+    const voxels = shape[0] * shape[1] * shape[2];
+    if (voxels * 4 > MAX_VOLUME_BYTES) {
+      throw new Error(`data is ${(voxels * 4 / 1e9).toFixed(1)} GB as float32, too large to hold in browser memory.`);
+    }
+    const sameShape = (key) => keys.includes(key) && isDataset(group.get(key)) && String(group.get(key).shape) === String(shape);
+    const real = kind.frame === 'direct';
+    // Storage axis a holds H (or x) for a = 0. As for Mantid's D0, D1, D2, the
+    // fastest storage axis is displayed first: L, K, H (or z, y, x).
+    const dims = [2, 1, 0].map((a) => {
+      const name = kind.names[a], values = Array.from(toNumbers(group.get(name).value), Number);
+      if (values.length !== shape[a]) throw new Error(`${join(path, name)} has ${values.length} values for ${shape[a]} bins.`);
+      const edges = centersToEdges(values);
+      if (edges[shape[a]] < edges[0]) throw new Error(`${join(path, name)} is descending; only ascending axes are supported.`);
+      const longName = kind.longNames[a], basis = real ? null : parseBasis(longName);
+      const dim = { name, longName, units: kind.units, frame: kind.frame, edges, basis, label: real ? longName : shortLabel(longName, basis) };
+      return real ? { ...dim, axis: a } : dim;
+    });
+    return withCell({
+      group: path,
+      signal: join(path, 'data'),
+      mask: sameShape('mask') ? { path: join(path, 'mask'), valid: true } : null,
+      errors: sameShape('sigma') ? { path: join(path, 'sigma'), squared: false } : null,
+      dtype: signal.dtype,
+      storageShape: shape,
+      keep: [0, 1, 2],
+      shape,
+      chunks: signal.metadata?.chunks ?? null,
+      filters: (signal.filters ?? []).map((f) => f.name),
+      voxels,
+      dims,
+    }, real ? cellFromAttrs(group) : nebulaLattice(group));
+  }
+  return null;
+}
+
+/** The cell of a NEBULA3D volume from its ub_matrix (with 2π); null without one, or for the identity it stores when the UB is unknown. */
+function nebulaLattice(group) {
+  if (!group.keys().includes('ub_matrix')) return null;
+  const stored = Array.from(toNumbers(group.get('ub_matrix').value ?? []), Number);
+  if (stored.length !== 9 || stored.every((x, i) => x === (i % 4 ? 0 : 1))) return null;
+  const ub = stored.map((x) => x / (2 * Math.PI));
+  const cell = ub.every(Number.isFinite) ? cellFromUB(ub) : null;
+  return cell ? { ...cell, source: 'UB', ub } : null;
+}
+
+/** The direct cell in the lat_a, lat_b, lat_c (Å) and lat_alpha, lat_beta, lat_gamma (degrees) attributes; null unless all six are valid. */
+function cellFromAttrs(group) {
+  const values = ['a', 'b', 'c', 'alpha', 'beta', 'gamma'].map((k) => Number(toNumbers(attr(group, `lat_${k}`) ?? NaN)[0]));
+  if (!values.every(Number.isFinite) || !values.slice(0, 3).every((x) => x > 0) || !values.slice(3).every((x) => x > 0 && x < 180)) return null;
+  const [a, b, c, alpha, beta, gamma] = values;
+  return { a, b, c, alpha, beta, gamma, source: 'lat_* attributes' };
 }
 
 function centersToEdges(c) {
@@ -237,23 +357,26 @@ function invert3(m) {
 }
 
 /**
- * Read signal (and mask) into a float32 volume in storage order, with masked
- * and non-finite voxels set to NaN. Reads whole chunks along the leading axis.
+ * Read signal (and mask) into a float32 volume in the order of info.shape,
+ * with masked and non-finite voxels set to NaN. Reads whole chunks along the
+ * leading storage axis.
  */
 export function loadVolume(file, info, onProgress = () => {}) {
   const signal = file.get(info.signal);
-  const mask = info.mask ? file.get(info.mask) : null;
+  const mask = info.mask ? file.get(info.mask.path) : null;
+  // Mantid marks masked voxels with nonzero values, NEBULA3D valid ones.
+  const maskedIf = !info.mask?.valid;
   const volume = allocate(info, 'the volume');
   let valid = 0, min = Infinity, max = -Infinity;
-  forEachChunk(info, (ranges, offset) => {
+  readChunks(info, volume, (ranges, out) => {
     const s = toNumbers(signal.slice(ranges));
     const m = mask ? toNumbers(mask.slice(ranges)) : null;
     for (let k = 0; k < s.length; k++) {
       const v = s[k];
-      if ((m && m[k] != 0) || !Number.isFinite(v)) {
-        volume[offset + k] = NaN;
+      if ((m && (m[k] != 0) === maskedIf) || !Number.isFinite(v)) {
+        out[k] = NaN;
       } else {
-        volume[offset + k] = v;
+        out[k] = v;
         valid++;
         if (v < min) min = v;
         if (v > max) max = v;
@@ -264,22 +387,25 @@ export function loadVolume(file, info, onProgress = () => {}) {
 }
 
 /**
- * Per-voxel variances σ² in storage order, from the errors dataset (squared
- * when it holds standard deviations), with NaN where unknown; null when the
- * file has no uncertainties.
+ * Per-voxel variances σ² in the order of info.shape, from the errors dataset
+ * (squared when it holds standard deviations), with NaN where unknown; null
+ * when the file has no uncertainties. Errors that are zero everywhere (as
+ * Mantid's layout requires them, written for a 3D-ΔPDF) count as none.
  */
 export function loadVariance(file, info, onProgress = () => {}) {
   if (!info.errors) return null;
   const errors = file.get(info.errors.path), squared = info.errors.squared;
   const variance = allocate(info, 'the uncertainties');
-  forEachChunk(info, (ranges, offset) => {
+  let positive = false;
+  readChunks(info, variance, (ranges, out) => {
     const e = toNumbers(errors.slice(ranges));
     for (let k = 0; k < e.length; k++) {
       const v = squared ? e[k] : e[k] * e[k];
-      variance[offset + k] = v >= 0 && v < Infinity ? v : NaN;
+      out[k] = v >= 0 && v < Infinity ? v : NaN;
+      if (v > 0) positive = true;
     }
   }, onProgress);
-  return variance;
+  return positive ? variance : null;
 }
 
 function allocate(info, what) {
@@ -291,17 +417,38 @@ function allocate(info, what) {
   }
 }
 
-/** Visit a dataset shaped like the signal in whole chunks along the leading axis: visit(ranges, offset). */
-function forEachChunk(info, visit, onProgress) {
-  const lead = info.keep[0];
-  const [n0, n1, n2] = info.shape;
-  const plane = n1 * n2;
+/**
+ * Fill `target` (in the order of info.shape) from datasets shaped like the
+ * signal, in whole chunks along the leading storage axis: fill(ranges, out)
+ * writes the slab `ranges` into `out` in storage order, and readChunks puts it
+ * in place, reordering its axes when info.keep is not in storage order.
+ */
+function readChunks(info, target, fill, onProgress) {
+  const { keep, shape, storageShape } = info;
+  const axes = [...keep].sort((a, b) => a - b);
+  const lead = axes[0], n = storageShape[lead];
+  const plane = target.length / n;
   const chunk = info.chunks?.[lead] ?? 0;
-  const step = Math.min(n0, Math.max(1, chunk || Math.floor(32e6 / (plane * 8))));
-  for (let i = 0; i < n0; i += step) {
-    const j = Math.min(n0, i + step);
-    visit(info.storageShape.map((n, a) => (a === lead ? [i, j] : n === 1 ? [0, 1] : [])), i * plane);
-    onProgress(j / n0);
+  const step = Math.min(n, Math.max(1, chunk || Math.floor(32e6 / (plane * 8))));
+  // The stride in `target` of each storage axis, slowest first.
+  const [s0, s1, s2] = axes.map((a) => shape.slice(keep.indexOf(a) + 1).reduce((p, m) => p * m, 1));
+  const [, m1, m2] = axes.map((a) => storageShape[a]);
+  const inOrder = s0 > s1 && s1 > s2;
+  const slab = inOrder ? null : new Float32Array(step * plane);
+  for (let i = 0; i < n; i += step) {
+    const j = Math.min(n, i + step);
+    const ranges = storageShape.map((m, a) => (a === lead ? [i, j] : m === 1 ? [0, 1] : []));
+    if (inOrder) {
+      fill(ranges, target.subarray(i * plane, j * plane));
+    } else {
+      fill(ranges, slab);
+      for (let a = i, k = 0; a < j; a++) {
+        for (let b = 0; b < m1; b++) {
+          for (let c = 0, o = a * s0 + b * s1; c < m2; c++, o += s2) target[o] = slab[k++];
+        }
+      }
+    }
+    onProgress(j / n);
   }
 }
 
@@ -329,6 +476,15 @@ export function reciprocalMetric({ a, b, c, alpha, beta, gamma }) {
  * mixed units are stretched to a common extent.
  */
 export function cartesianBasis(dims, cell) {
+  if (cell && dims.every(isDirect)) {
+    // Coordinates in Å along a, b and c: their unit vectors, a along x and b in the x-y plane.
+    const r = Math.PI / 180, [ca, cb, cg] = [cell.alpha, cell.beta, cell.gamma].map((x) => Math.cos(x * r));
+    const sg = Math.sin(cell.gamma * r), cy = (ca - cb * cg) / sg;
+    const L = [[1, 0, 0], [cg, sg, 0], [cb, cy, Math.sqrt(Math.max(0, 1 - cb * cb - cy * cy))]];
+    const T = [];
+    for (let i = 0; i < 3; i++) for (let d = 0; d < 3; d++) T.push(L[dims[d].axis][i]);
+    return { T, lattice: false };
+  }
   if (cell && dims.every((d) => d.basis && isHKL(d))) {
     const G = reciprocalMetric(cell);
     const [as, bs, cs] = [0, 1, 2].map((i) => Math.sqrt(G[i][i]));
@@ -349,6 +505,9 @@ export function cartesianBasis(dims, cell) {
 /** An axis in reciprocal lattice units (frame HKL, or r.l.u. without a frame). */
 export const isHKL = (dim) => dim.frame === 'HKL' || (!dim.frame && /r\.?l\.?u/i.test(dim.units));
 
+/** A real-space axis along a direct lattice vector (axis 0, 1 or 2 for a, b or c), in Å. */
+export const isDirect = (dim) => dim.frame === 'direct' && [0, 1, 2].includes(dim.axis);
+
 /**
  * Display geometry of the plane spanned by dims x and y: axis lengths per unit
  * coordinate, the cosine of the angle between them, and whether both axes
@@ -356,6 +515,11 @@ export const isHKL = (dim) => dim.frame === 'HKL' || (!dim.frame && /r\.?l\.?u/i
  */
 export function planeGeometry(dims, cell, x, y) {
   const X = dims[x], Y = dims[y];
+  if (cell && isDirect(X) && isDirect(Y)) {
+    // The angle between two of a, b and c is the cell angle of the third.
+    const angle = [cell.alpha, cell.beta, cell.gamma][3 - X.axis - Y.axis];
+    return { lx: 1, ly: 1, cos: Math.cos(angle * Math.PI / 180), equal: true, lattice: true };
+  }
   if (cell && X.basis && Y.basis && isHKL(X) && isHKL(Y)) {
     const G = reciprocalMetric(cell);
     const dot = (u, v) => u.reduce((s, ui, i) => s + ui * v.reduce((t, vj, j) => t + G[i][j] * vj, 0), 0);

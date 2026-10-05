@@ -58,7 +58,7 @@ I(Q) = Σ_v f_v I_v / Σ_v f_v, with f_v the part of voxel v inside the shell.
 
 ## Comparing two datasets
 
-A second dataset (B) is read by its own worker and processed independently with the same settings: the symmetry operations are converted to index maps on B's grid, and the mask is built from B's own data with the same erosion radius and outlier cut. Nothing is interpolated between the two grids. Each view draws both slices on A's axes and lattice geometry, clipped to the two triangles on either side of the view's diagonal, from (u₀, v₁) to (u₁, v₀). A point is in B's half when (u − u₀)/(u₁ − u₀) + (v − v₀)/(v₁ − v₀) > 1.
+A second dataset (B) is read by its own worker and processed independently with the same settings. When B's axes are A's in another order (matched by name), B's volume is transposed to A's order as it is read, so both share the display axes: the symmetry operations are converted to index maps on B's grid, and the mask is built from B's own data with the same erosion radius and outlier cut. Nothing is interpolated between the two grids. Each view draws both slices on A's axes and lattice geometry, clipped to the two triangles on either side of the view's diagonal, from (u₀, v₁) to (u₁, v₀). A point is in B's half when (u − u₀)/(u₁ − u₀) + (v − v₀)/(v₁ − v₀) > 1.
 
 ## Export for NEBULA3D
 
@@ -67,6 +67,8 @@ The export writes the input NEBULA3D's 3D-ΔPDF pipeline expects: `/entry/data` 
 ## Geometry
 
 The reciprocal metric is G\* = (UB)ᵀ·UB, with no 2π, taken from the file's UB matrix, or computed from `unit_cell_*` when there is no UB. The length of each axis per r.l.u. and the angle between two axes follow from G\* and the axes' HKL basis vectors (parsed from names such as `[H,H,0]`). Drawing is an affine map of the pixel grid, so bins keep their exact shape.
+
+Real-space axes x, y, z in Å along a, b and c (a NEBULA3D 3D-ΔPDF, where the point (x, y, z) is at x·â + y·b̂ + z·ĉ) are drawn at the direct-cell angles: α between y and z, β between x and z, γ between x and y. The 3-D view places them along the unit cell vectors, and line-cut widths are in Å. A symmetry operation R given on h, k, l acts on fractional coordinates as W = Rᵀ, so on these axes as x′ = D Rᵀ D⁻¹ x with D = diag(\|a\|, \|b\|, \|c\|); without a cell, operations act on the axes directly.
 
 ## Validation
 

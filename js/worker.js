@@ -19,7 +19,7 @@ const coarse = new Map(), means = new Map();
 
 self.onmessage = async ({ data }) => {
   try {
-    if (data.type === 'open') await open(data.file);
+    if (data.type === 'open') await open(data.file, data.order);
     else if (data.type === 'slice') slice(data);
     else if (data.type === 'iso') iso(data);
     else if (data.type === 'mask') buildMask(data);
@@ -41,7 +41,8 @@ async function isHDF5(file) {
   return [0, 512, 1024, 2048].some((at) => SIGNATURE.every((b, i) => head[at + i] === b));
 }
 
-async function open(file) {
+// `order`: the labels of another dataset's display axes, to display the same axes in that order.
+async function open(file, order = null) {
   self.postMessage({ type: 'progress', label: 'Starting HDF5 reader', fraction: 0 });
   if (!(await isHDF5(file))) throw new Error(`${file.name} is not an HDF5/NeXus file.`);
   const { FS } = await h5wasm.ready;
@@ -55,7 +56,7 @@ async function open(file) {
     throw new Error(`${file.name} could not be opened as an HDF5/NeXus file.`);
   }
   try {
-    info = describeFile(h5);
+    info = describeFile(h5, { order });
     self.postMessage({ type: 'meta', info });
     const t0 = performance.now();
     let last = 0;

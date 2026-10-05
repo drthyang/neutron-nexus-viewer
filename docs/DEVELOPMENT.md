@@ -40,7 +40,7 @@ CI runs the same tests on every push (`.github/workflows/test.yml`).
 
 These scripts need numpy and h5py, and matplotlib for the colormaps:
 
-- `tools/make_fixtures.py` writes `tests/fixtures/` and their expected slices, computed by a verbatim copy of the reference `average_slab()`.
+- `tools/make_fixtures.py` writes `tests/fixtures/` (a Mantid `MDHistoWorkspace`, a plain `NXdata`, and a NEBULA3D volume and 3D-ΔPDF) and their expected slices, computed by a verbatim copy of the reference `average_slab()`.
 - `tools/make_example.py` writes the example: `examples/demo_300K.nxs` and `examples/demo_10K.nxs`, one 101³ synthetic hexagonal crystal (about 1.5 MB each) above and below an ordering transition. Both have Bragg peaks (with thermal diffuse halos at 300 K), M-point short-range-order rods (300 K) or superlattice peaks (10 K), coverage wedges and bright edge voxels.
 - `tools/make_colormaps.py` writes `js/colormaps.js` from matplotlib.
 
