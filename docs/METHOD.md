@@ -69,6 +69,73 @@ I(Q) and line cuts of every dataset use A's shells or A's line in display coordi
 
 The export writes the input NEBULA3D's 3D-ΔPDF pipeline expects: `/entry/data` and `/entry/mask` (1 = valid) in (H, K, L) C order, bin-centre axes, and `ub_matrix` = 2π × the file's orientation matrix, or 2π × the Cholesky factor of G\* when the file has only a cell (only the metric matters for \|Q\| and the real-space axes). Each axis is padded to a grid symmetric about 0: odd with a bin centred at 0, or even when a bin edge lies at 0. Every voxel of the padded grid receives the equal-weight mean of the valid source voxels in its orbit, so the exported volume agrees with one-bin slices voxel by voxel (a test checks this for several Laue classes) and symmetry fills the padding. Orbits without a valid voxel are written as 0 with mask 0, NEBULA3D's convention for holes it backfills. Loaded in NEBULA3D, the example gives \|Q(100)\| = 1.7274 Å⁻¹ and \|Q(001)\| = 0.9240 Å⁻¹, as the cell requires, with equal intensity at 6/mmm-equivalent peaks.
 
+## Rigaku reduction
+
+**Reduce Rigaku XRD…** turns the raw frames of a Rigaku Oxford Diffraction (CrysAlisPro) single-crystal experiment into an HKL volume, in a worker (`js/rigaku-worker.js`, `js/rigaku-format.js`, `js/rigaku-geometry.js`, `js/rigaku-reduce.js`). It reads every frame three times and never holds more than a few detector-sized arrays and the output grid.
+
+**Inputs.** Files are found by name from the frames' experiment stem:
+- the main-series frames `<stem>_<run>_<frame>.rod_img`; `pre_*` screening runs are listed but not used;
+- `<stem>.par`, for the monochromator;
+- `<stem>_cracker.par` and `expinfo/<stem>_crystal.ini`, for the orientation matrices and the Laue class;
+- `expinfo/<stem>_datacoll.ini`, for the temperature.
+
+**Frames.** The header ("OD SAPPHIRE", offsets as in FabIO and dxtbx) gives the scan, the goniometer angles and zero corrections, the exposure, the wavelength and the detector model. The TY6-compressed pixels are decoded as in dxtbx's `FormatROD`. Every decoded frame must reproduce the min, max, mean and standard deviation that the instrument software stored in its header, or the reduction stops. The stored counts carry no dark, flat-field or geometric correction (header `Unwarping` = 0, flood `NONE`).
+
+**Geometry.** The conventions are those of dxtbx:
+- *Laboratory frame:* the beam travels along −Z, +Y is along −ω, and rotations are right-handed.
+- *Goniometer:* x_lab = R(ω) R(κ) R(φ) x_C, with ω and φ about (0, −1, 0) and κ about (0, −cos α, sin α).
+- *Detector:* R_det = R(−Y, 2θ_arm) R(−X, d₂) R(Z, d₁); pixel (i, j) lies at R_det[(i − x₀)p, (j − y₀)p, −D].
+- *Zero corrections:* the header's software zero corrections are added to the motor angles; on the XtaLAB mini II, ω gets +90°.
+- *UB frame:* the CrysAlis UB includes the wavelength (|UB·h| = λ/d) and is expressed in its own frame e₁ = +Z, e₂ = +X, e₃ = +Y.
+- *Indices:* hkl = UB⁻¹ M x_C, with M = [[0,0,1],[1,0,0],[0,1,0]] and x = s − s₀ (no 2π).
+
+These choices were fixed empirically. For two XtaLAB mini II data sets (10 runs each, κ = 54°, ten φ settings), all 4,608 and 6,144 combinations of axis permutation, ω zero offset and rotation senses were scored by the fraction of independently found peaks that index to integers. Only this one indexes all runs: 99.9 % of 815 peaks on one data set, against a median of 1 % for the other combinations. It is exact up to Friedel inversion, which a centrosymmetric Laue class cannot distinguish.
+
+**Detector mask.** Built from the per-pixel sum over all frames:
+- the outer border;
+- chip-boundary triplets, where a row or column deviates by more than 8 % from a 15-line median trend; on a 775 × 385 HyPix-3000, its known boundaries (columns 96, 193, 290, 387, 484, 581, 678 and row 192, each ± 1) are always included, because their contrast varies between data sets;
+- the beamstop umbra: pixels below 20 % of a 41-pixel median level, in components of at least 50 px, dilated by 3;
+- its penumbra: pixels connected to the umbra and below 75 % of a 61-pixel 90th-percentile level, at most 26 px from the umbra, dilated by 2;
+- pixels that never counted.
+
+**Bragg peaks.** A pixel is strong when it has ≥ 8 counts and ≥ b + 6√(b+1), where b is the pixel's mean over its run. Strong pixels are joined across their 4 neighbours and the same pixel in the next frame. Components with ≥ 4 voxels and ≥ 150 net counts are kept, at net-weighted centroids, with frame midpoints for the scan angle. Peaks touching the mask are left out.
+
+**Refinement.** The starting UB is whichever of the CrysAlis matrices indexes most peaks (within 0.1). The cell is constrained by the crystal system of the Laue class, when the starting cell fits it. The fit is Levenberg–Marquardt with a soft-L1 loss on detector x, y (pixels) and scan angle (0.1° weighted as 1 pixel), in three stages:
+- **L3:** orientation, cell, beam centre, distance, in-plane detector rotation d₁, and the scan-axis zero.
+- **L6:** adds the crystal's offset from the rotation centre and the κ zero.
+- **L10:** the goniometer is fixed, and each run gets its own small orientation correction relative to the run with most peaks. A run whose angular rms stays above max(0.15°, 2 × median) gets a piecewise-linear drift with 6 knots instead.
+
+d₂ stays at the header value: it is degenerate with the beam centre.
+
+**Gridding.** Each unmasked pixel of each frame is split into n equal sub-steps of the frame's rotation (default 5). The shutterless frame integrates continuously, so its counts are shared equally among the sub-steps, and each sub-sample goes to the voxel containing it. The crystal offset is evaluated at the frame midpoint. Per voxel:
+- S = Σ f·c (counts);
+- E2 = Σ f²·c, where f is a pixel-frame's share in the voxel, summed over its sub-samples before squaring, so split counts are not counted as independent;
+- W = Σ f·t·w_p, the normalization weight;
+- N, the number of pixel-frames.
+
+The signal is S/W with errors² = E2/W². The weight w_p is either 1 (*exposure only*: counts per second per pixel), or ΔΩ_p·P_p/Ω_ref (*solid angle + polarization*), where:
+- ΔΩ_p = p² cos α / r² is the pixel's solid angle;
+- P_p is the polarization factor of the graphite-monochromated beam, [(1 − s_σ²) + cos²2θ_m (1 − s_π²)]/(1 + cos²2θ_m), with σ perpendicular to the monochromator plane given in the `.par`, or (1 + cos²2θ)/2 without a monochromator;
+- Ω_ref = (p/D)².
+
+Signal values are voxel averages of a continuous-scattering estimate, so diffuse scattering needs no Lorentz factor; Bragg-peak voxels are not integrated intensities. Background (air scatter, fluorescence), absorption and symmetry averaging are not applied. An absorption correction needs a crystal shape, which CrysAlis files usually lack.
+
+**Grid and output.**
+- *Indices:* output indices are n × the refined cell's indices; "2 × 2 × 2" gives the doubled cell of many neutron reductions, and "Match dataset A" picks n from A's cell and puts the voxel centres on A's.
+- *Extent:* the default range is everything the detector reaches.
+- *File:* the result is written in the layout of Mantid's `SaveMD` (version 2): `signal`, `errors_squared`, `num_events` (pixel-frames) and `mask` in (L, K, H) order with `axes = D2:D1:D0`, HKL dimensions, and the oriented lattice and UB under `experiment0`. The reduction report is stored as a log.
+- *Unmeasured voxels:* NaN signal and errors, with `num_events` = 0. Measured zeros stay 0.
+
+**Validation**, on two XtaLAB mini II / HyPix-3000 data sets (7,342 frames):
+- *Decoder:* every frame matches its header statistics, and frames are identical, pixel by pixel, to an independent Python decoder.
+- *Geometry:* forward predictions agree with a Python implementation to 10⁻⁸ px.
+- *Gridding:* with the same geometry and mask, the accumulators agree with the reference Python implementation voxel by voxel over 3.3 million voxels: S and W to 10⁻¹⁴, E2 to float32 precision, identical N and coverage.
+- *Refinement:* the in-browser refinement reproduces the Python one at every level; final rms 0.351 / 0.392 px and 0.189° (Python 0.349 / 0.390 px, 0.187°).
+- *Volume:* Bragg integrated intensities agree within 1 % (median 0.998).
+- *Mantid:* `LoadMD` (Mantid 6.16.1) reads the file with its dimensions, frame, lattice and logs. SliceViewer draws HK planes at 60°.
+- *Speed:* in a browser, 3,608 frames take about 2 minutes and 1.3 GB.
+- *Tests:* `tests/rigaku.test.js` checks each step on synthetic frames, including a simulated experiment whose refined geometry puts the Bragg peaks back on integer HKL. `tests/rigaku-local.test.js` checks every frame of a real experiment when `RIGAKU_DIR` is set.
+
 ## Geometry
 
 The reciprocal metric is G\* = (UB)ᵀ·UB, with no 2π, taken from the file's UB matrix, or computed from `unit_cell_*` when there is no UB. The length of each axis per r.l.u. and the angle between two axes follow from G\* and the axes' HKL basis vectors (parsed from names such as `[H,H,0]`). Drawing is an affine map of the pixel grid, so bins keep their exact shape.

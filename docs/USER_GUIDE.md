@@ -6,6 +6,7 @@
 
 - **Local file**: click the dataset button or drop a `.nxs` or `.h5` file anywhere on the page. The file is read in the browser and never uploaded.
 - **Example**: *Try the example* on the start page (or `?demo`) opens one synthetic hexagonal crystal at two temperatures, compared in split view with 6/mmm averaging and a 1-voxel edge mask. At 300 K (`examples/demo_300K.nxs`), short-range order gives diffuse rods along L at the M points; at 10 K (`examples/demo_10K.nxs`), they condense into superlattice peaks at even L. Both have coverage gaps, which symmetry averaging fills, and bright detector-edge voxels, which the mask removes: set the Laue class to *None* and *Clear* the mask to see the raw data.
+- **Rigaku XRD frames**: *Reduce Rigaku XRD…* on the start page, or the reduction button in the top bar, turns a CrysAlisPro experiment folder into an HKL volume in the browser; see [Reducing Rigaku XRD frames](#reducing-rigaku-xrd-frames).
 - **Links**: `?url=https://…/file.nxs` downloads and opens a file, and `&compare=https://…/other.nxs` adds a file to compare (repeat it, up to three times, for B, C and D). `&sym=6/mmm` applies a Laue class, and `&mask=1` (or `&mask=1,5`) applies a mask with that erosion radius (and outlier cut). The host must allow cross-origin requests.
 
 The histogram is held in memory as float32. A 401³ volume needs about 260 MB and takes 1–2 s to read.
@@ -21,6 +22,35 @@ The histogram is held in memory as float32. A 401³ volume needs about 260 MB an
   As with Mantid's D0, D1, D2, the axes are listed fastest-varying first: L, K, H for volumes, z, y, x for ΔPDFs.
 - **Compression**: deflate (gzip), shuffle and the other filters built into HDF5. Plugin filters (LZ4, Blosc, bitshuffle) are not supported.
 - **Limits**: 3-D histograms up to about 3.5 GB as float32. The signal is shown as stored, with no `num_events` normalization. Non-uniform bins are drawn as if uniform.
+
+## Reducing Rigaku XRD frames
+
+*Reduce Rigaku XRD…* (on the start page, or the button next to ⓘ in the top bar) makes an HKL volume from the raw frames of a Rigaku Oxford Diffraction single-crystal experiment, as CrysAlisPro writes them.
+
+1. **Choose folder…** and pick the experiment folder: the one holding `frames/` with the `*.rod_img` files, the `.par` files and `expinfo/`. The browser asks to "upload" the folder; nothing leaves your computer. The dialog lists:
+   - the runs, each with its scan, κ, φ and exposure;
+   - the detector, wavelength, monochromator, temperature and Laue class;
+   - the cells of the orientation matrices CrysAlisPro stored;
+   - whether the first frame decodes to the statistics in its header.
+2. **Choose the options:**
+   - **Runs**: untick runs to leave them out.
+   - **Output cell**: the indexing of the volume. *CrysAlis cell* indexes in the refined cell. *2 × 2 × 2 cell* doubles every index, as in neutron reductions that use a doubled cell. *Match dataset A* (when a volume is open) takes the multiple from A's cell and puts the voxel centres on A's, so the two compare voxel by voxel.
+   - **Voxel**: the bin width in output r.l.u. The default, 0.05 in the CrysAlis cell, is about the width of the Bragg peaks and of a 0.5° frame at high Q.
+   - **Steps per frame**: each frame's rotation is split into this many steps sharing its counts.
+   - **Normalization**: *Solid angle + polarization* (the default) divides by each pixel's solid angle and the polarization factor. *Exposure only* gives counts per second per pixel.
+   - **Refine the geometry**: fits the detector, goniometer offsets and orientation (per run) to the Bragg peaks in the frames, starting from the best CrysAlisPro matrix. Turn it off only to see the stored model as it is.
+   - **Open the result**: as a new dataset, or to compare with the open one.
+3. **Reduce.** The frames are read three times: for the detector mask, for the Bragg peaks, and for the mapping. Expect about half a minute per thousand frames on a recent laptop (3,608 frames took 2 minutes) and 1–1.5 GB of memory. *Cancel* stops it.
+
+The report lists:
+- the frame checks and the mask;
+- the peaks found and indexed, and with which matrix;
+- the refined geometry's residuals and any runs that needed a drift model;
+- the cell, the grid and the measured voxels.
+
+*Download .nxs* saves a Mantid `MDHistoWorkspace` that `LoadMD` reads. Voxels without data are NaN, and `num_events` counts the detector pixel-frames in each voxel. *Report (.json)* saves the full report with the refined model.
+
+Not applied: background subtraction (air scatter and fluorescence show near Q = 0), absorption (it needs the crystal's shape), and symmetry averaging (use **Symmetry averaging** in the panel). Where runs with different absorption meet, the volume can show steps. The method is in [Method → Rigaku reduction](METHOD.md#rigaku-reduction).
 
 ## The screen
 

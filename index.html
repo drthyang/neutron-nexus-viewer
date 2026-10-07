@@ -384,6 +384,21 @@ body.panel-collapsed .panel { visibility: hidden; }
 .menu-item b { font-size: 1.25rem; font-weight: 650; }
 .menu-item span { font-size: 1.15rem; line-height: 1.4; color: var(--text-3); }
 
+/* ---- Rigaku reduction dialog ------------------------------------------------------- */
+.rk-dialog { width: min(66rem, calc(100vw - 2.4rem)); max-height: calc(100vh - 4rem); padding: 0; border: 1px solid var(--border); border-radius: 1.2rem; background: var(--surface); color: var(--text); box-shadow: var(--shadow-2); }
+.rk-dialog::backdrop { background: rgba(16, 24, 40, 0.28); }
+.rk-dialog .pop-body { max-height: calc(100vh - 16rem); overflow: auto; }
+.rk-dialog #rk-options, .rk-dialog #rk-result { display: flex; flex-direction: column; gap: 1.2rem; }
+.rk-dialog #rk-options[hidden], .rk-dialog #rk-result[hidden] { display: none; }
+.rk-kv { grid-template-columns: 11rem minmax(0, 1fr); }
+.rk-runs { display: flex; flex-direction: column; gap: 0.3rem; max-height: 16rem; overflow: auto; padding: 0.6rem 0.8rem; border: 1px solid var(--border); border-radius: var(--radius-sm); background: var(--surface-2); }
+.rk-run { display: flex; align-items: baseline; gap: 0.8rem; font-family: var(--font-mono); font-size: 1.15rem; color: var(--text-2); cursor: pointer; }
+.rk-run b { display: inline-block; min-width: 2.2rem; color: var(--text); }
+.rk-grid { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 1.2rem; }
+.rk-bad { color: var(--red); }
+.rk-actions { display: flex; flex-wrap: wrap; gap: 0.8rem; }
+.rk-foot { display: flex; justify-content: flex-end; gap: 0.8rem; padding: 1.2rem 1.4rem; border-top: 1px solid var(--border); }
+
 /* ---- start, loading, toast --------------------------------------------------------- */
 .stage { height: calc(100vh - var(--topbar)); height: calc(100dvh - var(--topbar)); display: grid; place-items: center; padding: 2.4rem; overflow: auto; }
 .hero { width: min(68rem, 100%); background: var(--surface); border: 1px solid var(--border); border-radius: 1.6rem; box-shadow: var(--shadow-1); padding: 4rem 4.4rem; text-align: center; }
@@ -535,6 +550,9 @@ body.dragging.drop-b::after { content: "Drop to compare as dataset " attr(data-d
   <span id="status" class="status" title="Everything runs in this browser tab"><span id="status-dot" class="status-dot"></span><span id="status-text" class="status-text">ready</span></span>
   <!-- Work in progress (masks, I(Q), the NEBULA3D export, opening B): one bar along the bottom edge of the top bar. -->
   <div id="work-progress" class="work-progress" hidden><div id="work-progress-fill"></div></div>
+  <button id="rigaku-open" class="icon-btn" type="button" title="Reduce Rigaku XRD frames to an HKL volume (opens as a new dataset or to compare)" aria-haspopup="dialog">
+    <svg width="16" height="16" viewBox="0 0 18 18" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><rect x="2" y="2" width="9" height="9" rx="1.2"/><path d="M4.5 6.5h4M6.5 4.5v4"/><path d="M11 6.5h2.5a1 1 0 0 1 1 1v6a1 1 0 0 1-1 1h-6a1 1 0 0 1-1-1V11"/><circle cx="12" cy="12" r="0.8" fill="currentColor"/></svg>
+  </button>
   <button class="icon-btn" type="button" title="Dataset details and method" aria-haspopup="dialog" aria-expanded="false" data-pop="pop-info" data-loaded hidden>
     <svg width="16" height="16" viewBox="0 0 18 18" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" aria-hidden="true"><circle cx="9" cy="9" r="7"/><path d="M9 8.2v4.3"/><circle cx="9" cy="5.6" r="0.6" fill="currentColor"/></svg>
   </button>
@@ -551,6 +569,7 @@ body.dragging.drop-b::after { content: "Drop to compare as dataset " attr(data-d
     <div class="hero-actions">
       <button id="open-intro" class="btn btn-primary btn-lg" type="button">Open .nxs file…</button>
       <button id="open-example" class="btn btn-ghost btn-lg" type="button" title="Two synthetic datasets (3 MB): the same crystal at 300 K and 10 K, symmetrized, masked and compared in split view">Try the example</button>
+      <button id="rigaku-intro" class="btn btn-ghost btn-lg" type="button" title="Reduce the raw frames of a Rigaku (CrysAlisPro) single-crystal XRD experiment to an HKL volume, in this browser">Reduce Rigaku XRD…</button>
     </div>
     <p class="hero-alt">The example compares one crystal at 300 K and 10 K: short-range order above the transition, long-range order below.</p>
     <ul class="features">
@@ -705,6 +724,42 @@ body.dragging.drop-b::after { content: "Drop to compare as dataset " attr(data-d
 
 <div id="error" class="toast" role="alert" hidden><span id="error-text"></span>
   <button id="error-close" class="icon-btn" type="button" title="Dismiss" aria-label="Dismiss"><svg width="12" height="12" viewBox="0 0 12 12" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" aria-hidden="true"><path d="M2 2l8 8M10 2l-8 8"/></svg></button></div>
+
+<!-- Reduce Rigaku XRD frames (rigaku-ui.js) -->
+<dialog id="rigaku" class="rk-dialog" aria-label="Reduce Rigaku XRD frames">
+  <div class="pop-head"><span class="pop-title">Reduce Rigaku XRD frames</span>
+    <button id="rk-close" class="icon-btn" type="button" title="Close" aria-label="Close"><svg width="12" height="12" viewBox="0 0 12 12" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" aria-hidden="true"><path d="M2 2l8 8M10 2l-8 8"/></svg></button></div>
+  <div class="pop-body">
+    <p class="note">Choose a CrysAlisPro experiment folder: the <code>frames/*.rod_img</code> with the <code>.par</code> and <code>expinfo/*_crystal.ini</code> next to them. The frames are decoded, a detector mask is built, Bragg peaks are found and the geometry is refined against them, and every pixel is mapped into an HKL grid, all in this tab; nothing is uploaded. About half a minute per thousand frames on a recent laptop. <a href="https://github.com/drthyang/neutron-nexus-viewer/blob/main/docs/METHOD.md#rigaku-reduction" target="_blank" rel="noopener noreferrer">Method</a></p>
+    <div class="inline"><button id="rk-folder" class="btn btn-primary" type="button">Choose folder…</button></div>
+    <input id="rk-input" type="file" webkitdirectory multiple hidden>
+    <div id="rk-options" hidden>
+      <dl id="rk-summary" class="kv rk-kv"></dl>
+      <div class="field"><span class="label">Runs</span><div id="rk-runs" class="rk-runs"></div></div>
+      <div class="field"><span class="label">Output cell (HKL indexing)</span>
+        <div id="rk-cell" class="segmented fill" data-value="ub"><button type="button" data-value="ub" class="on">CrysAlis cell</button><button type="button" data-value="x2">2 × 2 × 2 cell</button><span id="rk-match-wrap" hidden style="display: contents"><button type="button" data-value="match">Match dataset A</button></span></div>
+        <p id="rk-cell-note" class="note"></p></div>
+      <div class="rk-grid">
+        <div class="field"><label class="label" for="rk-step">Voxel (r.l.u.)</label><input id="rk-step" class="num" type="number" min="0" step="any" value="0.05"></div>
+        <div class="field"><label class="label" for="rk-nsub">Steps per frame</label><input id="rk-nsub" class="num" type="number" min="1" step="1" value="5" title="Each frame's rotation is split into this many equal steps, sharing its counts"></div>
+      </div>
+      <div class="field"><span class="label">Normalization</span>
+        <div id="rk-norm" class="segmented fill" data-value="sap"><button type="button" data-value="sap" class="on">Solid angle + polarization</button><button type="button" data-value="rate">Exposure only</button></div></div>
+      <label class="switch"><input id="rk-refine" type="checkbox" checked><span class="switch-track"></span><span class="switch-label">Refine the geometry against the Bragg peaks</span></label>
+      <div id="rk-openas-wrap" class="field" hidden><span class="label">Open the result</span>
+        <div id="rk-openas" class="segmented fill" data-value="compare"><button type="button" data-value="compare" class="on">To compare with A</button><button type="button" data-value="new">As a new dataset</button></div></div>
+      <label class="switch"><input id="rk-autoopen" type="checkbox" checked><span class="switch-track"></span><span class="switch-label">Open it when done</span></label>
+    </div>
+    <div id="rk-progress" hidden><div class="boot-bar"><div id="rk-progress-fill" class="boot-fill"></div></div>
+      <div class="load-foot"><span id="rk-progress-label"></span><span id="rk-progress-pct"></span></div></div>
+    <p id="rk-note" class="note" hidden></p>
+    <div id="rk-result" hidden>
+      <dl id="rk-report" class="kv rk-kv"></dl>
+      <div class="inline rk-actions"><button id="rk-open" class="btn btn-primary" type="button">Open</button><button id="rk-download" class="btn btn-ghost" type="button" title="Mantid MDHistoWorkspace (SaveMD layout): LoadMD reads it">Download .nxs</button><button id="rk-download-report" class="btn btn-ghost" type="button">Report (.json)</button></div>
+    </div>
+  </div>
+  <div class="rk-foot"><button id="rk-cancel" class="btn btn-ghost" type="button">Close</button><button id="rk-run" class="btn btn-primary" type="button" disabled>Reduce</button></div>
+</dialog>
 
 <!-- Popovers, positioned under their trigger buttons by app.js -->
 <div id="pop-info" class="popover" role="dialog" aria-label="Dataset details and method" hidden style="width: 48rem">

@@ -3,6 +3,7 @@ import { cutAxis, cutBand, cutCrossing, cutEdges } from './cut.js';
 import { exportPlan } from './export.js';
 import { cartesianBasis, isDirect, nominalCell, planeGeometry, reciprocalMetric } from './nexus.js';
 import { parseBins, powderPlan, qExtent } from './powder.js';
+import { setupRigaku } from './rigaku-ui.js';
 import { IDENTITY_MAP } from './slab.js';
 import { closeGroup, formatOp, indexMaps, metricChange, parseOps, PRESETS } from './symmetry.js';
 
@@ -3682,6 +3683,17 @@ chips.forEach((chip, slot) => {
   chip.close.onclick = () => closeCompare(slot);
 });
 $('file-b').onchange = () => { if ($('file-b').files[0]) openCompare($('file-b').files[0], fileSlot); $('file-b').value = ''; };
+// Reduce Rigaku XRD frames (rigaku-ui.js): the result opens like a dropped file, as A or to compare.
+setupRigaku({
+  openFile: (file) => {
+    pendingCompare = [];
+    pendingProcessing = null;
+    openFile(file);
+  },
+  openCompare: (file) => openCompare(file, freeSlot()),
+  canCompare: () => panels.length > 0 && freeSlot() >= 0,
+  datasetA: () => (panels.length ? meta : null),
+});
 segmented($('compare-view'), (value) => {
   compareView = value;
   redraw();

@@ -33,6 +33,11 @@ CI runs the same tests on every push (`.github/workflows/test.yml`).
 | `js/iso.js` | Origin-aligned coarse binning, orbit means and surface nets |
 | `js/powder.js` | I(Q): the \|Q\| metric, shells, and the normalized spherical average with split voxels and propagated uncertainties |
 | `js/export.js` | NEBULA3D export: grid plan and padding, full-volume symmetrization, HDF5 writer |
+| `js/rigaku-format.js` | Rigaku Oxford Diffraction frames: header, TY6 decoding with the header-statistics check, and the CrysAlisPro text files (.par, crystal.ini, datacoll.ini) |
+| `js/rigaku-geometry.js` | Kappa-goniometer and detector geometry, Ewald prediction, cells, and the Levenberg-Marquardt fit |
+| `js/rigaku-reduce.js` | The reduction: detector mask, 3-D peak search, geometry refinement, gridding, and the Mantid `SaveMD`-layout writer |
+| `js/rigaku-worker.js` | Module worker that reduces an experiment folder and returns the .nxs file |
+| `js/rigaku-ui.js` | The *Reduce Rigaku XRD* dialog |
 | `js/view3d.js` | three.js scene, loaded when the 3-D view opens |
 | `js/colormaps.js` | Colormap lookup tables (generated) |
 
@@ -43,6 +48,8 @@ These scripts need numpy and h5py, and matplotlib for the colormaps:
 - `tools/make_fixtures.py` writes `tests/fixtures/` (a Mantid `MDHistoWorkspace`, a plain `NXdata`, and a NEBULA3D volume and 3D-ΔPDF) and their expected slices, computed by a verbatim copy of the reference `average_slab()`.
 - `tools/make_example.py` writes the example: `examples/demo_300K.nxs` and `examples/demo_10K.nxs`, one 101³ synthetic hexagonal crystal (about 1.5 MB each) above and below an ordering transition. Both have Bragg peaks (with thermal diffuse halos at 300 K), M-point short-range-order rods (300 K) or superlattice peaks (10 K), coverage wedges and bright edge voxels.
 - `tools/make_colormaps.py` writes `js/colormaps.js` from matplotlib.
+
+`tests/rigaku-synth.js` writes synthetic Rigaku frames (a TY6 encoder and a frame writer) and simulates a rotation experiment for `tests/rigaku.test.js`; no real frames are in the repository. `tests/rigaku-local.test.js` decodes every frame of a real experiment and checks it against the header statistics when `RIGAKU_DIR` points at one (`RIGAKU_DIR=/path/to/experiment npm test`); without it, it is skipped.
 
 `docs/screenshot.png` is a capture of the example (`?demo`: 6/mmm averaging and a 1-voxel edge mask) at 1440×900 and 1.5× pixel ratio.
 
