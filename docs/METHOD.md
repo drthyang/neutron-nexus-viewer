@@ -63,6 +63,8 @@ Each further dataset (B, C, D) is read by its own worker and processed independe
 - **Two datasets**: the two triangles on either side of the view's diagonal, from (u₀, v₁) to (u₁, v₀). A point is in B's half when (u − u₀)/(u₁ − u₀) + (v − v₀)/(v₁ − v₀) > 1.
 - **Three or four**: the quadrants about the window's center (u_m, v_m) = ((u₀ + u₁)/2, (v₀ + v₁)/2), cut along the plot axes, so on oblique axes they are parallelograms. A point belongs to A when u < u_m and v < v_m, to B when u ≥ u_m and v < v_m, to C when u < u_m and v ≥ v_m, and to D otherwise.
 
+All datasets are colored on one scale by default, and *Auto* takes its percentiles over the values of all their slices pooled. With own color ranges, dataset k is colored with its own limits and softening, and *Auto* takes them from its slices alone, as for a single dataset; the colormap and the scale function stay shared. Equal colors then mean equal intensity only within a dataset.
+
 I(Q) and line cuts of every dataset use A's shells or A's line in display coordinates, each on its own grid.
 
 ## Export for NEBULA3D
