@@ -697,9 +697,12 @@ body.dragging.drop-b::after { content: "Drop to compare as dataset " attr(data-d
         <button type="button" data-value="d" title="Show dataset D only" hidden>D</button>
       </div>
       <span class="spacer"></span>
-      <!-- Display: the shared color scale of the slices; more options in the popover. -->
+      <!-- Display: the color scale of the slices; more options in the popover. When comparing, the link
+           button gives each dataset its own color range, and the letters pick the one vmin and vmax edit. -->
       <div class="display-bar" role="group" aria-label="Display">
         <select id="cmap" aria-label="Colormap" title="Colormap"></select>
+        <button id="range-link" class="icon-btn" type="button" aria-pressed="false" aria-label="Own color range per dataset" hidden></button>
+        <div id="range-of" class="segmented sm" data-value="a" role="group" aria-label="Color range of" hidden><button type="button" data-value="a" class="on" title="Set A's color range">A</button><button type="button" data-value="b" title="Set B's color range">B</button><button type="button" data-value="c" title="Set C's color range" hidden>C</button><button type="button" data-value="d" title="Set D's color range" hidden>D</button></div>
         <input id="vmin" class="num" type="number" step="any" aria-label="vmin" title="Low end of the color scale">
         <canvas id="legend-bar" width="256" height="1" aria-hidden="true"></canvas>
         <input id="vmax" class="num" type="number" step="any" aria-label="vmax" title="High end of the color scale">

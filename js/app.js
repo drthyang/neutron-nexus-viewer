@@ -17,6 +17,8 @@ const NO_SYMMETRY = { name: '1', ops: [[1, 0, 0, 0, 1, 0, 0, 0, 1]], maps: [IDEN
 // Canvas colors, matching the page tokens.
 const INK = '#121821', INK2 = '#475467', AXIS = '#9aa5b3', MISSING = '#e8ecf1';
 const MONO = 'ui-monospace, "SF Mono", Menlo, Consolas, monospace';
+// The spacing of an export's colorbars, one per dataset shown when each has its own range (px).
+const BAR_STEP = 64;
 const SANS = '-apple-system, BlinkMacSystemFont, "Inter", "Segoe UI", Roboto, sans-serif';
 
 const svg = (body, size = 15, extra = '') => `<svg width="${size}" height="${size}" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true" ${extra}>${body}</svg>`;
@@ -32,6 +34,9 @@ const ICONS = {
   // How compared datasets share a slice: split along the diagonal (two), or quadrants (three or four).
   diagonal: svg('<path d="M1.75 1.75v12.5h12.5Z" fill="currentColor" opacity="0.3" stroke="none"/><rect x="1.75" y="1.75" width="12.5" height="12.5" rx="1"/><path d="M2.25 2.25l11.5 11.5"/>', 14),
   quadrants: svg('<path d="M1.75 8h6.25v6.25H1.75Z" fill="currentColor" opacity="0.3" stroke="none"/><rect x="1.75" y="1.75" width="12.5" height="12.5" rx="1"/><path d="M8 1.75v12.5M1.75 8h12.5"/>', 14),
+  // One color range for all datasets (a closed chain), or each its own (a broken one).
+  link: svg('<path d="M6.5 9.5l3-3"/><path d="M7 4.5l1.2-1.2a2.6 2.6 0 0 1 3.7 3.7L10.7 8.2"/><path d="M9 11.5l-1.2 1.2a2.6 2.6 0 0 1-3.7-3.7L5.3 7.8"/>'),
+  unlink: svg('<path d="M7 4.5l1.2-1.2a2.6 2.6 0 0 1 3.7 3.7L10.7 8.2"/><path d="M9 11.5l-1.2 1.2a2.6 2.6 0 0 1-3.7-3.7L5.3 7.8"/><path d="M2.5 5.5h1.75M5.5 2.5v1.75M13.5 10.5h-1.75M10.5 13.5v-1.75"/>'),
 };
 
 let worker = null, meta = null, panels = [], settings = null, sourceName = '', sourceSize = 0, autoscaled = false;
@@ -65,6 +70,11 @@ let pendingProcessing = null;
 const DEMO = { url: 'examples/demo_300K.nxs', compare: 'examples/demo_10K.nxs', sym: '6/mmm', mask: '1' };
 // True while the color range is the automatic one (not edited by hand).
 let rangeIsAuto = false;
+// Own color ranges, for datasets on different scales (X-ray and neutron counts):
+// with `ownRanges` each dataset k (0 for A, 1–3 for B–D) has its own `ranges[k]`,
+// { min, max, soft, auto }, and the color controls edit dataset `rangeK`'s. Otherwise
+// the controls hold the one range all datasets share.
+let ownRanges = false, ranges = [], rangeK = 0;
 // The export for NEBULA3D being built: { name, send, attrs }. `handoff` is the
 // NEBULA3D tab it is sent to (Open in NEBULA3D): { id, win | channel, origin, ready, file, sent }.
 let exportJob = null, handoff = null;
@@ -303,6 +313,8 @@ function openFile(file) {
   meta = null;
   panels = [];
   autoscaled = false;
+  ranges = [];
+  rangeK = 0;
   symmetry = NO_SYMMETRY;
   mask = null;
   iso = null;
@@ -1140,19 +1152,42 @@ function setZoom(p, box) {
 
 // ---- Color scale -------------------------------------------------------------
 
+/** Color limits { min, max, soft } from the values `r` (typed or numbers), checked for `scale`; errors start with `who`. */
+function colorLimits(r, scale, who = '') {
+  const min = Number(r.min), max = Number(r.max), soft = Number(r.soft);
+  if (![min, max].every(Number.isFinite) || max <= min) throw new Error(`${who}Use finite color limits with vmax > vmin.`);
+  if (scale === 'asinh' && !(soft > 0)) throw new Error(`${who}Asinh softening must be positive.`);
+  if (scale === 'log' && min <= 0) throw new Error(`${who}Log scale needs vmin > 0.`);
+  return { min, max, soft };
+}
+
+/** The datasets that are open and ready: 0 for A, 1–3 for B–D. */
+const readySets = () => [0, ...readyOthers().map((d) => d.slot + 1)];
+
+/**
+ * The display settings. The color limits are the ones in the controls; with own
+ * ranges, `ranges[k]` holds dataset k's (null until it has one), see colorsOf().
+ */
 function readSettings() {
-  const limit = $('limit').value.trim();
+  const limit = $('limit').value.trim(), scale = $('scale').dataset.value, letter = (k) => (readyOthers().length ? `${LETTERS[k]}: ` : '');
+  const shown = { min: $('vmin').value, max: $('vmax').value, soft: $('soft').value };
   const s = {
-    cmap: $('cmap').value, scale: $('scale').dataset.value, min: Number($('vmin').value), max: Number($('vmax').value),
-    soft: Number($('soft').value), limit: limit === '' ? Infinity : Number(limit),
-    angles: $('angles').checked ? 'nominal' : 'measured', guides: $('guides').checked, grid: $('grid').checked,
+    cmap: $('cmap').value, scale, ...colorLimits(shown, scale, ownRanges ? letter(rangeK) : ''), limit: limit === '' ? Infinity : Number(limit),
+    angles: $('angles').checked ? 'nominal' : 'measured', guides: $('guides').checked, grid: $('grid').checked, ranges: null,
   };
-  if (![s.min, s.max].every(Number.isFinite) || s.max <= s.min) throw new Error('Use finite color limits with vmax > vmin.');
-  if (s.scale === 'asinh' && !(s.soft > 0)) throw new Error('Asinh softening must be positive.');
-  if (s.scale === 'log' && s.min <= 0) throw new Error('Log scale needs vmin > 0.');
+  if (ownRanges) {
+    s.ranges = LETTERS.map(() => null);
+    for (const k of readySets()) {
+      if (k === rangeK) s.ranges[k] = { min: s.min, max: s.max, soft: s.soft };
+      else if (ranges[k]) s.ranges[k] = colorLimits(ranges[k], scale, letter(k));
+    }
+  }
   if (!(s.limit > 0)) throw new Error('View range must be positive; leave it empty for the full range.');
   return s;
 }
+
+/** The settings that color dataset k (0 for A): with its own color limits, or the shared ones. */
+const colorsOf = (s, k) => (s.ranges?.[k] ? { ...s, ...s.ranges[k] } : s);
 
 function scaler(s) {
   const f = s.scale === 'asinh' ? (v) => Math.asinh(v / s.soft) : s.scale === 'log' ? Math.log10 : (v) => v;
@@ -1164,24 +1199,100 @@ function scaler(s) {
   };
 }
 
-function autoRange() {
+/** The automatic color limits { min, max, soft } of the values in some slice layers. */
+function autoLimits(layers, signed) {
   // Signed data (a ΔPDF) uses the magnitudes of all values, on a range symmetric about 0.
-  const positive = [], signed = !!meta.signed;
-  for (const p of panels) {
-    for (const layer of [p, ...readyOthers().map((o) => p.more[o.slot])]) {
-      for (const v of layer.data?.values ?? []) if (v > 0 || (signed && v < 0)) positive.push(Math.abs(v));
-    }
+  const positive = [];
+  for (const layer of layers) {
+    for (const v of layer.data?.values ?? []) if (v > 0 || (signed && v < 0)) positive.push(Math.abs(v));
   }
   positive.sort((a, b) => a - b);
   const quantile = (q) => positive[Math.min(positive.length - 1, Math.floor(q * positive.length))];
   // Bragg peaks dominate the top percentiles, so a 97th-percentile ceiling
   // with the median as asinh softening keeps diffuse intensity visible.
   const vmax = positive.length ? sig(quantile(0.97)) : 1;
-  $('vmin').value = $('scale').dataset.value === 'log' ? sig(vmax / 1000) : signed ? -vmax : 0;
-  $('vmax').value = vmax;
-  $('soft').value = positive.length ? sig(quantile(0.5), 1) : sig(vmax / 20);
-  rangeIsAuto = true;
+  return {
+    min: $('scale').dataset.value === 'log' ? sig(vmax / 1000) : signed ? -vmax : 0,
+    max: vmax,
+    soft: positive.length ? sig(quantile(0.5), 1) : sig(vmax / 20),
+  };
+}
+
+/**
+ * Set the automatic color range: one pooled over every dataset's slices, or with
+ * own ranges, each dataset's from its own slices (only dataset `only`'s when given).
+ */
+function autoRange(only = null) {
+  if (ownRanges) {
+    for (const k of only === null ? readySets() : [only]) {
+      const signed = !!(k ? slots[k - 1].meta : meta).signed;
+      ranges[k] = { ...autoLimits(panels.map((p) => layerOf(p, k)), signed), auto: true };
+    }
+    showRange();
+  } else {
+    const { min, max, soft } = autoLimits(panels.flatMap((p) => readySets().map((k) => layerOf(p, k))), !!meta.signed);
+    $('vmin').value = min;
+    $('vmax').value = max;
+    $('soft').value = soft;
+    rangeIsAuto = true;
+  }
   redraw();
+}
+
+/** Show dataset k's own color range in the color controls, which then edit it. */
+function showRange(k = rangeK) {
+  rangeK = k;
+  const r = ranges[k];
+  if (r) {
+    $('vmin').value = r.min;
+    $('vmax').value = r.max;
+    $('soft').value = r.soft;
+  }
+  showRangeControls();
+}
+
+/**
+ * One color range for all datasets, or each its own (`on`). Each then starts from
+ * its own automatic range; back to one, the range in the controls applies to all,
+ * or the pooled automatic range if every dataset's was automatic.
+ */
+function setOwnRanges(on) {
+  const allAuto = readySets().every((k) => ranges[k]?.auto !== false);
+  ownRanges = on;
+  // The controls edit the range of the dataset shown alone, or A's.
+  rangeK = on ? shownIndex() : 0;
+  if (on) ranges = [];
+  if (on || allAuto) {
+    autoRange();
+  } else {
+    rangeIsAuto = false;
+    redraw();
+  }
+  showCompare();
+}
+
+/** The link button between one and own color ranges, the letters that pick the range edited, and the titles that say which. */
+function showRangeControls() {
+  const comparing = readyOthers().length > 0, own = ownRanges && comparing;
+  const link = $('range-link');
+  link.hidden = !comparing;
+  link.classList.toggle('on', own);
+  link.setAttribute('aria-pressed', String(own));
+  link.innerHTML = own ? ICONS.unlink : ICONS.link;
+  link.title = own
+    ? 'Each dataset has its own color range: the letters pick the one vmin and vmax set. Click to share one range again'
+    : 'One color range for all datasets. Click to give each its own, for data on different scales such as X-ray and neutron counts';
+  $('range-of').hidden = !own;
+  for (const button of $('range-of').querySelectorAll('button')) {
+    const k = 'abcd'.indexOf(button.dataset.value);
+    button.hidden = k > 0 && !slots[k - 1]?.ready;
+  }
+  if (own) setSegmented($('range-of'), 'abcd'[rangeK]);
+  const of = own ? `${LETTERS[rangeK]}'s color range` : 'the color scale';
+  $('vmin').title = `Low end of ${of}`;
+  $('vmax').title = `High end of ${of}`;
+  $('soft-wrap').title = `Asinh softening${own ? ` of ${LETTERS[rangeK]}'s range` : ''}: values below it are shown nearly linearly`;
+  $('auto').title = `vmin 0, vmax at the 97th percentile and softening at the median of positive values in ${own ? 'each dataset\'s own' : 'the current'} slices`;
 }
 
 function colorTicks(s) {
@@ -1264,7 +1375,10 @@ function draw(p, canvas, w, h, dpr, exporting = false) {
   const box = [[u0, v0], [u1, v0], [u1, v1], [u0, v1]];
   const xs = box.map(([u, v]) => wx(u, v)), ys = box.map(([, v]) => wy(v));
   const xmin = Math.min(...xs), xmax = Math.max(...xs), ymin = Math.min(...ys), ymax = Math.max(...ys);
-  const pad = { l: 58, r: exporting ? 76 : 20, t: exporting ? 40 : 14, b: 46 };
+  const shown = compareShown(), split = splitLayout(u0, u1, v0, v1);
+  // Exports end in a colorbar, or one per dataset shown when each has its own range.
+  const bars = s.ranges ? split.parts.map(([k]) => k) : [0];
+  const pad = { l: 58, r: exporting ? 76 + BAR_STEP * (bars.length - 1) : 20, t: exporting ? 40 : 14, b: 46 };
   const aw = Math.max(10, w - pad.l - pad.r), ah = Math.max(10, h - pad.t - pad.b);
   let sx = aw / (xmax - xmin), sy = ah / (ymax - ymin);
   if (g.equal) sx = sy = Math.min(sx, sy);
@@ -1293,7 +1407,7 @@ function draw(p, canvas, w, h, dpr, exporting = false) {
   path(corners);
   c.fillStyle = MISSING;
   c.fill();
-  const shown = compareShown(), split = splitLayout(u0, u1, v0, v1), onCanvas = (pts) => pts.map(([u, v]) => project(u, v));
+  const onCanvas = (pts) => pts.map(([u, v]) => project(u, v));
   if (split.hatch.length) {
     // The other datasets' parts are hatched along the diagonal, so they stand out where they have no data.
     c.save();
@@ -1324,7 +1438,7 @@ function draw(p, canvas, w, h, dpr, exporting = false) {
     const [x0, y0] = project(ex[0], ey[0]);
     c.transform(sx * g.lx * dx, 0, sx * g.ly * g.cos * dy, -sy * g.ly * sin * dy, x0, y0);
     c.imageSmoothingEnabled = false;
-    c.drawImage(layerImage(layer, s), 0, 0);
+    c.drawImage(layerImage(layer, colorsOf(s, k)), 0, 0);
     c.restore();
   }
 
@@ -1446,26 +1560,36 @@ function draw(p, canvas, w, h, dpr, exporting = false) {
   const extras = `${symmetryNote(d)}${mask ? ` · mask ${pct((mask.edge + mask.outlier) / mask.measured)}` : ''}${d.removed ? ' · removed only' : ''}`;
   c.fillText(`slab ${fmt(d.slab[0])} to ${fmt(d.slab[1])}${extras}`, 20 + titleWidth, 24);
 
-  // Colorbar (exports only).
-  const lut = LUTS[s.cmap], cx = w - pad.r + 22, cw = 10, top = pad.t + 4, bottom = h - pad.b, span = bottom - top;
-  for (let k = 0; k < 256; k++) {
-    c.fillStyle = `rgb(${lut[3 * k]},${lut[3 * k + 1]},${lut[3 * k + 2]})`;
-    c.fillRect(cx, bottom - (k + 1) * span / 256, cw, span / 256 + 0.6);
-  }
-  c.strokeStyle = AXIS;
-  c.strokeRect(cx, top, cw, span);
-  c.fillStyle = INK2;
-  c.font = `10px ${MONO}`;
-  c.textAlign = 'left';
-  c.textBaseline = 'middle';
-  const norm = scaler(s), yOf = (v) => bottom - norm(v) * span;
-  const labels = [s.min, s.max];
-  for (const v of colorTicks(s)) if (labels.every((k) => Math.abs(yOf(k) - yOf(v)) >= 14)) labels.push(v);
-  for (const v of labels) {
-    const y = yOf(v);
-    c.beginPath(); c.moveTo(cx + cw, y); c.lineTo(cx + cw + 3, y); c.stroke();
-    c.fillText(fmtValue(v), cx + cw + 6, y);
-  }
+  // Colorbars (exports only): one, or one per dataset shown under its letter when each has its own range.
+  const lut = LUTS[s.cmap], cw = 10, top = pad.t + 4, bottom = h - pad.b, span = bottom - top;
+  bars.forEach((k, i) => {
+    const r = colorsOf(s, k), cx = w - pad.r + 22 + BAR_STEP * i;
+    for (let j = 0; j < 256; j++) {
+      c.fillStyle = `rgb(${lut[3 * j]},${lut[3 * j + 1]},${lut[3 * j + 2]})`;
+      c.fillRect(cx, bottom - (j + 1) * span / 256, cw, span / 256 + 0.6);
+    }
+    c.strokeStyle = AXIS;
+    c.strokeRect(cx, top, cw, span);
+    if (shown && s.ranges) {
+      c.fillStyle = INK;
+      c.font = `700 11px ${SANS}`;
+      c.textAlign = 'center';
+      c.textBaseline = 'alphabetic';
+      c.fillText(LETTERS[k], cx + cw / 2, top - 7);
+    }
+    c.fillStyle = INK2;
+    c.font = `10px ${MONO}`;
+    c.textAlign = 'left';
+    c.textBaseline = 'middle';
+    const norm = scaler(r), yOf = (v) => bottom - norm(v) * span;
+    const labels = [r.min, r.max];
+    for (const v of colorTicks(r)) if (labels.every((l) => Math.abs(yOf(l) - yOf(v)) >= 14)) labels.push(v);
+    for (const v of labels) {
+      const y = yOf(v);
+      c.beginPath(); c.moveTo(cx + cw, y); c.lineTo(cx + cw + 3, y); c.stroke();
+      c.fillText(fmtValue(v), cx + cw + 6, y);
+    }
+  });
 }
 
 /**
@@ -1652,7 +1776,9 @@ function navigate(p, e) {
 function savePNG(p) {
   if (!p.data) return;
   const out = document.createElement('canvas'), s = uiScale();
-  draw(p, out, Math.max(p.canvas.clientWidth / s, 480), Math.max(p.canvas.clientHeight / s, 360) + 24, 3, true);
+  // Wider by the extra colorbars of datasets with their own ranges, so the slice keeps its size.
+  const extra = settings.ranges && compareShown() === 'split' ? BAR_STEP * readyOthers().length : 0;
+  draw(p, out, Math.max(p.canvas.clientWidth / s, 480) + extra, Math.max(p.canvas.clientHeight / s, 360) + 24, 3, true);
   const X = meta.dims[p.x], Y = meta.dims[p.y], F = meta.dims[p.fixed];
   out.toBlob((blob) => download(blob, `${shownStem()}_${X.label}${Y.label}_${F.label}=${p.data.center}.png`));
 }
@@ -2068,9 +2194,9 @@ function show3DCut() {
  */
 function sliceTexture(p, s, u, v) {
   const shown = compareShown();
-  if (!shown || shown === 'a') return { image: layerImage(p, s), key: p.imageKey };
+  if (!shown || shown === 'a') return { image: layerImage(p, colorsOf(s, 0)), key: p.imageKey };
   const split = splitLayout(u[0], u[1], v[0], v[1]);
-  const images = split.parts.map(([k, part]) => [k, part, layerOf(p, k).data ? layerImage(layerOf(p, k), s) : null]);
+  const images = split.parts.map(([k, part]) => [k, part, layerOf(p, k).data ? layerImage(layerOf(p, k), colorsOf(s, k)) : null]);
   const key = `${images.map(([k, , image]) => (image ? layerOf(p, k).imageKey : '-')).join('|')}|${shown}|${others().length}|${u}|${v}`;
   if (p.textureKey === key) return { image: p.texture, key };
   const { rows, cols } = p.data, ex = meta.dims[p.x].edges, ey = meta.dims[p.y].edges;
@@ -3439,6 +3565,9 @@ function closeCompare(slot) {
   slots[slot] = null;
   const l = 'bcd'[slot];
   if (compareView === l) compareView = 'split';
+  // A file opened in its place gets a range of its own.
+  delete ranges[slot + 1];
+  if (rangeK === slot + 1) showRange(0);
   endJob(`open-${l}`, `mask-${l}`, `iq-${l}`, `cut-${l}`);
   for (const p of panels) {
     p.more[slot] = newLayer();
@@ -3508,10 +3637,10 @@ function compareHandlers(d) {
       Object.assign(layer, { busy: false, data: msg, error: '', version: layer.version + 1 });
       showCaption(p);
       if (layer.wanted) sendOther(p, d);
-      // Once its first slices are in, the automatic range covers it too.
+      // Once its first slices are in, the automatic range covers it too, or it gets its own.
       if (!d.autoscaled && panels.every((q) => q.more[d.slot].data || q.more[d.slot].error)) {
         d.autoscaled = true;
-        if (rangeIsAuto) autoRange();
+        if (ownRanges ? ranges[k]?.auto !== false : rangeIsAuto) autoRange(ownRanges ? k : null);
       }
       redraw();
     },
@@ -3615,8 +3744,10 @@ function showCompare() {
     chip.warn.title = warnings.join('\n');
     chip.main.title = `Dataset ${d.letter}: ${d.name}${d.size ? ` (${mb(d.size)})` : ''}`
       + `${d.ready ? `\n${datasetDetails(d.meta, d.mask)}` : ''}${warnings.length ? `\n${warnings.join('\n')}` : ''}`
-      + `\nSlice positions, symmetry, mask settings and the color scale apply to all datasets.\nClick to replace ${d.letter} with another file.`;
+      + `\n${ownRanges ? `Slice positions, symmetry, mask settings and the colormap apply to all datasets; ${d.letter} has its own color range.`
+        : 'Slice positions, symmetry, mask settings and the color scale apply to all datasets.'}\nClick to replace ${d.letter} with another file.`;
   });
+  showRangeControls();
 }
 
 // ---- Startup -------------------------------------------------------------------------
@@ -3696,25 +3827,45 @@ setupRigaku({
 });
 segmented($('compare-view'), (value) => {
   compareView = value;
+  // With own ranges, the color controls follow the dataset shown alone.
+  if (ownRanges && value !== 'split') showRange(shownIndex());
+  redraw();
+});
+$('range-link').onclick = () => setOwnRanges(!ownRanges);
+segmented($('range-of'), (value) => {
+  showRange('abcd'.indexOf(value));
   redraw();
 });
 $('error-close').onclick = () => error('');
+// A range edited by hand is no longer automatic (with own ranges, the range of the dataset edited).
+for (const id of ['vmin', 'vmax', 'soft']) {
+  $(id).addEventListener('input', () => {
+    if (ownRanges) ranges[rangeK] = { min: $('vmin').value, max: $('vmax').value, soft: $('soft').value, auto: false };
+    else rangeIsAuto = false;
+  });
+}
 for (const id of ['cmap', 'vmin', 'vmax', 'soft', 'limit', 'angles', 'guides', 'grid']) $(id).addEventListener('input', redraw);
 $('cmap').addEventListener('change', () => { cmapChoice = $('cmap').value; });
 for (const id of ['cmap', 'angles', 'guides', 'grid']) $(id).addEventListener('change', persist);
-for (const id of ['vmin', 'vmax', 'soft']) $(id).addEventListener('input', () => { rangeIsAuto = false; });
 $('angles').addEventListener('change', () => { if (meta) { describe(); requestCut(); } });
 $('cmap').addEventListener('input', paintColorbar);
 segmented($('click-mode'), (mode) => { setClickMode(mode); persist(); });
 segmented($('layout'), (mode) => setLayout(mode, primary));
 segmented($('scale'), (value) => {
-  if (value === 'log' && !(Number($('vmin').value) > 0)) $('vmin').value = sig(Number($('vmax').value) / 1000 || 1);
+  if (value === 'log') {
+    // Log needs vmin > 0: a range from 0 or below starts at vmax / 1000 instead, in every dataset's own range too.
+    const positive = (r) => { if (!(Number(r.min) > 0)) r.min = sig(Number(r.max) / 1000 || 1); };
+    if (ownRanges) ranges.forEach((r) => r && positive(r));
+    const shown = { min: $('vmin').value, max: $('vmax').value };
+    positive(shown);
+    $('vmin').value = shown.min;
+  }
   persist();
   redraw();
 });
 segmented($('iso-grid'), () => { if (iso) { iso.userLevel = false; requestIso(); } });
 $('iso-slices').onchange = update3D;
-$('auto').onclick = autoRange;
+$('auto').onclick = () => autoRange();
 function setPanel(open) {
   document.body.classList.toggle('panel-collapsed', !open);
   $('panel-toggle').setAttribute('aria-pressed', String(open));

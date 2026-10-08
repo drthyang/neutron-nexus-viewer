@@ -88,6 +88,7 @@ The mask removes voxels from the measured data before symmetry averaging:
 The color scale is set in the workspace header, above the views: the colormap, vmin and vmax on either side of the colorbar, and the scale.
 
 - **Scale**: asinh (with a softening value), lin or log. *Auto* sets vmin to 0, vmax to the 97th percentile, and softening to the median of the positive values in the current slices.
+- **Own color ranges** (when comparing): the chain button left of vmin gives each dataset its own vmin, vmax and softening, for data on different scales such as X-ray and neutron counts. See [Comparing datasets](#comparing-datasets).
 
 The sliders button next to *Auto* opens the other options:
 
@@ -164,7 +165,8 @@ White gaps mark the cuts, the other datasets' parts are hatched where they have 
 
 Each dataset gets its own chip in the top bar, after A and the split icon, with its facts. While it loads, and while its mask is built, its chip shows the step, and the status in the top bar the progress; an amber *!* marks warnings (hover to read them).
 
-- **Shared**: slice positions and thickness, zoom and pan, symmetry, mask settings and the color scale apply to every dataset, so their parts are directly comparable. *Auto range* pools them all.
+- **Shared**: slice positions and thickness, zoom and pan, symmetry, mask settings and the color scale apply to every dataset, so their parts are directly comparable. *Auto* pools them all.
+- **Own color ranges** (optional): when the datasets' intensities differ by orders of magnitude, as X-ray counts next to neutron data, one range leaves some of them black or saturated. The chain button left of vmin gives each dataset its own vmin, vmax and softening, and each starts from its own *Auto* range. The letters beside it pick the dataset whose range vmin and vmax show and set (they follow the dataset shown alone), and *Auto* then ranges each dataset on its own slices. The colormap and the scale (asinh, lin, log) stay shared. Colors are then comparable within a dataset but not between them. *Save PNG* draws one colorbar per dataset shown, under its letter. Click the button again to share one range: the one in the controls, or the pooled *Auto* range if no range was edited.
 - **A / Split / B / C / D** in the workspace header shows one dataset over the whole view, or the split.
 - **Hover** reads every dataset at the cursor, the one under it first. View headers show the coverage of each.
 - **I(Q) and line cuts** draw one curve per dataset (A blue, B amber, C green, D violet), and the saved files have columns for each.
