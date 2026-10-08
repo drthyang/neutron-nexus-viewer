@@ -42,6 +42,7 @@ export function setupRigaku(hooks) {
     $('rk-openas-wrap').hidden = !hooks.canCompare();
     if (!hkl && $('rk-cell').dataset.value === 'match') select($('rk-cell'), 'ub');
     if (hooks.canCompare()) select($('rk-openas'), 'compare');
+    if (summary) updateDefaults(); // dataset A may have changed (or finished loading) since
     dlg.showModal();
   };
 
@@ -141,9 +142,13 @@ export function setupRigaku(hooks) {
     const mode = $('rk-cell').dataset.value, A = hooks.datasetA();
     if (mode === 'x2') opts.multiplier = 2;
     else if (mode === 'ub') opts.multiplier = 1;
-    else if (mode === 'match' && A?.lattice) {
+    else if (mode === 'match') {
+      if (!A?.lattice || !A.dims?.every(isHKL)) throw new Error('Dataset A is not open yet, or has no HKL axes and cell to match.');
+      // A's edges may carry float32 rounding (0.10000038): keep 6 significant digits
+      const round6 = (x) => Number(x.toPrecision(6));
       opts.targetA = A.lattice.a;
-      opts.origin = A.dims.map((d) => 0.5 * (d.edges[0] + d.edges[1]));
+      opts.origin = A.dims.map((d) => round6(0.5 * (d.edges[0] + d.edges[1])));
+      if (!$('rk-step').dataset.touched) opts.step = round6(A.dims[0].edges[1] - A.dims[0].edges[0]);
     }
     return opts;
   }

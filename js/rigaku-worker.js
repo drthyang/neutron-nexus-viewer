@@ -102,6 +102,6 @@ async function reduce(options) {
   });
   const blob = new Blob([FS.readFile(path)], { type: 'application/x-hdf5' });
   FS.unlink(path);
-  const name = `${exp.stem}_hkl_x${m}_step${grid.step}.nxs`;
+  const name = `${exp.stem}_hkl_x${m}_step${Number(grid.step.toPrecision(6))}.nxs`;
   self.postMessage({ type: 'done', blob, name, report });
 }
