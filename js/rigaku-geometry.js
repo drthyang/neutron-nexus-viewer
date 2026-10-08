@@ -37,8 +37,10 @@ export const dot = (a, b) => a[0] * b[0] + a[1] * b[1] + a[2] * b[2];
 export const cross = (a, b) => [a[1] * b[2] - a[2] * b[1], a[2] * b[0] - a[0] * b[2], a[0] * b[1] - a[1] * b[0]];
 export const norm = (a) => Math.hypot(a[0], a[1], a[2]);
 
+export const det3 = (m) => m[0] * (m[4] * m[8] - m[5] * m[7]) - m[1] * (m[3] * m[8] - m[5] * m[6]) + m[2] * (m[3] * m[7] - m[4] * m[6]);
+
 export function inv3(m) {
-  const d = m[0] * (m[4] * m[8] - m[5] * m[7]) - m[1] * (m[3] * m[8] - m[5] * m[6]) + m[2] * (m[3] * m[7] - m[4] * m[6]);
+  const d = det3(m);
   if (!(Math.abs(d) > 1e-300)) throw new Error('singular matrix');
   return [(m[4] * m[8] - m[5] * m[7]) / d, (m[2] * m[7] - m[1] * m[8]) / d, (m[1] * m[5] - m[2] * m[4]) / d,
     (m[5] * m[6] - m[3] * m[8]) / d, (m[0] * m[8] - m[2] * m[6]) / d, (m[2] * m[3] - m[0] * m[5]) / d,
@@ -77,6 +79,44 @@ export function cellFromUB(ub, lambda = 1) {
   const [a, b, c] = [0, 4, 8].map((i) => Math.sqrt(g[i]));
   const ang = (x, p, q) => Math.acos(x / (p * q)) / DEG;
   return [a, b, c, ang(g[5], b, c), ang(g[2], a, c), ang(g[1], a, b)];
+}
+
+/**
+ * Cell of a new basis given by `N` (row-major, rows = new basis vectors in units of the old
+ * ones: a'_i = sum_j N_ij a_j). Miller indices transform with the same matrix, h' = N h
+ * (International Tables: N = P^T).
+ */
+export function transformCell(cell, N) {
+  const [a, b, c, al, be, ga] = cell;
+  const [ca, cb, cg] = [al, be, ga].map((x) => Math.cos(x * DEG));
+  const G = [a * a, a * b * cg, a * c * cb, a * b * cg, b * b, b * c * ca, a * c * cb, b * c * ca, c * c];
+  const g = mul(mul(N, G), transpose(N));
+  const [p, q, r] = [0, 4, 8].map((i) => Math.sqrt(g[i]));
+  const ang = (x, u, v) => Math.acos(Math.max(-1, Math.min(1, x / (u * v)))) / DEG;
+  return [p, q, r, ang(g[5], q, r), ang(g[2], p, r), ang(g[1], p, q)];
+}
+
+/** A number or a fraction such as "1/2" or "-2/3"; NaN otherwise. */
+export function parseFraction(s) {
+  const m = /^\s*([+-]?\d*\.?\d+(?:e[+-]?\d+)?)(?:\s*\/\s*(\d*\.?\d+))?\s*$/i.exec(String(s));
+  return m ? Number(m[1]) / (m[2] === undefined ? 1 : Number(m[2])) : NaN;
+}
+
+/**
+ * Parse an output-cell transformation: 9 entries (numbers or fractions such as "1/2"), rows =
+ * new basis vectors. It must keep a right-handed cell (determinant > 0), so Mantid can write the
+ * orientation as a proper rotation.
+ */
+export function parseTransform(entries) {
+  if (entries.length !== 9) throw new Error('The cell transformation needs 9 entries.');
+  const N = entries.map((s) => {
+    const v = parseFraction(s);
+    if (!Number.isFinite(v)) throw new Error(`"${String(s).trim()}" is not a number or fraction.`);
+    return v;
+  });
+  const d = det3(N);
+  if (!(d > 1e-9)) throw new Error(d < -1e-9 ? 'This transformation inverts the handedness (determinant < 0); swap two rows or change a sign.' : 'This transformation is singular (determinant 0).');
+  return N;
 }
 
 /** Orthogonal U with UB ~ U B lambda (polar decomposition by Newton iteration). */

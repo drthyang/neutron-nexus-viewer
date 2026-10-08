@@ -103,11 +103,18 @@ These choices were fixed empirically. For two XtaLAB mini II data sets (10 runs 
 **Bragg peaks.** A pixel is strong when it has ≥ 8 counts and ≥ b + 6√(b+1), where b is the pixel's mean over its run. Strong pixels are joined across their 4 neighbours and the same pixel in the next frame. Components with ≥ 4 voxels and ≥ 150 net counts are kept, at net-weighted centroids, with frame midpoints for the scan angle. Peaks touching the mask are left out.
 
 **Refinement.** The starting UB is whichever of the CrysAlis matrices indexes most peaks (within 0.1). The cell is constrained by the crystal system of the Laue class, when the starting cell fits it. The fit is Levenberg–Marquardt with a soft-L1 loss on detector x, y (pixels) and scan angle (0.1° weighted as 1 pixel), in three stages:
-- **L3:** orientation, cell, beam centre, distance, in-plane detector rotation d₁, and the scan-axis zero.
+- **L3:** orientation, cell, beam centre, in-plane detector rotation d₁, and the scan-axis zero.
 - **L6:** adds the crystal's offset from the rotation centre and the κ zero.
 - **L10:** the goniometer is fixed, and each run gets its own small orientation correction relative to the run with most peaks. A run whose angular rms stays above max(0.15°, 2 × median) gets a piecewise-linear drift with 6 knots instead.
 
-d₂ stays at the header value: it is degenerate with the beam centre.
+d₂ stays at the header value: it is degenerate with the beam centre. The detector distance stays at the header's calibrated value too. The peaks fix only the ratio of cell to distance, so refining the distance moves the absolute cell scale without improving the fit. On one data set it changed the rms by 0.01 px and the HKL map by at most 0.006 r.l.u., but changed a by 0.12 %.
+
+**Parallel workers.** With more than two CPU cores, the frames of each pass are spread over Web Workers (one per core, leaving one free). The result is bit-identical to a serial run:
+- pass 1 sums integer counts, which is exact in any order;
+- pass 2 gives each worker whole runs, so the peak search is unchanged;
+- in pass 3 the workers compute each pixel's voxels and contributions. One thread adds them frame by frame, grouped by blocks of 4,096 voxels with a stable sort, so every voxel receives the same terms in the same order as in a serial run. Floating-point sums depend on that order, so the order is kept.
+
+Where workers cannot start, the reduction runs serially with the same result.
 
 **Gridding.** Each unmasked pixel of each frame is split into n equal sub-steps of the frame's rotation (default 5). The shutterless frame integrates continuously, so its counts are shared equally among the sub-steps, and each sub-sample goes to the voxel containing it. The crystal offset is evaluated at the frame midpoint. Per voxel:
 - S = Σ f·c (counts);
@@ -123,7 +130,13 @@ The signal is S/W with errors² = E2/W². The weight w_p is either 1 (*exposure 
 Signal values are voxel averages of a continuous-scattering estimate, so diffuse scattering needs no Lorentz factor; Bragg-peak voxels are not integrated intensities. Background (air scatter, fluorescence), absorption and symmetry averaging are not applied. An absorption correction needs a crystal shape, which CrysAlis files usually lack.
 
 **Grid and output.**
-- *Indices:* output indices are n × the refined cell's indices; "2 × 2 × 2" gives the doubled cell of many neutron reductions, and "Match dataset A" picks n from A's cell and puts the voxel centres on A's.
+- *Indices:* the output cell is a transformation T of the refined cell. Each row of T gives an output basis vector in units of a, b, c (a′ᵢ = Σⱼ Tᵢⱼ aⱼ), and the output indices are T · (h, k, l). Entries may be fractions. The determinant must be positive, so the cell stays right-handed and its orientation is a proper rotation for Mantid. Presets:
+  - identity;
+  - 2 × 2 × 2, the doubled cell of many neutron reductions;
+  - orthohexagonal (a′ = a, b′ = a + 2b, c′ = c), for hexagonal cells;
+  - *Match dataset A*, n × identity with n from A's cell, and voxel centres on A's.
+
+  The file stores the transformed cell and UB, and T in a log.
 - *Extent:* the default range is everything the detector reaches.
 - *File:* the result is written in the layout of Mantid's `SaveMD` (version 2): `signal`, `errors_squared`, `num_events` (pixel-frames) and `mask` in (L, K, H) order with `axes = D2:D1:D0`, HKL dimensions, and the oriented lattice and UB under `experiment0`. The reduction report is stored as a log.
 - *Unmeasured voxels:* NaN signal and errors, with `num_events` = 0. Measured zeros stay 0.
@@ -132,10 +145,11 @@ Signal values are voxel averages of a continuous-scattering estimate, so diffuse
 - *Decoder:* every frame matches its header statistics, and frames are identical, pixel by pixel, to an independent Python decoder.
 - *Geometry:* forward predictions agree with a Python implementation to 10⁻⁸ px.
 - *Gridding:* with the same geometry and mask, the accumulators agree with the reference Python implementation voxel by voxel over 3.3 million voxels: S and W to 10⁻¹⁴, E2 to float32 precision, identical N and coverage.
-- *Refinement:* the in-browser refinement reproduces the Python one at every level; final rms 0.351 / 0.392 px and 0.189° (Python 0.349 / 0.390 px, 0.187°).
+- *Refinement:* the in-browser refinement reproduces the Python one at every level. Final rms is 0.361 / 0.394 px and 0.191° (Python 0.359 / 0.392 px, 0.188°), with cell a = 4.0082, c = 5.0156 Å (Python 4.0083 / 5.0156), both with the distance at the header value.
 - *Volume:* Bragg integrated intensities agree within 1 % (median 0.998).
 - *Mantid:* `LoadMD` (Mantid 6.16.1) reads the file with its dimensions, frame, lattice and logs. SliceViewer draws HK planes at 60°.
-- *Speed:* in a browser, 3,608 frames take about 2 minutes and 1.3 GB.
+- *Parallel workers:* serial and parallel reductions give byte-identical accumulators and the same refined model. This was checked on simulated frames (tests, and in a browser with real Web Workers and nested workers) and on 736 and 3,608 real frames.
+- *Speed:* 3,608 frames take about 40 s with 7 workers, against about 2 minutes serially, at about 1.5 GB.
 - *Tests:* `tests/rigaku.test.js` checks each step on synthetic frames, including a simulated experiment whose refined geometry puts the Bragg peaks back on integer HKL. `tests/rigaku-local.test.js` checks every frame of a real experiment when `RIGAKU_DIR` is set.
 
 ## Geometry

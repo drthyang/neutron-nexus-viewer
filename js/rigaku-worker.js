@@ -10,6 +10,7 @@
 import h5wasm from 'https://cdn.jsdelivr.net/npm/h5wasm@0.10.3/dist/esm/hdf5_hl.js';
 import * as fmt from './rigaku-format.js';
 import { cellFromUB } from './rigaku-geometry.js';
+import { WorkerPool } from './rigaku-pool.js';
 import { finishVolume, gridEdges, reduceRigaku, writeMantidMD } from './rigaku-reduce.js';
 
 let exp = null, meta = null;
@@ -67,25 +68,50 @@ async function scan(files) {
   });
 }
 
+/**
+ * Workers for the per-frame work (one per core, leaving one for this coordinator), or null:
+ * then the reduction runs here, serially, with the same result.
+ */
+async function makePool() {
+  const n = Math.min(12, (self.navigator?.hardwareConcurrency ?? 1) - 1);
+  if (!(n >= 2) || typeof Worker === 'undefined') return null;
+  let pool = null;
+  try {
+    pool = new WorkerPool(Array.from({ length: n }, () => new Worker(new URL('./rigaku-map-worker.js', import.meta.url), { type: 'module' })));
+    await pool.ready();
+    return pool;
+  } catch {
+    pool?.terminate();
+    return null;
+  }
+}
+
 async function reduce(options) {
   if (!exp) throw new Error('Choose an experiment folder first.');
   const runs = new Map([...exp.runs].map(([r, list]) => [r, list.map(({ frame, file }) => ({ frame, read: () => file.arrayBuffer() }))]));
   const source = { runs, label: exp.stem, laue: meta.crystal.laue, monochromator: meta.par.monochromator, ubCandidates: meta.ubCandidates };
   let last = 0;
-  const res = await reduceRigaku(source, fmt, options, (label, fraction) => {
-    const now = performance.now();
-    if (now - last > 150 || fraction >= 1) {
-      last = now;
-      self.postMessage({ type: 'progress', label, fraction: 0.97 * fraction });
-    }
-  });
+  self.postMessage({ type: 'progress', label: 'Starting the workers', fraction: 0 });
+  const pool = await makePool();
+  let res;
+  try {
+    res = await reduceRigaku(source, fmt, options, (label, fraction) => {
+      const now = performance.now();
+      if (now - last > 150 || fraction >= 1) {
+        last = now;
+        self.postMessage({ type: 'progress', label, fraction: 0.97 * fraction });
+      }
+    }, pool);
+  } finally {
+    pool?.terminate();
+  }
   self.postMessage({ type: 'progress', label: 'Writing the NeXus file', fraction: 0.97 });
   const { report, grid, model, ubMantid } = res;
   const v = finishVolume(res.acc, { inPlace: true });
   report.covered = v.covered;
   report.measuredZero = v.zeros;
-  const m = report.grid.multiplier;
-  const cell = [m * model.cell[0], m * model.cell[1], m * model.cell[2], model.cell[3], model.cell[4], model.cell[5]];
+  const cell = report.grid.cell;
+  const rows = [0, 3, 6].map((i) => report.grid.transform.slice(i, i + 3));
   const { FS } = await h5wasm.ready;
   const path = '/rigaku-reduced.nxs';
   const T = meta.coll.temperature;
@@ -96,12 +122,15 @@ async function reduce(options) {
       wavelength: { value: model.g.wavelength, units: 'Angstrom' },
       ...(T ? { temperature_min: { value: T[0], units: 'K' }, temperature_max: { value: T[1], units: 'K' } } : {}),
       xrd_signal_definition: report.normalization,
+      xrd_cell_transform: `rows = output basis vectors in units of the refined cell (a b c): ${rows.map((r) => `(${r.join(', ')})`).join(' ')}; output indices = T x refined indices`,
       xrd_reduction_report: JSON.stringify(report),
       xrd_source: `${exp.stem} (${report.frames} frames, runs ${report.runs.join(', ')})`,
     },
   });
   const blob = new Blob([FS.readFile(path)], { type: 'application/x-hdf5' });
   FS.unlink(path);
-  const name = `${exp.stem}_hkl_x${m}_step${Number(grid.step.toPrecision(6))}.nxs`;
+  const num = (x) => String(Number(x.toPrecision(6)));
+  const cellTag = report.grid.multiplier ? `x${num(report.grid.multiplier)}` : `T${rows.map((r) => `(${r.map(num).join(',')})`).join('')}`;
+  const name = `${exp.stem}_hkl_${cellTag}_step${Number(grid.step.toPrecision(6))}.nxs`;
   self.postMessage({ type: 'done', blob, name, report });
 }

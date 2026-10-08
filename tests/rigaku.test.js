@@ -6,11 +6,15 @@ import h5wasm from 'h5wasm/node';
 import { describeFile, loadVariance, loadVolume } from '../js/nexus.js';
 import * as fmt from '../js/rigaku-format.js';
 import {
-  M_CRYSALIS, bMatrix, cellFromUB, crystalSystem, gonio, inv3, levenbergMarquardt, mul, mulv, pixelX, predict, prepare, rot, transpose,
+  M_CRYSALIS, bMatrix, cellFromUB, crystalSystem, gonio, inv3, levenbergMarquardt, mul, mulv, norm, parseFraction, parseTransform, pixelX,
+  predict, prepare, rot, transformCell, transpose,
 } from '../js/rigaku-geometry.js';
 import {
-  PeakSearch, accumulateFrame, detectorMask, finishVolume, gridEdges, makeAccumulators, makeGrid, reduceRigaku, writeMantidMD,
+  PeakSearch, accumulateFrame, applyFrame, applyRecords, detectorMask, finishVolume, frameRecords, gridEdges, makeAccumulators,
+  makeGrid, reduceRigaku, writeMantidMD,
 } from '../js/rigaku-reduce.js';
+import { WorkerPool } from '../js/rigaku-pool.js';
+import { nodeWorker } from './node-worker.js';
 import { encodeTY6, rng, simulateExperiment, writeFrame } from './rigaku-synth.js';
 
 await h5wasm.ready;
@@ -99,6 +103,21 @@ test('geometry: cells, prediction and its inverse agree', () => {
   assert.ok(n >= 5);
 });
 
+test('output-cell transformations: fractions, cells, handedness', () => {
+  assert.deepEqual(['2', '-1/2', ' 0.25 ', '1e-1', 'x', ''].map(parseFraction), [2, -0.5, 0.25, 0.1, NaN, NaN]);
+  const hex = [4, 4, 5, 90, 90, 120];
+  const close = (a, b) => a.forEach((v, i) => assert.ok(Math.abs(v - b[i]) < 1e-9, `${a} vs ${b}`));
+  close(transformCell(hex, [2, 0, 0, 0, 2, 0, 0, 0, 2]), [8, 8, 10, 90, 90, 120]);
+  close(transformCell(hex, [1, 0, 0, 1, 2, 0, 0, 0, 1]), [4, 4 * Math.sqrt(3), 5, 90, 90, 90]); // orthohexagonal
+  // the cell of the transformed UB agrees with transformCell, for a general transformation
+  const T = parseTransform(['1', '-1', '0', '1/2', '1', '0', '0', '1', '2']);
+  const ub = mul(rot([1, 2, 3], 17), bMatrix(...hex));
+  close(cellFromUB(mul(ub, inv3(T))), transformCell(hex, T));
+  assert.throws(() => parseTransform(['0', '1', '0', '1', '0', '0', '0', '0', '1']), /handedness/);
+  assert.throws(() => parseTransform(['1', '1', '0', '1', '1', '0', '0', '0', '1']), /singular/);
+  assert.throws(() => parseTransform(['1', 'a', '0', '0', '1', '0', '0', '0', '1']), /not a number/);
+});
+
 test('Levenberg-Marquardt recovers a model and down-weights outliers', () => {
   const xs = Array.from({ length: 40 }, (_, i) => i / 4);
   const ys = xs.map((x) => 2.5 * Math.exp(-0.3 * x) + 0.7);
@@ -128,6 +147,27 @@ test('gridding: shares landing in one voxel are summed before squaring', () => {
   assert.ok(Number.isNaN(v.signal[at(-1, -1, -1)]) && v.events[at(-1, -1, -1)] === 0);
   assert.equal(v.covered, 2);
   assert.ok(Math.abs(v.signal[at(0, 0, 0)] - 14 / 4.2) < 1e-12);
+});
+
+test('records grouped by voxel block add up bit-identically to the pixel-order sums', () => {
+  const grid = makeGrid([0, 0, 0], [99, 99, 99], 1), nvox = 100 ** 3, nsub = 5, r = rng(11);
+  const a = makeAccumulators(grid), b = makeAccumulators(grid);
+  for (let frame = 0; frame < 20; frame++) {
+    const np = 5000, vox = new Int32Array(np), c = new Int32Array(np), w = new Float64Array(np), split = [];
+    for (let p = 0; p < np; p++) {
+      c[p] = Math.floor(r() * 50);
+      w[p] = 0.1 + r() * 3;
+      const v = Math.floor(r() ** 3 * nvox); // crowded at low indices, so voxels repeat
+      if (r() < 0.3) { // a split pixel: nsub sub-samples over a few voxels, some outside
+        vox[p] = -2;
+        for (let k = 0; k < nsub; k++) split.push(r() < 0.1 ? -1 : v + Math.floor(r() * 3) * 4096);
+      } else vox[p] = r() < 0.05 ? -1 : v;
+    }
+    const sp = Int32Array.from(split);
+    applyFrame(a, vox, c, w, sp, nsub);
+    applyRecords(b, frameRecords(vox, c, w, sp, nsub, nvox));
+  }
+  for (const k of ['S', 'E2', 'W', 'N']) assert.ok(Buffer.from(a[k].buffer).equals(Buffer.from(b[k].buffer)), `${k} differs`);
 });
 
 test('detector mask: beamstop with penumbra, chip-boundary triplet, dead pixel, border', () => {
@@ -214,6 +254,7 @@ test('end to end on a simulated experiment: geometry refined, Bragg peaks at int
   assert.ok(r.indexed / r.peaks.clean > 0.9);
   const L = r.geometry.levels.L10;
   assert.ok(L.rmsX < 0.3 && L.rmsY < 0.3 && L.rmsAngle < 0.1, JSON.stringify(L));
+  assert.equal(res.model.g.distance, sim.model.g.distance, 'the detector distance stays at the header value');
   assert.ok(Math.abs(res.model.cell[0] / 4.0 - 1) < 0.005 && Math.abs(res.model.cell[2] / 5.0 - 1) < 0.005, String(res.model.cell));
   // the strongest voxels sit on integer HKL
   const v = finishVolume(res.acc), [nH, nK] = res.grid.shape, step = res.grid.step, min = res.grid.min;
@@ -223,4 +264,72 @@ test('end to end on a simulated experiment: geometry refined, Bragg peaks at int
     const hkl = [min[0] + ih * step, min[1] + ik * step, min[2] + il * step];
     assert.ok(hkl.every((c) => Math.abs(c - Math.round(c)) <= step + 1e-9), `bright voxel at ${hkl}`);
   }
+});
+
+test('a general output cell: orthohexagonal indices, cell and Mantid UB agree', async () => {
+  const sim = simulateExperiment();
+  const runs = new Map();
+  for (const fr of sim.frames) {
+    if (!runs.has(fr.run)) runs.set(fr.run, []);
+    runs.get(fr.run).push({ frame: fr.frame, read: async () => fr.bytes.buffer.slice(0) });
+  }
+  const model = { ...sim.model, perRun: new Map(), drift: new Map() };
+  const T = [1, 0, 0, 1, 2, 0, 0, 0, 1]; // a' = a, b' = a + 2b, c' = c
+  const res = await reduceRigaku({ runs, ubCandidates: {}, label: 'simulated' }, fmt,
+    { model, transform: T, step: 0.05, nSub: 3, normalization: 'rate' });
+  const g = res.report.grid;
+  assert.equal(g.multiplier, null);
+  g.cell.forEach((v, i) => assert.ok(Math.abs(v - [4, 4 * Math.sqrt(3), 5, 90, 90, 90][i]) < 1e-9, String(g.cell)));
+  // the Mantid UB (1/A, no 2 pi) of the output cell gives the same |Q| for H' = T h, and its cell is the output cell
+  const lam = sim.model.g.wavelength;
+  for (const h of [[1, 0, 0], [0, 1, 0], [1, -2, 3], [2, 1, -1]]) {
+    const q = norm(mulv(sim.model.ub, h)) / lam, q2 = norm(mulv(res.ubMantid, mulv(T, h)));
+    assert.ok(Math.abs(q - q2) < 1e-12, `${h}: ${q} vs ${q2}`);
+  }
+  cellFromUB(res.ubMantid).forEach((v, i) => assert.ok(Math.abs(v - g.cell[i]) < 1e-9));
+  // the strongest voxels sit on integer (H', K', L') with K' + H' even (C-centring of the orthohexagonal cell)
+  const v = finishVolume(res.acc), [nH, nK] = g.shape;
+  const order = Array.from(v.signal.keys()).filter((i) => v.signal[i] === v.signal[i]).sort((a, b) => v.signal[b] - v.signal[a]).slice(0, 15);
+  for (const i of order) {
+    const ih = i % nH, ik = Math.floor(i / nH) % nK, il = Math.floor(i / (nH * nK));
+    const hkl = [g.min[0] + ih * g.step, g.min[1] + ik * g.step, g.min[2] + il * g.step];
+    assert.ok(hkl.every((c) => Math.abs(c - Math.round(c)) <= g.step + 1e-9), `bright voxel at ${hkl}`);
+    assert.equal((Math.round(hkl[0]) + Math.round(hkl[1])) % 2 === 0, true, `H' + K' odd at ${hkl}`);
+  }
+});
+
+test('parallel workers give a bit-identical reduction (peaks, geometry, accumulators)', async () => {
+  const sim = simulateExperiment();
+  const lambda = sim.model.g.wavelength;
+  const U = mul(sim.model.ub.map((v) => v / lambda), inv3(bMatrix(...sim.model.cell)));
+  const ubStart = mul(mul(rot([0.3, -0.5, 0.8], 0.4), U), bMatrix(4.02, 4.02, 5.025, 90, 90, 120)).map((v) => v * lambda);
+  const source = () => {
+    const runs = new Map();
+    for (const fr of sim.frames) {
+      if (!runs.has(fr.run)) runs.set(fr.run, []);
+      runs.get(fr.run).push({ frame: fr.frame, read: async () => fr.bytes.buffer.slice(0) });
+    }
+    return { runs, ubCandidates: { start: ubStart }, laue: '6/m', label: 'simulated', monochromator: { theta: 6.07, plane: 'E1E3' } };
+  };
+  const opts = { transform: [2, 0, 0, 0, 2, 0, 0, 0, 2], step: 0.1, nSub: 5 };
+  const serial = await reduceRigaku(source(), fmt, opts);
+  const pool = new WorkerPool([0, 1, 2].map(() => nodeWorker(new URL('../js/rigaku-map-worker.js', import.meta.url))));
+  let par;
+  try {
+    await pool.ready();
+    par = await reduceRigaku(source(), fmt, opts, () => {}, pool);
+  } finally {
+    pool.terminate();
+  }
+  assert.equal(par.report.threads, 3);
+  assert.deepEqual(par.report.peaks, serial.report.peaks);
+  assert.deepEqual(par.model.ub, serial.model.ub);
+  assert.deepEqual(par.model.g, serial.model.g);
+  assert.deepEqual(par.report.mask, serial.report.mask);
+  for (const k of ['S', 'E2', 'W', 'N']) {
+    const a = serial.acc[k], b = par.acc[k];
+    assert.equal(a.length, b.length);
+    assert.ok(Buffer.from(a.buffer).equals(Buffer.from(b.buffer)), `${k} differs`);
+  }
+  assert.ok(serial.acc.N.some((v) => v > 0));
 });

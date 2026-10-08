@@ -3,10 +3,19 @@
 // MDHistoWorkspace as dataset A or as a comparison dataset, and offer it for download.
 
 import { isHKL } from './nexus.js';
+import { det3, parseFraction, parseTransform, transformCell } from './rigaku-geometry.js';
 
 const $ = (id) => document.getElementById(id);
 const fmt = (x, d = 3) => (Number.isFinite(x) ? Number(x.toFixed(d)).toString() : '—');
 const esc = (s) => String(s).replace(/[&<>"]/g, (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;' }[c]));
+
+// Output-cell presets: rows = new basis vectors in units of the refined cell's (a b c)
+const PRESETS = {
+  ub: [1, 0, 0, 0, 1, 0, 0, 0, 1],
+  x2: [2, 0, 0, 0, 2, 0, 0, 0, 2],
+  ortho: [1, 0, 0, 1, 2, 0, 0, 0, 1], // a' = a, b' = a + 2b, c' = c (hexagonal -> C-centred orthorhombic)
+};
+const isHexagonal = (c) => c && Math.abs(c[3] - 90) < 1 && Math.abs(c[4] - 90) < 1 && Math.abs(c[5] - 120) < 1 && Math.abs(c[0] - c[1]) / c[0] < 0.01;
 
 /**
  * `hooks`: openFile(file) opens a file as dataset A; openCompare(file) as the next comparison
@@ -40,7 +49,7 @@ export function setupRigaku(hooks) {
     const hkl = A && A.dims?.every(isHKL);
     $('rk-match-wrap').hidden = !hkl;
     $('rk-openas-wrap').hidden = !hooks.canCompare();
-    if (!hkl && $('rk-cell').dataset.value === 'match') select($('rk-cell'), 'ub');
+    if (!hkl && $('rk-cell').dataset.value === 'match') setPreset('ub');
     if (hooks.canCompare()) select($('rk-openas'), 'compare');
     if (summary) updateDefaults(); // dataset A may have changed (or finished loading) since
     dlg.showModal();
@@ -113,21 +122,60 @@ export function setupRigaku(hooks) {
     $('rk-runs').innerHTML = s.runs.map((r) => `<label class="rk-run"><input type="checkbox" data-run="${r.run}" checked>
       <span><b>${r.run}</b> ${r.frames} × ${fmt(r.width, 2)}° ${r.axis} ${fmt(r.start, 1)}→${fmt(r.end, 1)}°, κ ${fmt(r.kappa, 1)}°, φ ${fmt(r.phi, 2)}°, ${fmt(r.exposure, 2)} s${r.missing ? ` <span class="rk-bad">${r.missing} missing</span>` : ''}</span></label>`).join('');
     $('rk-options').hidden = false;
+    const hex = isHexagonal(Object.values(s.cells)[0]);
+    $('rk-ortho-wrap').hidden = !hex;
+    if (!hex && $('rk-cell').dataset.value === 'ortho') setPreset('ub');
     updateDefaults();
+  }
+
+  // ---- output cell ----------------------------------------------------------------
+  const matrixInputs = () => [...$('rk-matrix').querySelectorAll('input')].sort((a, b) => 3 * a.dataset.r + +a.dataset.c - (3 * b.dataset.r + +b.dataset.c));
+  const setMatrix = (N) => matrixInputs().forEach((el, i) => { el.value = String(Number(N[i].toPrecision(6))); el.classList.remove('bad'); });
+  const startCell = () => Object.values(summary?.cells ?? {})[0];
+  function matchMultiple() {
+    const A = hooks.datasetA(), c = startCell();
+    return A?.lattice && c ? Math.max(1, Math.round(A.lattice.a / c[0])) : 1;
+  }
+  function setPreset(value) {
+    select($('rk-cell'), value);
+    if (value === 'match') { const n = matchMultiple(); setMatrix([n, 0, 0, 0, n, 0, 0, 0, n]); } else if (PRESETS[value]) setMatrix(PRESETS[value]);
+  }
+  /** The transformation in the matrix editor, or an Error describing what is wrong with it. */
+  function readMatrix() {
+    const els = matrixInputs();
+    try {
+      const N = parseTransform(els.map((el) => el.value));
+      els.forEach((el) => el.classList.remove('bad'));
+      return N;
+    } catch (err) {
+      els.forEach((el) => el.classList.toggle('bad', !Number.isFinite(parseFraction(el.value))));
+      return err;
+    }
   }
 
   function updateDefaults() {
     const A = hooks.datasetA();
     const mode = $('rk-cell').dataset.value;
-    const firstCell = Object.values(summary?.cells ?? {})[0];
+    if (mode === 'match') setPreset('match'); // A may have changed since the preset was chosen
+    const N = readMatrix(), c = startCell();
+    if (N instanceof Error) {
+      $('rk-cell-note').textContent = N.message;
+      $('rk-cell-note').className = 'note error';
+      return;
+    }
+    $('rk-cell-note').className = 'note';
+    const d = det3(N), out = c ? transformCell(c, N) : null;
+    const cellText = out ? `a′ ${fmt(out[0])}, b′ ${fmt(out[1])}, c′ ${fmt(out[2])} Å, ${fmt(out[3], 2)}/${fmt(out[4], 2)}/${fmt(out[5], 2)}°, ${fmt(d, 4)} × the cell volume` : '';
     if (mode === 'match' && A?.lattice) {
       const e = A.dims[0].edges;
       $('rk-step').value = fmt(e[1] - e[0], 4);
-      $('rk-cell-note').textContent = `Output cell a ≈ ${fmt(A.lattice.a)} Å (dataset A); voxel centres on A's.`;
+      $('rk-cell-note').textContent = `Output cell ${cellText} (dataset A: a ≈ ${fmt(A.lattice.a)} Å); voxel centres on A's.`;
     } else {
-      const m = mode === 'x2' ? 2 : 1;
-      if (!$('rk-step').dataset.touched) $('rk-step').value = fmt(0.05 * m, 3);
-      $('rk-cell-note').textContent = firstCell ? `Output cell a ≈ ${fmt(m * firstCell[0])} Å, c ≈ ${fmt(m * firstCell[2])} Å (CrysAlis UB; refined in the reduction).` : '';
+      if (!$('rk-step').dataset.touched) {
+        const r = Math.cbrt(d), f = r >= 1 ? Math.round(r) : 1 / Math.max(1, Math.round(1 / r));
+        $('rk-step').value = fmt(0.05 * f, 4);
+      }
+      $('rk-cell-note').textContent = out ? `Output cell ${cellText} (from the CrysAlis UB; refined in the reduction). Indices: H′ = T·(h, k, l).` : '';
     }
   }
 
@@ -140,13 +188,14 @@ export function setupRigaku(hooks) {
     };
     if (!(opts.step > 0)) throw new Error('The voxel size must be positive.');
     const mode = $('rk-cell').dataset.value, A = hooks.datasetA();
-    if (mode === 'x2') opts.multiplier = 2;
-    else if (mode === 'ub') opts.multiplier = 1;
-    else if (mode === 'match') {
+    if (mode === 'match') setPreset('match');
+    const N = readMatrix();
+    if (N instanceof Error) throw new Error(`Output cell: ${N.message}`);
+    opts.transform = N;
+    if (mode === 'match') {
       if (!A?.lattice || !A.dims?.every(isHKL)) throw new Error('Dataset A is not open yet, or has no HKL axes and cell to match.');
       // A's edges may carry float32 rounding (0.10000038): keep 6 significant digits
       const round6 = (x) => Number(x.toPrecision(6));
-      opts.targetA = A.lattice.a;
       opts.origin = A.dims.map((d) => round6(0.5 * (d.edges[0] + d.edges[1])));
       if (!$('rk-step').dataset.touched) opts.step = round6(A.dims[0].edges[1] - A.dims[0].edges[0]);
     }
@@ -170,8 +219,9 @@ export function setupRigaku(hooks) {
       ['Frames', `${r.frames.toLocaleString()} (runs ${r.runs.join(', ')}); all match their header statistics; max ${r.frameCheck.maxPixelCounts.toLocaleString()} counts/pixel`],
       ['Mask', `${(100 * r.mask.maskedFraction).toFixed(1)} % of pixels (beamstop ${r.mask.beamstopPixels.toLocaleString()}, chip lines ${r.mask.boundaryColumns.length} + ${r.mask.boundaryRows.length}, dead ${r.mask.deadPixels})`],
       ['Peaks', `${r.peaks.found} found, ${r.peaks.clean} clear of the mask; ${r.indexed} indexed with ${esc(r.startUB)} (${Object.entries(r.ubCandidates).map(([k, v]) => `${esc(k)} ${(100 * v).toFixed(0)} %`).join(', ')})`],
-      ['Geometry', L ? `refined: rms ${fmt(L.rmsX, 2)} / ${fmt(L.rmsY, 2)} px, ${fmt(L.rmsAngle, 3)}° (median ${fmt(L.medX, 2)} / ${fmt(L.medY, 2)} px, ${fmt(L.medAngle, 3)}°)${r.geometry.levels.L10a.driftRuns?.length ? `; drift in run ${r.geometry.levels.L10a.driftRuns.join(', ')}` : ''}` : 'header model, not refined'],
-      ['Cell', `a ${fmt(r.cell[0], 4)}, b ${fmt(r.cell[1], 4)}, c ${fmt(r.cell[2], 4)} Å, ${fmt(r.cell[3], 2)}/${fmt(r.cell[4], 2)}/${fmt(r.cell[5], 2)}° (${esc(r.geometry.system ?? '')}); output = ${r.grid.multiplier} × this cell`],
+      ['Geometry', `${L ? `refined: rms ${fmt(L.rmsX, 2)} / ${fmt(L.rmsY, 2)} px, ${fmt(L.rmsAngle, 3)}° (median ${fmt(L.medX, 2)} / ${fmt(L.medY, 2)} px, ${fmt(L.medAngle, 3)}°)${r.geometry.levels.L10a.driftRuns?.length ? `; drift in run ${r.geometry.levels.L10a.driftRuns.join(', ')}` : ''}` : 'header model, not refined'}; detector distance ${fmt(r.model.geometry.distance, 3)} mm (header calibration)`],
+      ['Cell', `a ${fmt(r.cell[0], 4)}, b ${fmt(r.cell[1], 4)}, c ${fmt(r.cell[2], 4)} Å, ${fmt(r.cell[3], 2)}/${fmt(r.cell[4], 2)}/${fmt(r.cell[5], 2)}° (${esc(r.geometry.system ?? '')})`],
+      ['Output cell', `a′ ${fmt(r.grid.cell[0], 4)}, b′ ${fmt(r.grid.cell[1], 4)}, c′ ${fmt(r.grid.cell[2], 4)} Å, ${fmt(r.grid.cell[3], 2)}/${fmt(r.grid.cell[4], 2)}/${fmt(r.grid.cell[5], 2)}°; ${r.grid.multiplier ? `${r.grid.multiplier} × the cell` : `T = ${[0, 3, 6].map((i) => `(${r.grid.transform.slice(i, i + 3).map((v) => fmt(v, 4)).join(', ')})`).join(' ')}`}`],
       ['Grid', `${r.grid.shape.join(' × ')} voxels of ${r.grid.step} r.l.u.; ${r.covered.toLocaleString()} measured (${r.measuredZero.toLocaleString()} with zero counts)`],
       ['Signal', esc(r.normalization)],
       ['Time', `${r.seconds.toFixed(0)} s`],
@@ -206,8 +256,14 @@ export function setupRigaku(hooks) {
     for (const b of seg.querySelectorAll('button')) b.classList.toggle('on', b.dataset.value === value);
   }
   for (const seg of dlg.querySelectorAll('.segmented')) {
-    for (const b of seg.querySelectorAll('button')) b.onclick = () => { select(seg, b.dataset.value); if (seg.id === 'rk-cell') updateDefaults(); };
+    for (const b of seg.querySelectorAll('button')) {
+      b.onclick = () => {
+        if (seg.id === 'rk-cell') { setPreset(b.dataset.value); updateDefaults(); } else select(seg, b.dataset.value);
+      };
+    }
   }
+  // editing the matrix leaves the presets (and their step defaults stay unless touched)
+  for (const el of matrixInputs()) el.oninput = () => { select($('rk-cell'), 'custom'); updateDefaults(); };
   $('rk-step').oninput = () => { $('rk-step').dataset.touched = '1'; };
   $('rk-cancel').onclick = () => {
     if (worker && $('rk-cancel').textContent === 'Cancel') {

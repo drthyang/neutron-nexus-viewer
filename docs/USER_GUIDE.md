@@ -34,13 +34,19 @@ The histogram is held in memory as float32. A 401³ volume needs about 260 MB an
    - whether the first frame decodes to the statistics in its header.
 2. **Choose the options:**
    - **Runs**: untick runs to leave them out.
-   - **Output cell**: the indexing of the volume. *CrysAlis cell* indexes in the refined cell. *2 × 2 × 2 cell* doubles every index, as in neutron reductions that use a doubled cell. *Match dataset A* (when a volume is open) takes the multiple from A's cell and puts the voxel centres on A's, so the two compare voxel by voxel.
+   - **Output cell**: the indexing of the volume, as a transformation of the refined cell. Each row of the matrix is an output basis vector in units of a, b, c: a′ = 1 0 0 is a, and b′ = 1 2 0 is a + 2b. Entries may be fractions such as 1/2. The note below shows the resulting cell. Presets:
+     - *CrysAlis cell*: the identity.
+     - *2 × 2 × 2 cell*: doubles every index, as in neutron reductions that use a doubled cell.
+     - *Orthohexagonal*: for hexagonal cells.
+     - *Match dataset A*: when a volume is open, takes the multiple from A's cell and puts the voxel centres on A's, so the two compare voxel by voxel.
+
+     A transformation that would invert the handedness is refused.
    - **Voxel**: the bin width in output r.l.u. The default, 0.05 in the CrysAlis cell, is about the width of the Bragg peaks and of a 0.5° frame at high Q.
    - **Steps per frame**: each frame's rotation is split into this many steps sharing its counts.
    - **Normalization**: *Solid angle + polarization* (the default) divides by each pixel's solid angle and the polarization factor. *Exposure only* gives counts per second per pixel.
-   - **Refine the geometry**: fits the detector, goniometer offsets and orientation (per run) to the Bragg peaks in the frames, starting from the best CrysAlisPro matrix. Turn it off only to see the stored model as it is.
+   - **Refine the geometry**: fits the beam centre, detector rotation, goniometer offsets and orientation (per run) to the Bragg peaks in the frames, starting from the best CrysAlisPro matrix. The detector distance stays at its calibrated header value, which sets the absolute cell scale. Turn refinement off only to see the stored model as it is.
    - **Open the result**: as a new dataset, or to compare with the open one.
-3. **Reduce.** The frames are read three times: for the detector mask, for the Bragg peaks, and for the mapping. Expect about half a minute per thousand frames on a recent laptop (3,608 frames took 2 minutes) and 1–1.5 GB of memory. *Cancel* stops it.
+3. **Reduce.** The frames are read three times: for the detector mask, for the Bragg peaks, and for the mapping. The work is spread over the computer's cores, with the same result as a single-core run. Expect about 40 s for 3,608 frames on an 8-core laptop, and about 1.5 GB of memory. *Cancel* stops it.
 
 The report lists:
 - the frame checks and the mask;

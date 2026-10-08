@@ -6,12 +6,16 @@
 //   2. 3-D peak search (strong pixels joined across neighbouring pixels and frames)
 //   3. after refining the geometry against the peaks (rigaku-geometry.js), every
 //      unmasked pixel of every frame is binned into the grid
+// With a WorkerPool (rigaku-pool.js) the per-frame work of each pass runs in parallel
+// workers (rigaku-map-worker.js) and is merged so that the result is bit-identical to the
+// serial path: integer sums are exact in any order, the peak search runs one whole run per
+// worker, and the gridding contributions are added in frame and pixel order by one thread.
 // The method, its parameters and its validation against the reference Python
 // implementation are described in docs/METHOD.md (Rigaku reduction).
 
 import {
-  CELL_SYSTEMS, DEG, M_CRYSALIS, bMatrix, cellFromUB, crystalSystem, gonio, headerGeometry, inv3, levenbergMarquardt,
-  mul, mulv, pixelToLab, polarU, predict, prepare, samplePosition, smallRot, transpose,
+  CELL_SYSTEMS, DEG, M_CRYSALIS, bMatrix, cellFromUB, crystalSystem, det3, gonio, headerGeometry, inv3, levenbergMarquardt,
+  mul, mulv, pixelToLab, polarU, predict, prepare, samplePosition, smallRot, transformCell, transpose,
 } from './rigaku-geometry.js';
 
 // ---- Small image tools ----------------------------------------------------------
@@ -342,9 +346,11 @@ export function indexPeaks(G, ub, peaks, tol = 0.15) {
 /**
  * Refine the instrument model and orientation against indexed peaks (each with x, y,
  * run, angles = header [omega, theta, kappa, phi] at the peak, axis = scan axis).
- * Levels as in docs/METHOD.md: L3 (orientation, cell, beam centre, distance, d1, scan
- * zero), L6 (+ crystal offset, kappa zero), L10 (goniometer fixed, one orientation per
- * run, drift knots for runs that still disagree).
+ * Levels as in docs/METHOD.md: L3 (orientation, cell, beam centre, d1, scan zero), L6
+ * (+ crystal offset, kappa zero), L10 (goniometer fixed, one orientation per run, drift
+ * knots for runs that still disagree). The detector distance stays at the header's
+ * calibrated value: the peaks fix only cell / distance, so refining it would move the
+ * absolute cell scale without improving the fit.
  */
 export function refineGeometry(peaks, g0, ub0, { system = 'triclinic', onProgress = () => {} } = {}) {
   const sys = CELL_SYSTEMS[system];
@@ -415,7 +421,7 @@ export function refineGeometry(peaks, g0, ub0, { system = 'triclinic', onProgres
   };
 
   const report = { referenceRun: ref, peaksPerRun: Object.fromEntries(counts), system, levels: {} };
-  const det = ['ox', 'oy', 'distance'];
+  const det = ['ox', 'oy']; // distance fixed (see above)
   const scan0 = peaks[0]?.axis === 3 ? 'phiOffset' : 'omegaOffset';
   const L3 = fit({ g: g0, free: [...det, 'd1', scan0], perRun: [], drift: new Map() }, peaks, 'Refining the detector and orientation (L3)');
   report.levels.L3 = L3.stats;
@@ -483,44 +489,219 @@ export function makeAccumulators(grid) {
  * before squaring for the variance, so split counts are not treated as independent.
  */
 export function accumulateFrame(acc, grid, x, c, w, A) {
-  const { S, E2, W, N } = acc;
+  const vox = new Int32Array(c.length);
+  applyFrame(acc, vox, c, w, indexFrame(grid, x, A, vox), A.length);
+}
+
+/**
+ * The voxels of one frame's pixels: vox[p] is the voxel index when all sub-samples of pixel p
+ * fall in one voxel (-1 when that is outside the grid), else -2, and the pixel's nsub voxel
+ * indices (-1 outside) follow, in pixel order, in the returned array.
+ */
+export function indexFrame(grid, x, A, vox) {
   const [nH, nK, nL] = grid.shape, step = grid.step, [h0, k0, l0] = grid.min;
-  const nsub = A.length, idx = new Int32Array(nsub), np = c.length;
+  const nsub = A.length, np = vox.length;
+  const a = new Float64Array(9 * nsub); // all sub-sample matrices in one typed array
+  for (let k = 0; k < nsub; k++) a.set(A[k], 9 * k);
+  let split = new Int32Array(1 << 16), ns = 0;
   for (let p = 0; p < np; p++) {
     const x0 = x[3 * p], x1 = x[3 * p + 1], x2 = x[3 * p + 2];
-    for (let k = 0; k < nsub; k++) {
-      const a = A[k];
-      const ih = Math.floor(((a[0] * x0 + a[1] * x1 + a[2] * x2) - h0) / step + 0.5);
-      const ik = Math.floor(((a[3] * x0 + a[4] * x1 + a[5] * x2) - k0) / step + 0.5);
-      const il = Math.floor(((a[6] * x0 + a[7] * x1 + a[8] * x2) - l0) / step + 0.5);
-      idx[k] = ih < 0 || ih >= nH || ik < 0 || ik >= nK || il < 0 || il >= nL ? -1 : (il * nK + ik) * nH + ih;
+    if (ns + nsub > split.length) { const grown = new Int32Array(2 * split.length); grown.set(split); split = grown; }
+    let same = true, first = 0;
+    for (let k = 0, o = 0; k < nsub; k++, o += 9) {
+      const ih = Math.floor(((a[o] * x0 + a[o + 1] * x1 + a[o + 2] * x2) - h0) / step + 0.5);
+      const ik = Math.floor(((a[o + 3] * x0 + a[o + 4] * x1 + a[o + 5] * x2) - k0) / step + 0.5);
+      const il = Math.floor(((a[o + 6] * x0 + a[o + 7] * x1 + a[o + 8] * x2) - l0) / step + 0.5);
+      const v = ih < 0 || ih >= nH || ik < 0 || ik >= nK || il < 0 || il >= nL ? -1 : (il * nK + ik) * nH + ih;
+      if (k === 0) first = v;
+      else if (v !== first) same = false;
+      split[ns + k] = v;
     }
+    if (same) vox[p] = first; // the usual case: the whole frame sweep stays in one voxel
+    else { vox[p] = -2; ns += nsub; }
+  }
+  return split.slice(0, ns);
+}
+
+/**
+ * A split pixel's voxels (its nsub entries from split[o]): fn(u, m) for each voxel u inside the
+ * grid, at its first occurrence, with the number m of sub-samples that fell in it.
+ */
+function splitTerms(split, o, nsub, fn) {
+  for (let k = 0; k < nsub; k++) {
+    const u = split[o + k];
+    if (u < 0) continue;
+    let seen = false;
+    for (let q = 0; q < k; q++) if (split[o + q] === u) { seen = true; break; }
+    if (seen) continue;
+    let m = 1;
+    for (let q = k + 1; q < nsub; q++) if (split[o + q] === u) m++;
+    fn(u, m);
+  }
+}
+
+/** Add one frame's contributions (indexFrame) to the accumulators, in pixel order. */
+export function applyFrame(acc, vox, c, w, split, nsub) {
+  const { S, E2, W, N } = acc, np = vox.length;
+  let o = 0;
+  for (let p = 0; p < np; p++) {
+    const v = vox[p];
+    if (v >= 0) { const cp = c[p]; S[v] += cp; E2[v] += cp; W[v] += w[p]; N[v] += 1; continue; }
+    if (v === -1) continue;
     const cp = c[p], wp = w[p];
-    for (let k = 0; k < nsub; k++) {
-      const v = idx[k];
-      if (v < 0) continue;
-      let seen = false;
-      for (let q = 0; q < k; q++) if (idx[q] === v) { seen = true; break; }
-      if (seen) continue;
-      let m = 1;
-      for (let q = k + 1; q < nsub; q++) if (idx[q] === v) m++;
+    splitTerms(split, o, nsub, (u, m) => {
       const f = m / nsub;
-      S[v] += f * cp;
-      E2[v] += f * f * cp;
-      W[v] += f * wp;
-      N[v] += 1;
+      S[u] += f * cp;
+      E2[u] += f * f * cp;
+      W[u] += f * wp;
+      N[u] += 1;
+    });
+    o += nsub;
+  }
+}
+
+/**
+ * One frame's contributions as records grouped by voxel block (for the parallel path): voxel
+ * v[r] gets s[r] counts, e[r] variance and w[r] weight, exactly the terms applyFrame adds.
+ * Records are ordered by block of 4096 voxels (a stable counting sort), so each voxel still
+ * receives its terms in pixel order, as in applyFrame: the sums are bit-identical, and adding
+ * the records stays within a cache-sized part of the accumulators at a time.
+ */
+export function frameRecords(vox, c, w, split, nsub, nvox) {
+  const np = vox.length, start = new Int32Array((nvox >>> 12) + 2);
+  // count the terms per block ...
+  for (let p = 0, o = 0; p < np; p++) {
+    const v = vox[p];
+    if (v >= 0) start[(v >>> 12) + 1]++;
+    else if (v === -2) { splitTerms(split, o, nsub, (u) => { start[(u >>> 12) + 1]++; }); o += nsub; }
+  }
+  for (let b = 1; b < start.length; b++) start[b] += start[b - 1];
+  // ... then place them in pixel order, as applyFrame adds them (stable within each block)
+  const n = start[start.length - 1];
+  const out = { v: new Int32Array(n), s: new Float64Array(n), e: new Float64Array(n), w: new Float64Array(n) };
+  const put = (u, sv, ev, wv) => { const j = start[u >>> 12]++; out.v[j] = u; out.s[j] = sv; out.e[j] = ev; out.w[j] = wv; };
+  for (let p = 0, o = 0; p < np; p++) {
+    const v = vox[p];
+    if (v >= 0) put(v, c[p], c[p], w[p]);
+    else if (v === -2) {
+      const cp = c[p], wp = w[p];
+      splitTerms(split, o, nsub, (u, m) => { const f = m / nsub; put(u, f * cp, f * f * cp, f * wp); });
+      o += nsub;
     }
   }
+  return out;
+}
+
+/** Add records (frameRecords) to the accumulators. */
+export function applyRecords(acc, rec) {
+  const { S, E2, W, N } = acc, { v, s, e, w } = rec, n = v.length;
+  for (let r = 0; r < n; r++) { const u = v[r]; S[u] += s[r]; E2[u] += e[r]; W[u] += w[r]; N[u] += 1; }
+}
+
+// ---- Per-frame work of each pass, shared by the serial path and rigaku-map-worker.js ----
+
+/** Pass 1, one frame: check and decode it, and add its counts to the per-pixel sums. */
+export function sumFrame(fmt, buf, h, img, sums, run, label) {
+  const { nx, ny, sum, counted } = sums;
+  if (h.nx !== nx || h.ny !== ny) throw new Error(`frame ${label}: ${h.nx} x ${h.ny} pixels, expected ${nx} x ${ny}`);
+  if (h.scanAxis !== 0 && h.scanAxis !== 3) throw new Error(`frame ${label}: scan axis ${h.scanAxis} is not omega or phi`);
+  fmt.decodeTY6(buf, h, img);
+  if (!fmt.checkStats(h, img)) throw new Error(`frame ${label}: decoded pixels do not match the header statistics`);
+  let rs = sums.runSum.get(run);
+  if (!rs) sums.runSum.set(run, (rs = new Float64Array(nx * ny)));
+  for (let k = 0; k < img.length; k++) { const v = img[k]; sum[k] += v; rs[k] += v; if (v > 0) counted[k] = 1; }
+}
+
+export const makeSums = (nx, ny) => ({ nx, ny, sum: new Float64Array(nx * ny), counted: new Uint8Array(nx * ny), runSum: new Map() });
+
+/** Merge per-worker pass-1 sums (integer counts, so the order of addition does not matter). */
+export function mergeSums(into, part) {
+  for (let k = 0; k < into.sum.length; k++) { into.sum[k] += part.sum[k]; into.counted[k] |= part.counted[k]; }
+  for (const [run, rs] of part.runSum) {
+    const t = into.runSum.get(run);
+    if (!t) into.runSum.set(run, rs);
+    else for (let k = 0; k < t.length; k++) t[k] += rs[k];
+  }
+}
+
+/** Pass 2, one run: its Bragg peaks, from its frames in order. */
+export function runPeaks(fmt, bufs, hs, mask, bg, nx, ny) {
+  const ps = new PeakSearch(nx, ny, mask, bg), img = new Int32Array(nx * ny);
+  for (let k = 0; k < bufs.length; k++) { fmt.decodeTY6(bufs[k], hs[k], img); ps.addFrame(img); }
+  return ps.peaks();
+}
+
+/**
+ * Pass 3 context from plain data that a worker can receive: setup = { nx, ny, unmasked
+ * (Int32Array of pixel indices), model ({ g, ub, perRun, drift }), T, nSub, sap, mono }.
+ */
+export function mapContext(setup) {
+  const { nx, ny, unmasked, model } = setup, np = unmasked.length;
+  const G = prepare(model.g);
+  const lab = new Float64Array(3 * np);
+  for (let p = 0; p < np; p++) { const k = unmasked[p]; lab.set(pixelToLab(G, k % nx, Math.floor(k / nx)), 3 * p); }
+  const px2 = model.g.pixelMM ** 2;
+  const deltaOf = (run, angle) => {
+    if (model.drift.has(run)) {
+      const { knots, vals } = model.drift.get(run);
+      const t = Math.min(Math.max(angle, knots[0]), knots.at(-1));
+      let k = 0;
+      while (k < knots.length - 2 && t > knots[k + 1]) k++;
+      const f = (t - knots[k]) / (knots[k + 1] - knots[k] || 1);
+      return [0, 1, 2].map((q) => vals[k][q] + f * (vals[k + 1][q] - vals[k][q]));
+    }
+    return model.perRun.get(run) ?? [0, 0, 0];
+  };
+  return {
+    ...setup, G, np, lab, normal: G.normal, px2, omegaRef: px2 / model.g.distance ** 2, pol: polarizationModel(setup.mono),
+    UBinvM: mul(inv3(model.ub), M_CRYSALIS), deltaOf, img: new Int32Array(nx * ny),
+  };
+}
+
+/**
+ * Pass 3, one frame: decode it, fill out.x (lab scattering vectors), out.c (counts) and out.w
+ * (normalization weights) for the unmasked pixels, and return the sub-sample matrices A.
+ */
+export function mapFrame(ctx, fmt, buf, h, run, out) {
+  const { G, np, lab, unmasked, img, normal, px2, omegaRef, pol, sap, nSub, T, UBinvM, deltaOf } = ctx;
+  const { x, c, w } = out;
+  fmt.decodeTY6(buf, h, img);
+  const axis = h.scanAxis, a0 = h.start[axis], a1 = h.end[axis];
+  const mid = h.start.slice(0, 4);
+  mid[axis] = 0.5 * (a0 + a1);
+  const cpos = samplePosition(G, gonio(G, mid[0], mid[2], mid[3]));
+  for (let p = 0; p < np; p++) {
+    const Dx = lab[3 * p] - cpos[0], Dy = lab[3 * p + 1] - cpos[1], Dz = lab[3 * p + 2] - cpos[2];
+    const r = Math.sqrt(Dx * Dx + Dy * Dy + Dz * Dz), sx = Dx / r, sy = Dy / r, sz = Dz / r;
+    x[3 * p] = sx; x[3 * p + 1] = sy; x[3 * p + 2] = sz + 1;
+    c[p] = img[unmasked[p]];
+    if (sap) {
+      const dOmega = px2 * (sx * normal[0] + sy * normal[1] + sz * normal[2]) / (r * r);
+      w[p] = h.exposure * dOmega * pol(sx, sy, sz) / omegaRef;
+    } else w[p] = h.exposure;
+  }
+  const A = [];
+  for (let k = 0; k < nSub; k++) {
+    const ang = mid.slice();
+    ang[axis] = a0 + (k + 0.5) / nSub * (a1 - a0);
+    const R = gonio(G, ang[0], ang[2], ang[3]);
+    A.push(mul(mul(mul(T, UBinvM), transpose(smallRot(deltaOf(run, ang[axis])))), transpose(R)));
+  }
+  return A;
 }
 
 // Graphite monochromator polarization (see docs/METHOD.md): sigma along lab X when the
 // monochromator's scattering plane is CrysAlis E1E3 (lab Y-Z), along Y for E1E2.
 export function polarizationFactor(s, mono) {
-  if (!mono || !(mono.theta > 0)) return 0.5 * (1 + (s[2] * s[2])); // unpolarized: (1 + cos^2 2theta) / 2
+  return polarizationModel(mono)(s[0], s[1], s[2]);
+}
+
+/** polarizationFactor as a function of the unit vector's components, constants worked out once. */
+export function polarizationModel(mono) {
+  if (!mono || !(mono.theta > 0)) return (sx, sy, sz) => 0.5 * (1 + (sz * sz)); // unpolarized: (1 + cos^2 2theta) / 2
   const c2 = Math.cos(2 * mono.theta * DEG) ** 2;
-  const sigmaX = !/E1E2/i.test(mono.plane ?? '');
-  const ps = sigmaX ? 1 - s[0] * s[0] : 1 - s[1] * s[1], pp = sigmaX ? 1 - s[1] * s[1] : 1 - s[0] * s[0];
-  return (ps + c2 * pp) / (1 + c2);
+  if (/E1E2/i.test(mono.plane ?? '')) return (sx, sy) => ((1 - sy * sy) + c2 * (1 - sx * sx)) / (1 + c2);
+  return (sx, sy) => ((1 - sx * sx) + c2 * (1 - sy * sy)) / (1 + c2);
 }
 
 // ---- Mantid MDHistoWorkspace (SaveMD version 2) ------------------------------------------
@@ -641,14 +822,18 @@ export const HYPIX3000_BOUNDARIES = {
  * Reduce a CrysAlisPro experiment. `source` = { runs: Map(run -> [{ frame, read: async
  * () => ArrayBuffer }]), ubCandidates: { name: ub9 }, laue, monochromator, temperature,
  * label }, with parseRodHeader/decodeTY6 passed in `fmt`. Options:
- *   runs (array, default all), multiplier (output index = multiplier x UB-cell index),
- *   step (output r.l.u.), origin (a voxel centre), range ({min, max} in output r.l.u.,
+ *   runs (array, default all), transform (row-major 3x3, rows = output basis vectors in
+ *   units of the refined cell's: a'_i = sum_j T_ij a_j, so output indices are T x refined
+ *   indices; determinant > 0), or multiplier (transform = multiplier x identity), or targetA
+ *   (multiplier = round(targetA / a)); step (output r.l.u.), origin (a voxel centre), range ({min, max} in output r.l.u.,
  *   default: everything the detector reaches), nSub (sub-samples per frame, 5),
  *   normalization ('sap': solid angle + polarization, or 'rate'), refine (true),
  *   boundaries (extra chip-boundary lines).
+ * `pool` (a WorkerPool of rigaku-map-worker.js) runs the per-frame work in parallel with
+ * bit-identical results.
  * Returns { acc, grid, model, report } (see writeReduced to make the NeXus file).
  */
-export async function reduceRigaku(source, fmt, opts = {}, onProgress = () => {}) {
+export async function reduceRigaku(source, fmt, opts = {}, onProgress = () => {}, pool = null) {
   const t0 = Date.now();
   const runIds = (opts.runs ?? [...source.runs.keys()]).filter((r) => source.runs.has(r));
   const frames = runIds.flatMap((r) => source.runs.get(r).map((f) => ({ ...f, run: r })));
@@ -658,25 +843,32 @@ export async function reduceRigaku(source, fmt, opts = {}, onProgress = () => {}
   const total = 3 * frames.length;
   const tick = (label) => onProgress(label, ++done / total);
 
+  report.threads = pool ? pool.size : 1;
+
   // Pass 1: sums, headers
   const first = fmt.parseRodHeader(await frames[0].read());
   const { nx, ny } = first;
-  const sum = new Float64Array(nx * ny), counted = new Uint8Array(nx * ny);
-  const runSum = new Map(runIds.map((r) => [r, new Float64Array(nx * ny)]));
-  const headers = [];
-  let img = new Int32Array(nx * ny);
-  for (const f of frames) {
-    const buf = await f.read();
-    const h = fmt.parseRodHeader(buf);
-    if (h.nx !== nx || h.ny !== ny) throw new Error(`frame ${f.run}_${f.frame}: ${h.nx} x ${h.ny} pixels, expected ${nx} x ${ny}`);
-    if (h.scanAxis !== 0 && h.scanAxis !== 3) throw new Error(`frame ${f.run}_${f.frame}: scan axis ${h.scanAxis} is not omega or phi`);
-    fmt.decodeTY6(buf, h, img);
-    if (!fmt.checkStats(h, img)) throw new Error(`frame ${f.run}_${f.frame}: decoded pixels do not match the header statistics`);
-    const rs = runSum.get(f.run);
-    for (let k = 0; k < img.length; k++) { const v = img[k]; sum[k] += v; rs[k] += v; if (v > 0) counted[k] = 1; }
-    headers.push(h);
-    tick('Reading frames (1 of 3)');
+  const sums = makeSums(nx, ny);
+  const headers = new Array(frames.length);
+  const img = new Int32Array(nx * ny);
+  const label1 = 'Reading frames (1 of 3)';
+  if (pool) {
+    await pool.all({ type: 'sum-begin', nx, ny });
+    await pool.ordered(frames.length, async (i) => {
+      const f = frames[i], buf = await f.read();
+      return { msg: { type: 'sum', buf, run: f.run, label: `${f.run}_${f.frame}` }, transfer: [buf] };
+    }, (i, d) => { headers[i] = d.h; tick(label1); });
+    for (const part of await pool.all({ type: 'sum-end' })) mergeSums(sums, part);
+  } else {
+    for (let i = 0; i < frames.length; i++) {
+      const f = frames[i], buf = await f.read();
+      const h = fmt.parseRodHeader(buf);
+      sumFrame(fmt, buf, h, img, sums, f.run, `${f.run}_${f.frame}`);
+      headers[i] = h;
+      tick(label1);
+    }
   }
+  const { sum, counted, runSum } = sums;
   const maxCounts = Math.max(...headers.map((h) => h.stat.max));
   report.frameCheck = { decoded: frames.length, statsMatched: frames.length, maxPixelCounts: maxCounts,
     atOverflow: headers.filter((h) => h.stat.max >= h.overflowThreshold).length };
@@ -694,26 +886,41 @@ export async function reduceRigaku(source, fmt, opts = {}, onProgress = () => {}
   const g0 = headerGeometry(first);
   if (opts.model) done += frames.length;
   const peaks = [];
-  let fi = 0;
-  for (const r of opts.model ? [] : runIds) {
-    const list = source.runs.get(r), n = list.length;
-    const bg = Float64Array.from(runSum.get(r), (v) => v / n);
-    const ps = new PeakSearch(nx, ny, mask, bg);
-    const hs = headers.slice(fi, fi + n);
-    for (let k = 0; k < n; k++) {
-      const buf = await list[k].read();
-      fmt.decodeTY6(buf, hs[k], img);
-      ps.addFrame(img);
-      tick('Finding Bragg peaks (2 of 3)');
+  const peakRuns = opts.model ? [] : runIds, label2 = 'Finding Bragg peaks (2 of 3)';
+  const runStart = []; // index of each run's first frame in frames / headers
+  for (let i = 0, fi = 0; i < runIds.length; fi += source.runs.get(runIds[i]).length, i++) runStart.push(fi);
+  const runFound = new Array(peakRuns.length);
+  const background = (r) => Float64Array.from(runSum.get(r), (v) => v / source.runs.get(r).length);
+  if (pool) {
+    await pool.ordered(peakRuns.length, async (ri) => {
+      const r = peakRuns[ri], list = source.runs.get(r), fi = runStart[runIds.indexOf(r)];
+      const bufs = await Promise.all(list.map((f) => f.read())), bg = background(r);
+      return { msg: { type: 'peaks', bufs, hs: headers.slice(fi, fi + list.length), mask, bg, nx, ny }, transfer: [...bufs, bg.buffer] };
+    }, (ri, d) => {
+      runFound[ri] = d.peaks;
+      done += source.runs.get(peakRuns[ri]).length;
+      onProgress(label2, done / total);
+    }, 1);
+  } else {
+    for (let ri = 0; ri < peakRuns.length; ri++) {
+      const r = peakRuns[ri], list = source.runs.get(r), fi = runStart[runIds.indexOf(r)];
+      const ps = new PeakSearch(nx, ny, mask, background(r));
+      for (let k = 0; k < list.length; k++) {
+        fmt.decodeTY6(await list[k].read(), headers[fi + k], img);
+        ps.addFrame(img);
+        tick(label2);
+      }
+      runFound[ri] = ps.peaks();
     }
-    const h0 = hs[0], axis = h0.scanAxis, width = h0.end[axis] - h0.start[axis];
-    for (const p of ps.peaks()) {
+  }
+  peakRuns.forEach((r, ri) => {
+    const h0 = headers[runStart[runIds.indexOf(r)]], axis = h0.scanAxis, width = h0.end[axis] - h0.start[axis];
+    for (const p of runFound[ri]) {
       const angles = h0.start.slice(0, 4);
       angles[axis] = h0.start[axis] + width * p.z;
       peaks.push({ ...p, run: r, axis, angles });
     }
-    fi += n;
-  }
+  });
   const clean = peaks.filter((p) => !p.touchesMask);
   report.peaks = { found: peaks.length, clean: clean.length };
 
@@ -756,10 +963,14 @@ export async function reduceRigaku(source, fmt, opts = {}, onProgress = () => {}
 
   // Grid
   const G = prepare(model.g);
-  // output index = m x index of the refined cell; `targetA` picks m to match a cell length
+  // output indices = T x indices of the refined cell (T = m x identity for a multiple)
   const m = opts.multiplier ?? (opts.targetA ? Math.max(1, Math.round(opts.targetA / model.cell[0])) : 1);
-  const T = [m, 0, 0, 0, m, 0, 0, 0, m];
-  const step = opts.step ?? 0.05 * m;
+  const T = opts.transform ? [...opts.transform] : [m, 0, 0, 0, m, 0, 0, 0, m];
+  const detT = det3(T);
+  if (!(detT > 1e-9)) throw new Error('The output-cell transformation must have a positive determinant.');
+  const cellOut = transformCell(model.cell, T);
+  const isMultiple = T.every((v, i) => (i % 4 === 0 ? v === T[0] : v === 0));
+  const step = opts.step ?? 0.05 * Math.cbrt(detT);
   let maxX = 0;
   for (let k = 0; k < nx * ny; k++) {
     if (mask[k]) continue;
@@ -767,69 +978,42 @@ export async function reduceRigaku(source, fmt, opts = {}, onProgress = () => {}
     maxX = Math.max(maxX, Math.hypot(P[0] / n, P[1] / n, P[2] / n + 1));
   }
   const qmax = maxX / model.g.wavelength;
-  const lengths = [0, 1, 2].map((i) => m * model.cell[i]);
+  const lengths = cellOut.slice(0, 3);
   const reach = lengths.map((a) => Math.ceil(qmax * a / step) * step);
   const range = opts.range ?? { min: reach.map((v) => -v), max: reach };
   const grid = makeGrid(range.min, range.max, step, opts.origin ?? [0, 0, 0]);
   const nvox = grid.shape[0] * grid.shape[1] * grid.shape[2];
   if (nvox > (opts.maxVoxels ?? 6e7)) throw new Error(`${nvox.toLocaleString()} voxels: use a larger voxel or a smaller range.`);
-  report.grid = { ...grid, voxels: nvox, qmax, multiplier: m };
+  report.grid = { ...grid, voxels: nvox, qmax, transform: T, multiplier: isMultiple ? T[0] : null, cell: cellOut };
   const acc = makeAccumulators(grid);
 
   // Pass 3: gridding
   const unmasked = [];
   for (let k = 0; k < nx * ny; k++) if (!mask[k]) unmasked.push(k);
-  const np = unmasked.length, nSub = opts.nSub ?? 5;
-  const lab = new Float64Array(3 * np);
-  unmasked.forEach((k, p) => lab.set(pixelToLab(G, k % nx, Math.floor(k / nx)), 3 * p));
-  const x = new Float64Array(3 * np), c = new Float64Array(np), w = new Float64Array(np);
-  const normal = G.normal, px2 = model.g.pixelMM ** 2, omegaRef = px2 / model.g.distance ** 2;
-  const sap = (opts.normalization ?? 'sap') === 'sap';
-  const UBinvM = mul(inv3(model.ub), M_CRYSALIS);
-  const deltaOf = (run, angle) => {
-    if (model.drift.has(run)) {
-      const { knots, vals } = model.drift.get(run);
-      const t = Math.min(Math.max(angle, knots[0]), knots.at(-1));
-      let k = 0;
-      while (k < knots.length - 2 && t > knots[k + 1]) k++;
-      const f = (t - knots[k]) / (knots[k + 1] - knots[k] || 1);
-      return [0, 1, 2].map((q) => vals[k][q] + f * (vals[k + 1][q] - vals[k][q]));
-    }
-    return model.perRun.get(run) ?? [0, 0, 0];
+  const nSub = opts.nSub ?? 5, label3 = 'Mapping pixels to HKL (3 of 3)';
+  const setup = {
+    nx, ny, unmasked: Int32Array.from(unmasked), nSub, T, sap: (opts.normalization ?? 'sap') === 'sap', mono: source.monochromator,
+    model: { g: model.g, ub: model.ub, perRun: model.perRun, drift: model.drift },
   };
-  fi = 0;
-  for (const f of frames) {
-    const h = headers[fi++];
-    const buf = await f.read();
-    fmt.decodeTY6(buf, h, img);
-    const axis = h.scanAxis, a0 = h.start[axis], a1 = h.end[axis];
-    const mid = h.start.slice(0, 4);
-    mid[axis] = 0.5 * (a0 + a1);
-    const cpos = samplePosition(G, gonio(G, mid[0], mid[2], mid[3]));
-    for (let p = 0; p < np; p++) {
-      const Dx = lab[3 * p] - cpos[0], Dy = lab[3 * p + 1] - cpos[1], Dz = lab[3 * p + 2] - cpos[2];
-      const r = Math.sqrt(Dx * Dx + Dy * Dy + Dz * Dz), sx = Dx / r, sy = Dy / r, sz = Dz / r;
-      x[3 * p] = sx; x[3 * p + 1] = sy; x[3 * p + 2] = sz + 1;
-      c[p] = img[unmasked[p]];
-      if (sap) {
-        const dOmega = px2 * (sx * normal[0] + sy * normal[1] + sz * normal[2]) / (r * r);
-        w[p] = h.exposure * dOmega * polarizationFactor([sx, sy, sz], source.monochromator) / omegaRef;
-      } else w[p] = h.exposure;
+  const ctx = mapContext(setup), np = ctx.np;
+  if (pool) {
+    await pool.all({ type: 'map-init', setup });
+    await pool.ordered(frames.length, async (i) => {
+      const f = frames[i], buf = await f.read();
+      return { msg: { type: 'map', buf, h: headers[i], run: f.run, grid }, transfer: [buf] };
+    }, (i, d) => { applyRecords(acc, d); tick(label3); });
+  } else {
+    const out = { x: new Float64Array(3 * np), c: new Int32Array(np), w: new Float64Array(np) }, vox = new Int32Array(np);
+    for (let i = 0; i < frames.length; i++) {
+      const A = mapFrame(ctx, fmt, await frames[i].read(), headers[i], frames[i].run, out);
+      applyFrame(acc, vox, out.c, out.w, indexFrame(grid, out.x, A, vox), nSub);
+      tick(label3);
     }
-    const A = [];
-    for (let k = 0; k < nSub; k++) {
-      const ang = mid.slice();
-      ang[axis] = a0 + (k + 0.5) / nSub * (a1 - a0);
-      const R = gonio(G, ang[0], ang[2], ang[3]);
-      A.push(mul(mul(mul(T, UBinvM), transpose(smallRot(deltaOf(f.run, ang[axis])))), transpose(R)));
-    }
-    accumulateFrame(acc, grid, x, c, w, A);
-    tick('Mapping pixels to HKL (3 of 3)');
   }
   report.seconds = (Date.now() - t0) / 1000;
-  report.normalization = sap ? 'counts / (s x pixel solid angle x polarization) x Omega_ref' : 'counts / (s x pixel)';
-  report.omegaRef = omegaRef;
-  const ubMantid = mul(C_MANTID, mul(MT, model.ub)).map((v) => v / model.g.wavelength / m);
+  report.normalization = setup.sap ? 'counts / (s x pixel solid angle x polarization) x Omega_ref' : 'counts / (s x pixel)';
+  report.omegaRef = ctx.omegaRef;
+  const ubMantid = mul(mul(C_MANTID, mul(MT, model.ub)), inv3(T)).map((v) => v / model.g.wavelength);
   return { acc, grid, model, report, ubMantid };
 }
 
