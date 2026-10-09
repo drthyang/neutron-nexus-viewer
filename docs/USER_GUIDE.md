@@ -69,7 +69,7 @@ Not applied: background subtraction (air scatter and fluorescence show near Q = 
 
 The layout follows the screen:
 
-- **Narrow screens** (below 1000 px, such as phones and tablets held upright): the views come first, one under the other (two per row from 700 px), each at most as tall as the screen, and the panel follows them; the page scrolls. The layout buttons are hidden, since every view is shown.
+- **Narrow screens** (below 1000 px, such as phones and tablets held upright): the views come first, one under the other (two per row from 700 px), each at most as tall as the screen, and the panel follows them; the page scrolls. The layout buttons are hidden, since every view is shown. When comparing, the top bar leaves out the app name, the status text and the *Compare…* label (the button keeps its icon), so the file names fit.
 - **Short windows**: the panel stays beside the views, which keep a usable height; the views scroll.
 - **Touch screens**: buttons, fields and sliders are 36–44 px tall, and two fingers pinch and pan a slice (see [Clicking a slice](#clicking-a-slice)).
 - **Large screens at 100% scaling** (more than 2560×1440, such as 4K and 5K monitors): the whole interface, plot text included, is drawn 1.25–2× larger, so it is not tiny. Browser zoom (⌘ + / Ctrl +) adjusts it further.

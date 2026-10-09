@@ -834,13 +834,13 @@ function setupViewer() {
   shell.q('.view-body').innerHTML = '<canvas class="scene" role="img" aria-label="3-D isosurface with the three slices"></canvas>';
   const foot = document.createElement('footer');
   foot.className = 'view-foot';
+  // Each label stays with its slider when the footer wraps.
   foot.innerHTML = `
-    <span class="label">Level</span>
-    <input class="iso-slider foot-grow" type="range" min="0" max="1000" aria-label="Isosurface level (log scale)">
-    <input class="iso-level num" type="number" step="any" style="width: 7.6rem" aria-label="Isosurface level">
-    <span class="foot-sep"></span>
-    <span class="label">Surface</span><input class="iso-opacity foot-fixed short" type="range" min="0.05" max="1" step="0.05" value="0.6" aria-label="Surface opacity">
-    <span class="label">Slices</span><input class="slice-opacity foot-fixed short" type="range" min="0.05" max="1" step="0.05" value="1" aria-label="Slice opacity">`;
+    <span class="foot-group grow"><span class="label">Level</span>
+      <input class="iso-slider foot-grow" type="range" min="0" max="1000" aria-label="Isosurface level (log scale)">
+      <input class="iso-level num" type="number" step="any" style="width: 7.6rem" aria-label="Isosurface level"></span>
+    <span class="foot-group"><span class="label">Surface</span><input class="iso-opacity foot-fixed short" type="range" min="0.05" max="1" step="0.05" value="0.6" aria-label="Surface opacity"></span>
+    <span class="foot-group"><span class="label">Slices</span><input class="slice-opacity foot-fixed short" type="range" min="0.05" max="1" step="0.05" value="1" aria-label="Slice opacity"></span>`;
   shell.section.append(foot);
   iso = {
     levelInput: shell.q('.iso-level'), slider: shell.q('.iso-slider'), opacity: shell.q('.iso-opacity'),
