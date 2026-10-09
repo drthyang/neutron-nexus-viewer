@@ -66,6 +66,7 @@ export function setupRigaku(hooks) {
     stop();
     summary = null;
     result = null;
+    showBackground(null);
     $('rk-result').hidden = true;
     $('rk-options').hidden = true;
     note('');
@@ -89,6 +90,11 @@ export function setupRigaku(hooks) {
   const handlers = {
     error: ({ message }) => fail(message),
     progress: ({ label, fraction }) => progress(label, fraction),
+    background: ({ summary: b }) => {
+      setBusy(false);
+      $('rk-progress').hidden = true;
+      showBackground(b);
+    },
     scanned: ({ summary: s }) => {
       summary = s;
       setBusy(false);
@@ -153,6 +159,45 @@ export function setupRigaku(hooks) {
     }
   }
 
+  // ---- air-scatter background ------------------------------------------------------
+  let background = null, bkgText = '';
+  const BKG_NOTE = $('rk-bkg-note').textContent;
+  const AD_HOC = ' A scale below 1 is an ad hoc correction for over-subtraction near the beam, where the crystal attenuates the beam.';
+  function bkgNote() {
+    const note = $('rk-bkg-note'), v = Number($('rk-bkg-scale').value), bin = Number($('rk-bkg-bin').value);
+    const rotation = $('rk-bkg-mode').dataset.value === 'rotation';
+    $('rk-bkg-bin-wrap').hidden = !rotation;
+    if (!bkgText) { note.textContent = BKG_NOTE; note.className = 'note'; return; }
+    const bad = background && (!(v >= 0) ? 'The scale must be a number of 0 or more.' : rotation && !(bin > 0) ? 'The ω bin must be positive.'
+      : rotation && background.unmatchedRuns.length ? `No background run was measured like experiment run${background.unmatchedRuns.length > 1 ? 's' : ''} ${background.unmatchedRuns.join(', ')} (same scan axis, κ and φ); use a static background or measure them.` : '');
+    if (bad) { note.textContent = `${bkgText} ${bad}`; note.className = 'note error'; return; }
+    const how = !background ? '' : rotation ? ' Each run subtracts the background run measured at its κ and φ, binned in ω and interpolated to each frame.'
+      : ' One average for all frames: right for air scatter only, not for a mount that moves with the crystal.';
+    note.textContent = bkgText + how + (background && v < 1 ? AD_HOC : '');
+    note.className = background ? 'note ok' : 'note error';
+  }
+  function showBackground(b) {
+    background = b?.matches ? b : null;
+    $('rk-bkg-clear').hidden = !b;
+    $('rk-bkg-opts').hidden = !background;
+    const what = b ? `${b.frames.toLocaleString()} frames in ${b.runs} run${b.runs === 1 ? '' : 's'}, ${fmt(b.exposure, 1)} s in total (${b.stem})` : '';
+    bkgText = !b ? '' : b.matches ? `${what}; same detector setup as the experiment.`
+      : `${what}: not the experiment's setup (${b.differences.join('; ')}), so it will not be used.`;
+    bkgNote();
+  }
+  $('rk-bkg-folder').onclick = () => $('rk-bkg-input').click();
+  $('rk-bkg-input').onchange = () => {
+    const files = [...$('rk-bkg-input').files].map((file) => ({ file, path: file.webkitRelativePath || file.name }));
+    $('rk-bkg-input').value = '';
+    if (!files.length || !worker) return;
+    setBusy(true);
+    progress(`Reading ${files.length.toLocaleString()} background files`, 0);
+    worker.postMessage({ type: 'scan-background', files });
+  };
+  $('rk-bkg-clear').onclick = () => worker?.postMessage({ type: 'scan-background', files: [] });
+  $('rk-bkg-scale').oninput = bkgNote;
+  $('rk-bkg-bin').oninput = bkgNote;
+
   function updateDefaults() {
     const A = hooks.datasetA();
     const mode = $('rk-cell').dataset.value;
@@ -192,6 +237,16 @@ export function setupRigaku(hooks) {
     const N = readMatrix();
     if (N instanceof Error) throw new Error(`Output cell: ${N.message}`);
     opts.transform = N;
+    if (background) {
+      opts.backgroundScale = Number($('rk-bkg-scale').value);
+      opts.backgroundMode = $('rk-bkg-mode').dataset.value;
+      opts.backgroundBin = Number($('rk-bkg-bin').value);
+      if (!(opts.backgroundScale >= 0)) throw new Error('The background scale must be a number of 0 or more.');
+      if (opts.backgroundMode === 'rotation' && !(opts.backgroundBin > 0)) throw new Error('The background ω bin must be positive.');
+      if (opts.backgroundMode === 'rotation' && background.unmatchedRuns.length) {
+        throw new Error(`No background run was measured like experiment run(s) ${background.unmatchedRuns.join(', ')}.`);
+      }
+    }
     if (mode === 'match') {
       if (!A?.lattice || !A.dims?.every(isHKL)) throw new Error('Dataset A is not open yet, or has no HKL axes and cell to match.');
       // A's edges may carry float32 rounding (0.10000038): keep 6 significant digits
@@ -212,6 +267,15 @@ export function setupRigaku(hooks) {
     worker.postMessage({ type: 'reduce', options: opts });
   };
 
+  function backgroundRow(b) {
+    const st = b.stats, err = st.medianRelativeError === null || st.medianRelativeError === undefined ? '—' : `${fmt(100 * st.medianRelativeError, 1)} %`;
+    const how = b.mode === 'rotation'
+      ? `rotation-resolved, ${fmt(b.binWidth, 3)}° bins (${fmt(st.binExposure?.[0], 1)}–${fmt(st.binExposure?.[1], 1)} s each); runs ${Object.entries(st.matched).map(([s0, b0]) => `${s0}←${b0}`).join(', ')}`
+      : 'static (one average)';
+    return `${b.frames.toLocaleString()} frames in ${b.runs} run${b.runs === 1 ? '' : 's'} (${esc(b.stem)}), ${fmt(b.exposure, 1)} s; ${how}; mean ${fmt(st.meanRate, 4)} counts/s per pixel; `
+      + `scale ${fmt(b.scale, 4)}; per-pixel rate statistical error ${err} (median, not propagated); ${b.negativeVoxels.toLocaleString()} measured voxels below zero`;
+  }
+
   function showReport(r, name, size) {
     const L = r.geometry?.levels?.L10;
     const rows = [
@@ -222,6 +286,7 @@ export function setupRigaku(hooks) {
       ['Geometry', `${L ? `refined: rms ${fmt(L.rmsX, 2)} / ${fmt(L.rmsY, 2)} px, ${fmt(L.rmsAngle, 3)}° (median ${fmt(L.medX, 2)} / ${fmt(L.medY, 2)} px, ${fmt(L.medAngle, 3)}°)${r.geometry.levels.L10a.driftRuns?.length ? `; drift in run ${r.geometry.levels.L10a.driftRuns.join(', ')}` : ''}` : 'header model, not refined'}; detector distance ${fmt(r.model.geometry.distance, 3)} mm (header calibration)`],
       ['Cell', `a ${fmt(r.cell[0], 4)}, b ${fmt(r.cell[1], 4)}, c ${fmt(r.cell[2], 4)} Å, ${fmt(r.cell[3], 2)}/${fmt(r.cell[4], 2)}/${fmt(r.cell[5], 2)}° (${esc(r.geometry.system ?? '')})`],
       ['Output cell', `a′ ${fmt(r.grid.cell[0], 4)}, b′ ${fmt(r.grid.cell[1], 4)}, c′ ${fmt(r.grid.cell[2], 4)} Å, ${fmt(r.grid.cell[3], 2)}/${fmt(r.grid.cell[4], 2)}/${fmt(r.grid.cell[5], 2)}°; ${r.grid.multiplier ? `${r.grid.multiplier} × the cell` : `T = ${[0, 3, 6].map((i) => `(${r.grid.transform.slice(i, i + 3).map((v) => fmt(v, 4)).join(', ')})`).join(' ')}`}`],
+      ...(r.background ? [['Background', backgroundRow(r.background)]] : []),
       ['Grid', `${r.grid.shape.join(' × ')} voxels of ${r.grid.step} r.l.u.; ${r.covered.toLocaleString()} measured (${r.measuredZero.toLocaleString()} with zero counts)`],
       ['Signal', esc(r.normalization)],
       ['Time', `${r.seconds.toFixed(0)} s`],
@@ -259,6 +324,7 @@ export function setupRigaku(hooks) {
     for (const b of seg.querySelectorAll('button')) {
       b.onclick = () => {
         if (seg.id === 'rk-cell') { setPreset(b.dataset.value); updateDefaults(); } else select(seg, b.dataset.value);
+        if (seg.id === 'rk-bkg-mode') bkgNote();
       };
     }
   }

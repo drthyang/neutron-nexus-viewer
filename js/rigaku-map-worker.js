@@ -7,7 +7,8 @@
 //   sum-end                       -> {sum, counted, runSum}
 //   peaks {bufs, hs, mask, bg}    -> {peaks}       one run's Bragg peaks (pass 2)
 //   map-init {setup}              -> {}            pass 3 context (mapContext)
-//   map {buf, h, run, grid}       -> {v, s, e, w}  one frame's contributions, sorted by voxel (pass 3)
+//   map {buf, h, run, grid, b}    -> {v, s, e, w, b}  one frame's contributions, grouped by voxel (pass 3);
+//                                   b: the background counts of its unmasked pixels, or null
 // Errors are returned as {error}.
 
 import * as fmt from './rigaku-format.js';
@@ -39,10 +40,10 @@ const handlers = {
     vox = new Int32Array(ctx.np);
     return {};
   },
-  map: ({ buf, h, run, grid }) => {
+  map: ({ buf, h, run, grid, b }) => {
     const A = mapFrame(ctx, fmt, buf, h, run, frame);
-    const rec = frameRecords(vox, frame.c, frame.w, indexFrame(grid, frame.x, A, vox), ctx.nSub, grid.shape[0] * grid.shape[1] * grid.shape[2]);
-    return [rec, [rec.v.buffer, rec.s.buffer, rec.e.buffer, rec.w.buffer]];
+    const rec = frameRecords(vox, frame.c, frame.w, indexFrame(grid, frame.x, A, vox), ctx.nSub, grid.shape[0] * grid.shape[1] * grid.shape[2], b);
+    return [rec, [rec.v.buffer, rec.s.buffer, rec.e.buffer, rec.w.buffer, ...(rec.b ? [rec.b.buffer] : [])]];
   },
 };
 

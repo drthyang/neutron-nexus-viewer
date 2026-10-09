@@ -15,7 +15,7 @@ import {
 } from '../js/rigaku-reduce.js';
 import { WorkerPool } from '../js/rigaku-pool.js';
 import { nodeWorker } from './node-worker.js';
-import { encodeTY6, rng, simulateExperiment, writeFrame } from './rigaku-synth.js';
+import { backgroundFrames, backgroundScan, encodeTY6, rng, simulateExperiment, writeFrame } from './rigaku-synth.js';
 
 await h5wasm.ready;
 
@@ -309,8 +309,11 @@ test('parallel workers give a bit-identical reduction (peaks, geometry, accumula
       if (!runs.has(fr.run)) runs.set(fr.run, []);
       runs.get(fr.run).push({ frame: fr.frame, read: async () => fr.bytes.buffer.slice(0) });
     }
-    return { runs, ubCandidates: { start: ubStart }, laue: '6/m', label: 'simulated', monochromator: { theta: 6.07, plane: 'E1E3' } };
+    const background = { frames: bgFrames.map((f) => ({ ...f, read: async () => f.bytes.buffer.slice(0) })), mode: 'rotation', omegaBin: 5 };
+    return { runs, ubCandidates: { start: ubStart }, laue: '6/m', label: 'simulated', monochromator: { theta: 6.07, plane: 'E1E3' }, background };
   };
+  const air = airPattern(sim);
+  const bgFrames = backgroundScan(sim, (r, f) => Int32Array.from(air, (v) => Math.round(v * (1 + 0.5 * Math.sin(f / 20 + r)))));
   const opts = { transform: [2, 0, 0, 0, 2, 0, 0, 0, 2], step: 0.1, nSub: 5 };
   const serial = await reduceRigaku(source(), fmt, opts);
   const pool = new WorkerPool([0, 1, 2].map(() => nodeWorker(new URL('../js/rigaku-map-worker.js', import.meta.url))));
@@ -326,10 +329,120 @@ test('parallel workers give a bit-identical reduction (peaks, geometry, accumula
   assert.deepEqual(par.model.ub, serial.model.ub);
   assert.deepEqual(par.model.g, serial.model.g);
   assert.deepEqual(par.report.mask, serial.report.mask);
-  for (const k of ['S', 'E2', 'W', 'N']) {
+  assert.ok(serial.acc.B && par.acc.B);
+  for (const k of ['S', 'E2', 'W', 'N', 'B']) {
     const a = serial.acc[k], b = par.acc[k];
     assert.equal(a.length, b.length);
     assert.ok(Buffer.from(a.buffer).equals(Buffer.from(b.buffer)), `${k} differs`);
   }
   assert.ok(serial.acc.N.some((v) => v > 0));
+});
+
+/** A smooth air-scatter pattern, brightest near the beam centre (integer counts per frame). */
+function airPattern(sim) {
+  const { nx, ny } = sim, { ox, oy } = sim.model.g, out = new Int32Array(nx * ny);
+  for (let y = 0; y < ny; y++) for (let x = 0; x < nx; x++) out[y * nx + x] = 3 + Math.round(40 * Math.exp(-((x - ox) ** 2 + (y - oy) ** 2) / (2 * 25 ** 2)));
+  return out;
+}
+
+test('air-scatter background: subtracting it recovers the crystal-only signal', async () => {
+  const pattern = airPattern(simulateExperiment({ nFrames: 1 }));
+  const clean = simulateExperiment(), withAir = simulateExperiment({ airScatter: pattern });
+  const model = { ...clean.model, perRun: new Map(), drift: new Map() };
+  const mask = new Uint8Array(clean.nx * clean.ny);
+  const source = (sim, bg) => {
+    const runs = new Map();
+    for (const fr of sim.frames) {
+      if (!runs.has(fr.run)) runs.set(fr.run, []);
+      runs.get(fr.run).push({ frame: fr.frame, read: async () => fr.bytes.buffer.slice(0) });
+    }
+    return { runs, ubCandidates: {}, label: 'simulated', ...(bg ? { background: { frames: bg.map((f) => ({ ...f, read: async () => f.bytes.buffer.slice(0) })) } } : {}) };
+  };
+  const opts = { model, mask, transform: [2, 0, 0, 0, 2, 0, 0, 0, 2], step: 0.1, nSub: 3 };
+  const a = await reduceRigaku(source(clean), fmt, opts);
+  const b = await reduceRigaku(source(withAir, backgroundFrames(clean, pattern, 20)), fmt, opts);
+  assert.equal(b.report.background.frames, 20);
+  assert.equal(b.report.background.exposure, 20);
+  assert.ok(!a.acc.B && b.acc.B);
+  const va = finishVolume(a.acc), vb = finishVolume(b.acc), raw = finishVolume(b.acc, { backgroundScale: 0 });
+  let covered = 0, maxDiff = 0, rawExcess = 0;
+  for (let v = 0; v < va.signal.length; v++) {
+    if (!(a.acc.W[v] > 0)) continue;
+    covered++;
+    assert.equal(a.acc.W[v], b.acc.W[v]);
+    assert.equal(a.acc.N[v], b.acc.N[v]);
+    assert.ok(b.acc.E2[v] >= a.acc.E2[v]); // the errors are those of the measured counts, air scatter included
+    maxDiff = Math.max(maxDiff, Math.abs(vb.signal[v] - va.signal[v]) / Math.max(1, Math.abs(va.signal[v])));
+    rawExcess = Math.max(rawExcess, raw.signal[v] - va.signal[v]);
+  }
+  assert.ok(covered > 1000);
+  assert.ok(maxDiff < 1e-12, `background-subtracted signal differs by ${maxDiff}`);
+  assert.ok(rawExcess > 10, 'without subtraction the air scatter is in the signal');
+  // a background from a different setup is refused
+  const far = backgroundFrames(clean, pattern, 2, { distance: 46 });
+  await assert.rejects(reduceRigaku(source(withAir, far), fmt, opts), /not the experiment's setup/);
+});
+
+test('air-scatter background: counts are normalized by each frame\'s exposure (3 s frames, 10 s background)', async () => {
+  const rate = airPattern(simulateExperiment({ nFrames: 1 })); // counts per second per pixel
+  const times = (k) => Int32Array.from(rate, (v) => k * v);
+  const clean = simulateExperiment({ exposure: 3 }), withAir = simulateExperiment({ exposure: 3, airScatter: times(3) });
+  const model = { ...clean.model, perRun: new Map(), drift: new Map() }, mask = new Uint8Array(clean.nx * clean.ny);
+  const source = (sim, bg) => {
+    const runs = new Map();
+    for (const fr of sim.frames) {
+      if (!runs.has(fr.run)) runs.set(fr.run, []);
+      runs.get(fr.run).push({ frame: fr.frame, read: async () => fr.bytes.buffer.slice(0) });
+    }
+    return { runs, ubCandidates: {}, label: 'simulated', ...(bg ? { background: { frames: bg.map((f) => ({ ...f, read: async () => f.bytes.buffer.slice(0) })) } } : {}) };
+  };
+  const opts = { model, mask, transform: [2, 0, 0, 0, 2, 0, 0, 0, 2], step: 0.1, nSub: 3, normalization: 'rate' };
+  const a = await reduceRigaku(source(clean), fmt, opts);
+  const b = await reduceRigaku(source(withAir, backgroundFrames(clean, times(10), 7, {}, 10)), fmt, opts);
+  assert.equal(b.report.background.exposure, 70);
+  const va = finishVolume(a.acc), vb = finishVolume(b.acc);
+  let maxDiff = 0, covered = 0;
+  for (let v = 0; v < va.signal.length; v++) {
+    if (!(a.acc.W[v] > 0)) continue;
+    covered++;
+    maxDiff = Math.max(maxDiff, Math.abs(vb.signal[v] - va.signal[v]) / Math.max(1, Math.abs(va.signal[v])));
+  }
+  assert.ok(covered > 1000);
+  assert.ok(maxDiff < 1e-12, `differs by ${maxDiff}`);
+});
+
+test('rotation-resolved background: a mount background that changes with omega is removed frame by frame', async () => {
+  const base = airPattern(simulateExperiment({ nFrames: 1 }));
+  // counts per frame that vary strongly with omega (frame) and with the run, like the mount
+  const mount = (r, f) => Int32Array.from(base, (v) => Math.round(v * (1 + 0.6 * Math.exp(-(((f - 80) / 25) ** 2)) + 0.1 * r)));
+  const clean = simulateExperiment(), withMount = simulateExperiment({ airScatter: mount });
+  const model = { ...clean.model, perRun: new Map(), drift: new Map() }, mask = new Uint8Array(clean.nx * clean.ny);
+  const source = (sim, bg, extra) => {
+    const runs = new Map();
+    for (const fr of sim.frames) {
+      if (!runs.has(fr.run)) runs.set(fr.run, []);
+      runs.get(fr.run).push({ frame: fr.frame, read: async () => fr.bytes.buffer.slice(0) });
+    }
+    return { runs, ubCandidates: {}, label: 'simulated', ...(bg ? { background: { frames: bg.map((f) => ({ ...f, read: async () => f.bytes.buffer.slice(0) })), ...extra } } : {}) };
+  };
+  const opts = { model, mask, transform: [2, 0, 0, 0, 2, 0, 0, 0, 2], step: 0.1, nSub: 3, normalization: 'rate' };
+  const a = await reduceRigaku(source(clean), fmt, opts);
+  const scan = backgroundScan(clean, mount);
+  const diff = (res) => {
+    const va = finishVolume(a.acc), vb = finishVolume(res.acc);
+    let m = 0;
+    for (let v = 0; v < va.signal.length; v++) if (a.acc.W[v] > 0) m = Math.max(m, Math.abs(vb.signal[v] - va.signal[v]) / Math.max(1, Math.abs(va.signal[v])));
+    return m;
+  };
+  // bins as wide as one frame: each frame gets exactly its own background frame
+  const exact = await reduceRigaku(source(withMount, scan, { mode: 'rotation', omegaBin: 1 }), fmt, opts);
+  assert.ok(diff(exact) < 1e-12, `rotation-resolved, 1 deg bins: ${diff(exact)}`);
+  assert.deepEqual(exact.report.background.stats.matched, { 1: 1, 2: 2 });
+  // wider bins: close, but they smooth the omega dependence; a static average does not follow it at all
+  const binned = await reduceRigaku(source(withMount, scan, { mode: 'rotation', omegaBin: 5 }), fmt, opts);
+  const flat = await reduceRigaku(source(withMount, scan, { mode: 'static' }), fmt, opts);
+  assert.ok(diff(binned) < 0.2 * diff(flat), `5 deg bins ${diff(binned)} vs static ${diff(flat)}`);
+  // a sample run without a background run at its kappa and phi is refused
+  const other = backgroundScan(clean, mount, { runs: [[54, 0], [54, 45]] });
+  await assert.rejects(reduceRigaku(source(withMount, other, { mode: 'rotation', omegaBin: 1 }), fmt, opts), /No background run was measured like run 2 \(kappa 54, phi 90\)/);
 });

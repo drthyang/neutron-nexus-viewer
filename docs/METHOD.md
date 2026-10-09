@@ -127,7 +127,23 @@ The signal is S/W with errors² = E2/W². The weight w_p is either 1 (*exposure 
 - P_p is the polarization factor of the graphite-monochromated beam, [(1 − s_σ²) + cos²2θ_m (1 − s_π²)]/(1 + cos²2θ_m), with σ perpendicular to the monochromator plane given in the `.par`, or (1 + cos²2θ)/2 without a monochromator;
 - Ω_ref = (p/D)².
 
-Signal values are voxel averages of a continuous-scattering estimate, so diffuse scattering needs no Lorentz factor; Bragg-peak voxels are not integrated intensities. Background (air scatter, fluorescence), absorption and symmetry averaging are not applied. An absorption correction needs a crystal shape, which CrysAlis files usually lack.
+Signal values are voxel averages of a continuous-scattering estimate, so diffuse scattering needs no Lorentz factor; Bragg-peak voxels are not integrated intensities. Absorption and symmetry averaging are not applied. An absorption correction needs a crystal shape, which CrysAlis files usually lack.
+
+**Measured background (optional).** Following the standard practice of measuring the background and subtracting it pixel by pixel (Juul, Støckler & Iversen 2025, *Acta Cryst.* A81; Koch et al. 2021, *Acta Cryst.* A77, 611, §4.1; mdx2), with one of two kinds of background:
+- *Rotation scan (empty mount):* the mount without the crystal, scanned with the experiment's runs. Use this when part of the background moves with the goniometer. In one data set the near-beam rate rose 30–60 % over a ~50° range of ω in every run, where the pin pointed most nearly along the beam.
+  - Each sample run uses the background run with the same scan axis and fixed angles (κ and φ for ω scans, within 0.01°). A run without a match is refused.
+  - The background run's frames are binned in the scan angle (5° by default). For each bin and pixel, rate = Σ counts / Σ exposure, placed at the exposure-weighted mean angle.
+  - Each sample frame takes the rate interpolated linearly to its mid angle, held at the end bins. mdx2 interpolates its binned background image series the same way.
+- *Static (air only):* frames with the crystal and its mount out of the beam. For each pixel, rate = Σ counts / Σ exposure over all frames.
+
+Both kinds:
+- *Checks:* every background frame is decoded and checked like the experiment's. Its detector size, binning, pixel size, distance, 2θ arm and wavelength must match, or it is refused.
+- *Normalization:* a sample pixel-frame receives rate × that frame's exposure, shared over its sub-steps like its counts and accumulated separately as B. The raw counts S stay as measured, and signal = (S − s·B)/W. The background is therefore subtracted as counts, before the solid-angle and polarization correction.
+- *Scale s:* 1 by default. A value below 1 is the ad hoc correction for over-subtraction next to the beam, where a crystal attenuates the beam that scatters from the air behind it.
+- *Errors:* they remain the Poisson errors of the measured counts. The background's own statistical error is not propagated, following mdx2; the report gives its median relative size.
+- *What it does not remove:* fluorescence and Compton scattering from the sample.
+
+The file records the background frames, exposure and scale in a log.
 
 **Grid and output.**
 - *Indices:* the output cell is a transformation T of the refined cell. Each row of T gives an output basis vector in units of a, b, c (a′ᵢ = Σⱼ Tᵢⱼ aⱼ), and the output indices are T · (h, k, l). Entries may be fractions. The determinant must be positive, so the cell stays right-handed and its orientation is a proper rotation for Mantid. Presets:
@@ -148,6 +164,12 @@ Signal values are voxel averages of a continuous-scattering estimate, so diffuse
 - *Refinement:* the in-browser refinement reproduces the Python one at every level. Final rms is 0.361 / 0.394 px and 0.191° (Python 0.359 / 0.392 px, 0.188°), with cell a = 4.0082, c = 5.0156 Å (Python 4.0083 / 5.0156), both with the distance at the header value.
 - *Volume:* Bragg integrated intensities agree within 1 % (median 0.998).
 - *Mantid:* `LoadMD` (Mantid 6.16.1) reads the file with its dimensions, frame, lattice and logs. SliceViewer draws HK planes at 60°.
+- *Background:* simulated frames test the subtraction.
+  - It recovers the background-free signal to 10⁻¹². That holds for a static background with 3 s sample frames against 10 s background frames. It also holds for a rotation-resolved background with one-frame bins, where the mount background varies strongly with ω.
+  - 5° bins leave under a fifth of the residual a static average leaves.
+  - A run without a matching background run is refused.
+
+  The Python implementation was run with the same geometry, mask and grid on 664 real frames. Its background accumulator agrees to 1.4 × 10⁻¹⁴ (static) and 1.6 × 10⁻¹³ (rotation, 5° bins) over 3.3 million voxels.
 - *Parallel workers:* serial and parallel reductions give byte-identical accumulators and the same refined model. This was checked on simulated frames (tests, and in a browser with real Web Workers and nested workers) and on 736 and 3,608 real frames.
 - *Speed:* 3,608 frames take about 40 s with 7 workers, against about 2 minutes serially, at about 1.5 GB.
 - *Tests:* `tests/rigaku.test.js` checks each step on synthetic frames, including a simulated experiment whose refined geometry puts the Bragg peaks back on integer HKL. `tests/rigaku-local.test.js` checks every frame of a real experiment when `RIGAKU_DIR` is set.

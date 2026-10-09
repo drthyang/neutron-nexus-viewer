@@ -472,13 +472,18 @@ export function makeGrid(min, max, step, origin = [0, 0, 0]) {
   return { min: lo, step, shape }; // shape = [nH, nK, nL]
 }
 
-/** Accumulators for a grid: counts, Poisson variance, normalization weight, pixel-frames. */
-export function makeAccumulators(grid) {
+/**
+ * Accumulators for a grid: counts, Poisson variance, normalization weight, pixel-frames, and
+ * with `background` the air-scatter counts expected in the same pixel-frames (B).
+ */
+export function makeAccumulators(grid, { background = false } = {}) {
   const n = grid.shape[0] * grid.shape[1] * grid.shape[2];
   try {
-    return { S: new Float64Array(n), E2: new Float32Array(n), W: new Float64Array(n), N: new Uint32Array(n) };
+    const acc = { S: new Float64Array(n), E2: new Float32Array(n), W: new Float64Array(n), N: new Uint32Array(n) };
+    if (background) acc.B = new Float64Array(n);
+    return acc;
   } catch {
-    throw new Error(`Could not allocate ${(n * 24 / 1e9).toFixed(2)} GB for ${n.toLocaleString()} voxels; use a larger voxel or a smaller range.`);
+    throw new Error(`Could not allocate ${(n * (background ? 32 : 24) / 1e9).toFixed(2)} GB for ${n.toLocaleString()} voxels; use a larger voxel or a smaller range.`);
   }
 }
 
@@ -541,20 +546,21 @@ function splitTerms(split, o, nsub, fn) {
 }
 
 /** Add one frame's contributions (indexFrame) to the accumulators, in pixel order. */
-export function applyFrame(acc, vox, c, w, split, nsub) {
-  const { S, E2, W, N } = acc, np = vox.length;
+export function applyFrame(acc, vox, c, w, split, nsub, b = null) {
+  const { S, E2, W, N, B } = acc, np = vox.length;
   let o = 0;
   for (let p = 0; p < np; p++) {
     const v = vox[p];
-    if (v >= 0) { const cp = c[p]; S[v] += cp; E2[v] += cp; W[v] += w[p]; N[v] += 1; continue; }
+    if (v >= 0) { const cp = c[p]; S[v] += cp; E2[v] += cp; W[v] += w[p]; N[v] += 1; if (b) B[v] += b[p]; continue; }
     if (v === -1) continue;
-    const cp = c[p], wp = w[p];
+    const cp = c[p], wp = w[p], bp = b ? b[p] : 0;
     splitTerms(split, o, nsub, (u, m) => {
       const f = m / nsub;
       S[u] += f * cp;
       E2[u] += f * f * cp;
       W[u] += f * wp;
       N[u] += 1;
+      if (b) B[u] += f * bp;
     });
     o += nsub;
   }
@@ -562,12 +568,13 @@ export function applyFrame(acc, vox, c, w, split, nsub) {
 
 /**
  * One frame's contributions as records grouped by voxel block (for the parallel path): voxel
- * v[r] gets s[r] counts, e[r] variance and w[r] weight, exactly the terms applyFrame adds.
+ * v[r] gets s[r] counts, e[r] variance, w[r] weight and (with `b`) b[r] background counts,
+ * exactly the terms applyFrame adds.
  * Records are ordered by block of 4096 voxels (a stable counting sort), so each voxel still
  * receives its terms in pixel order, as in applyFrame: the sums are bit-identical, and adding
  * the records stays within a cache-sized part of the accumulators at a time.
  */
-export function frameRecords(vox, c, w, split, nsub, nvox) {
+export function frameRecords(vox, c, w, split, nsub, nvox, b = null) {
   const np = vox.length, start = new Int32Array((nvox >>> 12) + 2);
   // count the terms per block ...
   for (let p = 0, o = 0; p < np; p++) {
@@ -578,14 +585,18 @@ export function frameRecords(vox, c, w, split, nsub, nvox) {
   for (let b = 1; b < start.length; b++) start[b] += start[b - 1];
   // ... then place them in pixel order, as applyFrame adds them (stable within each block)
   const n = start[start.length - 1];
-  const out = { v: new Int32Array(n), s: new Float64Array(n), e: new Float64Array(n), w: new Float64Array(n) };
-  const put = (u, sv, ev, wv) => { const j = start[u >>> 12]++; out.v[j] = u; out.s[j] = sv; out.e[j] = ev; out.w[j] = wv; };
+  const out = { v: new Int32Array(n), s: new Float64Array(n), e: new Float64Array(n), w: new Float64Array(n), b: b ? new Float64Array(n) : null };
+  const put = (u, sv, ev, wv, bv) => {
+    const j = start[u >>> 12]++;
+    out.v[j] = u; out.s[j] = sv; out.e[j] = ev; out.w[j] = wv;
+    if (b) out.b[j] = bv;
+  };
   for (let p = 0, o = 0; p < np; p++) {
     const v = vox[p];
-    if (v >= 0) put(v, c[p], c[p], w[p]);
+    if (v >= 0) put(v, c[p], c[p], w[p], b ? b[p] : 0);
     else if (v === -2) {
-      const cp = c[p], wp = w[p];
-      splitTerms(split, o, nsub, (u, m) => { const f = m / nsub; put(u, f * cp, f * f * cp, f * wp); });
+      const cp = c[p], wp = w[p], bp = b ? b[p] : 0;
+      splitTerms(split, o, nsub, (u, m) => { const f = m / nsub; put(u, f * cp, f * f * cp, f * wp, f * bp); });
       o += nsub;
     }
   }
@@ -594,8 +605,9 @@ export function frameRecords(vox, c, w, split, nsub, nvox) {
 
 /** Add records (frameRecords) to the accumulators. */
 export function applyRecords(acc, rec) {
-  const { S, E2, W, N } = acc, { v, s, e, w } = rec, n = v.length;
+  const { S, E2, W, N, B } = acc, { v, s, e, w, b } = rec, n = v.length;
   for (let r = 0; r < n; r++) { const u = v[r]; S[u] += s[r]; E2[u] += e[r]; W[u] += w[r]; N[u] += 1; }
+  if (b) for (let r = 0; r < n; r++) B[v[r]] += b[r];
 }
 
 // ---- Per-frame work of each pass, shared by the serial path and rigaku-map-worker.js ----
@@ -829,6 +841,10 @@ export const HYPIX3000_BOUNDARIES = {
  *   default: everything the detector reaches), nSub (sub-samples per frame, 5),
  *   normalization ('sap': solid angle + polarization, or 'rate'), refine (true),
  *   boundaries (extra chip-boundary lines).
+ * `source.background` = { frames: [{ run, frame, read }], mode: 'static' | 'rotation', omegaBin }
+ * adds a measured background as the accumulator B (finishVolume subtracts it): static, for air
+ * scatter with the crystal and mount out of the beam; rotation, for an empty mount scanned like
+ * the experiment (each sample run uses the background run with the same fixed angles).
  * `pool` (a WorkerPool of rigaku-map-worker.js) runs the per-frame work in parallel with
  * bit-identical results.
  * Returns { acc, grid, model, report } (see writeReduced to make the NeXus file).
@@ -840,7 +856,11 @@ export async function reduceRigaku(source, fmt, opts = {}, onProgress = () => {}
   if (!frames.length) throw new Error('No frames to reduce.');
   const report = { label: source.label, runs: runIds, frames: frames.length, options: { ...opts, boundaries: undefined } };
   let done = 0;
-  const total = 3 * frames.length;
+  const bgFrames = source.background?.frames ?? [], bgMode = source.background?.mode ?? 'static';
+  const bgWidth = source.background?.omegaBin ?? 5;
+  if (bgFrames.length && !['static', 'rotation'].includes(bgMode)) throw new Error(`Unknown background mode "${bgMode}".`);
+  if (bgFrames.length && !(bgWidth > 0)) throw new Error('The background bin width must be positive.');
+  const total = 3 * frames.length + 2 * bgFrames.length;
   const tick = (label) => onProgress(label, ++done / total);
 
   report.threads = pool ? pool.size : 1;
@@ -848,6 +868,8 @@ export async function reduceRigaku(source, fmt, opts = {}, onProgress = () => {}
   // Pass 1: sums, headers
   const first = fmt.parseRodHeader(await frames[0].read());
   const { nx, ny } = first;
+  // Background frames: setup checked before any heavy work
+  const bgIndex = bgFrames.length ? await backgroundIndex(fmt, bgFrames, first, () => tick('Checking the background frames')) : null;
   const sums = makeSums(nx, ny);
   const headers = new Array(frames.length);
   const img = new Int32Array(nx * ny);
@@ -985,11 +1007,57 @@ export async function reduceRigaku(source, fmt, opts = {}, onProgress = () => {}
   const nvox = grid.shape[0] * grid.shape[1] * grid.shape[2];
   if (nvox > (opts.maxVoxels ?? 6e7)) throw new Error(`${nvox.toLocaleString()} voxels: use a larger voxel or a smaller range.`);
   report.grid = { ...grid, voxels: nvox, qmax, transform: T, multiplier: isMultiple ? T[0] : null, cell: cellOut };
-  const acc = makeAccumulators(grid);
-
   // Pass 3: gridding
   const unmasked = [];
   for (let k = 0; k < nx * ny; k++) if (!mask[k]) unmasked.push(k);
+
+  // Background: the counts it puts in each sample frame's unmasked pixels (rate x exposure)
+  let frameBackground = null;
+  if (bgIndex) {
+    const bgLabel = 'Reading the background frames', stats = { matched: {} };
+    const relErrors = (counts) => { const r = []; for (const v of counts) if (v > 0) r.push(1 / Math.sqrt(v)); r.sort((a, b) => a - b); return r.length ? r[r.length >> 1] : null; };
+    if (bgMode === 'static') {
+      const model = await staticBackground(fmt, bgIndex, first, unmasked, () => tick(bgLabel));
+      stats.medianRelativeError = relErrors(model.counts);
+      stats.meanRate = model.rate.reduce((a, v) => a + v, 0) / model.rate.length;
+      frameBackground = async (i) => frameBackgroundCounts(model, headers[i]);
+    } else {
+      // every sample run needs a background run with the same scan axis and fixed angles
+      const missing = runIds.filter((r) => { const h = headers[runStart[runIds.indexOf(r)]]; return !matchBackgroundRun(bgIndex, h.scanAxis, h.start); });
+      if (missing.length) {
+        const desc = missing.map((r) => { const h = headers[runStart[runIds.indexOf(r)]]; return `run ${r} (${[0, 2, 3].filter((k) => k !== h.scanAxis).map((k) => `${ANGLES[k]} ${Number(h.start[k].toFixed(2))}`).join(', ')})`; });
+        throw new Error(`No background run was measured like ${desc.join('; ')}.`);
+      }
+      let cached = null, rels = [], rateSum = 0, rateN = 0;
+      frameBackground = async (i) => {
+        const h = headers[i], bgRun = matchBackgroundRun(bgIndex, h.scanAxis, h.start);
+        if (cached?.run !== bgRun.run) {
+          cached = await rotationBackground(fmt, bgRun, first, unmasked, bgWidth, () => tick(bgLabel));
+          stats.matched[frames[i].run] = bgRun.run;
+          for (const c of cached.counts) { rels.push(relErrors(c)); }
+          const tot = new Float64Array(unmasked.length);
+          cached.counts.forEach((c) => { for (let p = 0; p < tot.length; p++) tot[p] += c[p]; });
+          const ex = cached.exposure.reduce((a, v) => a + v, 0);
+          for (let p = 0; p < tot.length; p++) { rateSum += tot[p] / ex; rateN++; }
+          stats.binExposure = [Math.min(stats.binExposure?.[0] ?? Infinity, ...cached.exposure), Math.max(stats.binExposure?.[1] ?? 0, ...cached.exposure)];
+          rels = rels.filter((v) => v !== null).sort((a, b) => a - b);
+          stats.medianRelativeError = rels.length ? rels[rels.length >> 1] : null;
+          stats.meanRate = rateSum / rateN;
+        }
+        stats.matched[frames[i].run] = bgRun.run;
+        return frameBackgroundCounts(cached, h);
+      };
+    }
+    report.background = {
+      mode: bgMode, frames: bgIndex.frames, runs: bgIndex.runs.length, exposure: bgIndex.exposure, stats,
+      ...(bgMode === 'rotation' ? { binWidth: bgWidth } : {}),
+      method: bgMode === 'static'
+        ? 'static: per-pixel rate = summed counts / summed exposure over all background frames; x each sample frame\'s exposure, accumulated as B; signal = (S - scale x B) / W'
+        : `rotation-resolved: each sample run uses the background run with the same scan axis and fixed angles; per-pixel rate = summed counts / summed exposure in ${bgWidth} deg bins of the scan angle, interpolated linearly to each frame's mid angle; x the frame's exposure, accumulated as B; signal = (S - scale x B) / W`,
+      errors: 'the errors are the Poisson errors of the measured counts; the background\'s own statistical error (median relative error per pixel and bin in stats) is not propagated',
+    };
+  }
+  const acc = makeAccumulators(grid, { background: !!bgIndex });
   const nSub = opts.nSub ?? 5, label3 = 'Mapping pixels to HKL (3 of 3)';
   const setup = {
     nx, ny, unmasked: Int32Array.from(unmasked), nSub, T, sap: (opts.normalization ?? 'sap') === 'sap', mono: source.monochromator,
@@ -999,14 +1067,16 @@ export async function reduceRigaku(source, fmt, opts = {}, onProgress = () => {}
   if (pool) {
     await pool.all({ type: 'map-init', setup });
     await pool.ordered(frames.length, async (i) => {
-      const f = frames[i], buf = await f.read();
-      return { msg: { type: 'map', buf, h: headers[i], run: f.run, grid }, transfer: [buf] };
+      const f = frames[i], buf = await f.read(), b = frameBackground ? await frameBackground(i) : null;
+      return { msg: { type: 'map', buf, h: headers[i], run: f.run, grid, b }, transfer: [buf, ...(b ? [b.buffer] : [])] };
     }, (i, d) => { applyRecords(acc, d); tick(label3); });
   } else {
-    const out = { x: new Float64Array(3 * np), c: new Int32Array(np), w: new Float64Array(np) }, vox = new Int32Array(np);
+    const out = { x: new Float64Array(3 * np), c: new Int32Array(np), w: new Float64Array(np) };
+    const vox = new Int32Array(np);
     for (let i = 0; i < frames.length; i++) {
       const A = mapFrame(ctx, fmt, await frames[i].read(), headers[i], frames[i].run, out);
-      applyFrame(acc, vox, out.c, out.w, indexFrame(grid, out.x, A, vox), nSub);
+      const b = frameBackground ? await frameBackground(i) : null;
+      applyFrame(acc, vox, out.c, out.w, indexFrame(grid, out.x, A, vox), nSub, b);
       tick(label3);
     }
   }
@@ -1019,18 +1089,22 @@ export async function reduceRigaku(source, fmt, opts = {}, onProgress = () => {}
 
 /**
  * Signal, errors^2 and pixel-frame counts in (L, K, H) order; NaN where nothing was
- * measured. With `inPlace`, the signal reuses acc.S and the counts acc.W (saving memory).
+ * measured. With a background accumulator, signal = (S - backgroundScale x B) / W; the errors
+ * stay the Poisson errors of the measured counts. `zeros` counts voxels with no measured
+ * counts, `negative` (with a background) covered voxels whose signal is below zero. With
+ * `inPlace`, the signal reuses acc.S and the counts acc.W (saving memory).
  */
-export function finishVolume(acc, { inPlace = false } = {}) {
-  const n = acc.S.length;
+export function finishVolume(acc, { inPlace = false, backgroundScale = 1 } = {}) {
+  const n = acc.S.length, B = acc.B ?? null;
   const signal = inPlace ? acc.S : new Float64Array(n), errors2 = new Float64Array(n);
-  let covered = 0, zeros = 0;
+  let covered = 0, zeros = 0, negative = 0;
   for (let v = 0; v < n; v++) {
     const W = acc.W[v];
     if (W > 0) {
       const S = acc.S[v];
       if (S === 0) zeros++;
-      signal[v] = S / W;
+      signal[v] = (B ? S - backgroundScale * B[v] : S) / W;
+      if (signal[v] < 0) negative++;
       errors2[v] = acc.E2[v] / (W * W);
       covered++;
     } else {
@@ -1040,7 +1114,121 @@ export function finishVolume(acc, { inPlace = false } = {}) {
   }
   const events = inPlace ? acc.W : new Float64Array(n);
   for (let v = 0; v < n; v++) events[v] = errors2[v] === errors2[v] ? acc.N[v] : 0;
-  return { signal, errors2, events, covered, zeros };
+  return { signal, errors2, events, covered, zeros, ...(B ? { negative } : {}) };
+}
+
+// ---- Background: air scatter (static) or an empty mount scanned like the experiment ----------
+
+/** How a frame's detector setup differs from the experiment's (`ref`, its first header). */
+function setupDifferences(h, ref) {
+  const near = (a, b, tol) => Math.abs(a - b) <= tol;
+  return [
+    (h.nx !== ref.nx || h.ny !== ref.ny) && `detector ${h.nx} x ${h.ny} pixels`,
+    !near(h.distance, ref.distance, 1e-3) && `distance ${h.distance} mm, not ${ref.distance}`,
+    !near(h.start[1], ref.start[1], 1e-3) && `2theta arm ${h.start[1]} deg, not ${ref.start[1]}`,
+    !(h.pixelMM[0] === ref.pixelMM[0] && h.binning[0] === ref.binning[0] && h.binning[1] === ref.binning[1]) && 'different pixel size or binning',
+    !near(h.wavelengths.alpha12, ref.wavelengths.alpha12, 1e-6) && `wavelength ${h.wavelengths.alpha12} A`,
+  ].filter(Boolean);
+}
+
+const ANGLES = ['omega', 'theta', 'kappa', 'phi'];
+const angleDiff = (a, b) => Math.abs(((a - b) % 360 + 540) % 360 - 180);
+
+/**
+ * Background frames, read once for their headers: every frame must have the experiment's
+ * detector setup. Grouped by run, each with its scan axis, fixed angles and frames in scan order.
+ */
+export async function backgroundIndex(fmt, frames, ref, onFrame = () => {}) {
+  const runs = new Map();
+  let exposure = 0;
+  for (let i = 0; i < frames.length; i++) {
+    const f = frames[i], h = fmt.parseRodHeader(await f.read()), label = `background frame ${f.run ?? ''}_${f.frame ?? i + 1}`;
+    const why = setupDifferences(h, ref);
+    if (why.length) throw new Error(`${label}: not the experiment's setup (${why.join('; ')}).`);
+    exposure += h.exposure;
+    const r = f.run ?? 1;
+    if (!runs.has(r)) runs.set(r, { run: r, axis: h.scanAxis, fixed: h.start.slice(0, 4), frames: [] });
+    runs.get(r).frames.push({ f, h });
+    onFrame();
+  }
+  for (const r of runs.values()) r.frames.sort((a, b) => a.h.start[r.axis] - b.h.start[r.axis]);
+  if (!(exposure > 0)) throw new Error('The background frames have no exposure.');
+  return { runs: [...runs.values()], exposure, frames: frames.length };
+}
+
+/**
+ * The background run measured like a sample run: the same scan axis and the same fixed angles
+ * (the goniometer angles that do not scan), within 0.01 deg. Null when there is none.
+ */
+export function matchBackgroundRun(index, axis, fixed) {
+  return index.runs.find((r) => r.axis === axis && [0, 2, 3].every((k) => k === axis || angleDiff(r.fixed[k], fixed[k]) <= 0.01)) ?? null;
+}
+
+/** Decode and check one background frame; add its counts (unmasked pixels) to `into`. */
+async function addBackgroundFrame(fmt, { f, h }, img, unmasked, into, label) {
+  const buf = await f.read();
+  fmt.decodeTY6(buf, h, img);
+  if (!fmt.checkStats(h, img)) throw new Error(`${label}: decoded pixels do not match the header statistics`);
+  for (let p = 0; p < unmasked.length; p++) into[p] += img[unmasked[p]];
+}
+
+/**
+ * Static background (air scatter with the crystal and its mount out of the beam): for every
+ * unmasked pixel, rate = summed counts / summed exposure over all the frames.
+ */
+export async function staticBackground(fmt, index, ref, unmasked, onFrame = () => {}) {
+  const counts = new Float64Array(unmasked.length), img = new Int32Array(ref.nx * ref.ny);
+  for (const r of index.runs) for (const fr of r.frames) { await addBackgroundFrame(fmt, fr, img, unmasked, counts, `background frame ${r.run}`); onFrame(); }
+  return { mode: 'static', rate: Float64Array.from(counts, (v) => v / index.exposure), counts, exposure: index.exposure };
+}
+
+/**
+ * Rotation-resolved background from one background run (an empty mount scanned like the
+ * sample run): its frames are grouped into bins of `width` degrees of the scan angle, and each
+ * bin gets rate = summed counts / summed exposure per unmasked pixel, at the exposure-weighted
+ * mean angle of its frames (as mdx2 bins its background image series).
+ */
+export async function rotationBackground(fmt, run, ref, unmasked, width, onFrame = () => {}) {
+  const img = new Int32Array(ref.nx * ref.ny), axis = run.axis, a0 = run.frames[0].h.start[axis];
+  const bins = new Map();
+  for (const fr of run.frames) {
+    const mid = 0.5 * (fr.h.start[axis] + fr.h.end[axis]), j = Math.floor((mid - a0) / width + 1e-9);
+    if (!bins.has(j)) bins.set(j, { counts: new Float64Array(unmasked.length), exposure: 0, angleSum: 0 });
+    const b = bins.get(j);
+    await addBackgroundFrame(fmt, fr, img, unmasked, b.counts, `background frame ${run.run}`);
+    b.exposure += fr.h.exposure;
+    b.angleSum += mid * fr.h.exposure;
+    onFrame();
+  }
+  const list = [...bins.keys()].sort((x, y) => x - y).map((j) => bins.get(j));
+  const first = run.frames[0].h, last = run.frames.at(-1).h;
+  return {
+    mode: 'rotation', axis, run: run.run, width, range: [first.start[axis], last.end[axis]],
+    centres: list.map((b) => b.angleSum / b.exposure), exposure: list.map((b) => b.exposure),
+    rates: list.map((b) => Float64Array.from(b.counts, (v) => v / b.exposure)), counts: list.map((b) => b.counts),
+  };
+}
+
+/**
+ * Background counts expected in one sample frame, per unmasked pixel: rate x the frame's
+ * exposure. For a rotation-resolved background the rate is interpolated linearly in the scan
+ * angle between bin centres (held at the end bins), at the frame's mid angle.
+ */
+export function frameBackgroundCounts(model, h) {
+  if (model.mode === 'static') return Float64Array.from(model.rate, (v) => v * h.exposure);
+  const axis = model.axis, mid = 0.5 * (h.start[axis] + h.end[axis]), c = model.centres, n = c.length;
+  if (mid < model.range[0] - 1e-6 || mid > model.range[1] + 1e-6) {
+    throw new Error(`The background run ${model.run} covers ${ANGLES[axis]} ${model.range[0]} to ${model.range[1]} deg, not ${mid}.`);
+  }
+  let r0 = model.rates[0], r1 = r0, u = 0;
+  if (mid >= c[n - 1]) { r0 = r1 = model.rates[n - 1]; } else if (mid > c[0]) {
+    let j = 0;
+    while (c[j + 1] <= mid) j++;
+    r0 = model.rates[j]; r1 = model.rates[j + 1]; u = (mid - c[j]) / (c[j + 1] - c[j]);
+  }
+  const out = new Float64Array(r0.length), t = h.exposure;
+  for (let p = 0; p < out.length; p++) out[p] = ((1 - u) * r0[p] + u * r1[p]) * t;
+  return out;
 }
 
 /** Bin edges of a grid, per axis (H, K, L). */

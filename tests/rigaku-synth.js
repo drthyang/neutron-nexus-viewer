@@ -125,11 +125,13 @@ const erf = (x) => {
 
 /**
  * Simulate an omega-scan experiment with a hexagonal crystal: Gaussian Bragg spots on a
- * flat background, frames as `{ run, frame, bytes }`. Returns the true model too.
+ * flat background, frames as `{ run, frame, bytes }` with `exposure` seconds in their headers.
+ * `airScatter` (counts per pixel and frame: an Int32Array, or a function (run, frame) giving one)
+ * is added to every frame. Returns the true model and the scan settings too.
  */
 export function simulateExperiment({ nx = 160, ny = 100, runs = [[54, 0], [54, 90]], width = 1, start = -70, nFrames = 170, sigmaOmega = 0.6,
   cell = [4.0, 4.0, 5.0, 90, 90, 120], U = mul(rot([1, 0, 0], 23), mul(rot([0, 1, 0], 41), rot([0, 0, 1], 17))),
-  geometry = {}, amplitude = 4000, background = 2, seed = 1 } = {}) {
+  geometry = {}, amplitude = 4000, background = 2, seed = 1, airScatter = null, exposure = 1 } = {}) {
   const g = {
     wavelength: 0.71073, ox: nx / 2 + 3.3, oy: ny / 2 - 2.1, distance: 45, pixelMM: 0.4, d1: 0.3, d2: -0.1,
     theta: 20, thetaOffset: 0, alpha: 90, omegaOffset: 90, kappaOffset: 0, phiOffset: 0, tx: 0, ty: 0, tz: 0, ...geometry,
@@ -158,7 +160,8 @@ export function simulateExperiment({ nx = 160, ny = 100, runs = [[54, 0], [54, 9
     for (let f = 0; f < nFrames; f++) {
       const a0 = start + f * width, a1 = a0 + width;
       const img = new Int32Array(nx * ny);
-      for (let q = 0; q < img.length; q++) img[q] = Math.round(background + (rand() - 0.5) * 2);
+      const air = typeof airScatter === 'function' ? airScatter(r + 1, f + 1) : airScatter;
+      for (let q = 0; q < img.length; q++) img[q] = Math.round(background + (rand() - 0.5) * 2) + (air ? air[q] : 0);
       for (const s of spots) {
         if (s.run !== r + 1) continue;
         const wf = 0.5 * (erf((a1 - s.angle) / (sigmaOmega * Math.SQRT2)) - erf((a0 - s.angle) / (sigmaOmega * Math.SQRT2)));
@@ -171,12 +174,52 @@ export function simulateExperiment({ nx = 160, ny = 100, runs = [[54, 0], [54, 9
         }
       }
       const bytes = writeFrame(img, {
-        nx, ny, start: [a0, g.theta, kappa, phi], end: [a1, g.theta, kappa, phi], zeroCorr: [g.omegaOffset, 0, 0, 0], exposure: 1,
+        nx, ny, start: [a0, g.theta, kappa, phi], end: [a1, g.theta, kappa, phi], zeroCorr: [g.omegaOffset, 0, 0, 0], exposure,
         pixelMM: g.pixelMM, origin: [g.ox, g.oy], distance: g.distance, detRot: [g.d1, g.d2, 0], alpha: g.alpha,
         wavelengths: [0.7093, 0.71359, g.wavelength, 0.63229],
       });
       frames.push({ run: r + 1, frame: f + 1, bytes, img });
     }
   }
-  return { frames, spots, model: { g, ub, cell } };
+  return { frames, spots, nx, ny, model: { g, ub, cell }, scan: { runs, start, width, nFrames } };
+}
+
+/**
+ * Air-scatter frames for a simulated experiment: `n` frames of `pattern` (counts per pixel and
+ * frame) of `exposure` seconds with the experiment's detector setup, as `{ run, frame, bytes }`;
+ * `geometry` overrides the setup.
+ */
+export function backgroundFrames(sim, pattern, n, geometry = {}, exposure = 1) {
+  const g = { ...sim.model.g, ...geometry }, nx = sim.nx, ny = sim.ny;
+  return Array.from({ length: n }, (_, f) => ({
+    run: 1, frame: f + 1,
+    bytes: writeFrame(Int32Array.from(pattern), {
+      nx, ny, start: [f, g.theta, 0, 0], end: [f + 1, g.theta, 0, 0], zeroCorr: [g.omegaOffset, 0, 0, 0], exposure,
+      pixelMM: g.pixelMM, origin: [g.ox, g.oy], distance: g.distance, detRot: [g.d1, g.d2, 0], alpha: g.alpha,
+      wavelengths: [0.7093, 0.71359, g.wavelength, 0.63229],
+    }),
+  }));
+}
+
+/**
+ * A background scan made with the experiment's runs (same kappa, phi and omega frames), e.g.
+ * an empty mount: `pattern(run, frame)` gives the counts per pixel of each frame. `runs`
+ * overrides the [kappa, phi] of each run.
+ */
+export function backgroundScan(sim, pattern, { exposure = 1, runs = sim.scan.runs } = {}) {
+  const g = sim.model.g, { start, width, nFrames } = sim.scan, out = [];
+  runs.forEach(([kappa, phi], r) => {
+    for (let f = 0; f < nFrames; f++) {
+      const a0 = start + f * width;
+      out.push({
+        run: r + 1, frame: f + 1,
+        bytes: writeFrame(Int32Array.from(pattern(r + 1, f + 1)), {
+          nx: sim.nx, ny: sim.ny, start: [a0, g.theta, kappa, phi], end: [a0 + width, g.theta, kappa, phi], zeroCorr: [g.omegaOffset, 0, 0, 0],
+          exposure, pixelMM: g.pixelMM, origin: [g.ox, g.oy], distance: g.distance, detRot: [g.d1, g.d2, 0], alpha: g.alpha,
+          wavelengths: [0.7093, 0.71359, g.wavelength, 0.63229],
+        }),
+      });
+    }
+  });
+  return out;
 }
