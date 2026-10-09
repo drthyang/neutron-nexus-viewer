@@ -55,7 +55,12 @@ These scripts need numpy and h5py, and matplotlib for the colormaps:
 
 `tests/node-worker.js` wraps `node:worker_threads` as a Web Worker, so the tests run the parallel reduction and check that it is bit-identical to the serial one. `tests/rigaku-synth.js` writes synthetic Rigaku frames (a TY6 encoder and a frame writer) and simulates a rotation experiment, with optional air scatter and matching background frames or scans, for `tests/rigaku.test.js`; no real frames are in the repository. `tests/rigaku-local.test.js` decodes every frame of a real experiment and checks it against the header statistics when `RIGAKU_DIR` points at one (`RIGAKU_DIR=/path/to/experiment npm test`); without it, it is skipped.
 
-`docs/screenshot.png` is a capture of the example (`?demo`: 6/mmm averaging and a 1-voxel edge mask) at 1440×900 and 1.5× pixel ratio.
+`docs/screenshot.png` is a capture of the example (`?demo`: 6/mmm averaging and a 1-voxel edge mask) with a line cut along (0.5, 0, L) in the fourth view, at 1440×900 and 1.5× pixel ratio. `tools/make_screenshot.mjs` writes it with a headless Chrome and a temporary profile (`CHROME` points at another browser binary):
+
+```bash
+python3 -m http.server 8000 &
+node tools/make_screenshot.mjs http://localhost:8000/?demo docs/screenshot.png
+```
 
 ## Dependencies
 

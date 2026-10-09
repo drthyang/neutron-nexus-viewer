@@ -1897,7 +1897,7 @@ function showMask(seconds) {
   const parts = [];
   if (radius) parts.push(`${pct(edge / measured)} within ${radius} voxel${radius === 1 ? '' : 's'} of coverage edges`);
   if (k) parts.push(`${pct(outlier / measured)} above ${k}σ of their ${group} equivalents`);
-  statusEl.textContent = `${parts.join(', ')}${seconds ? ` (${seconds.toFixed(1)} s)` : ''}.`;
+  statusEl.textContent = `${parts.join(', ')}${seconds >= 0.1 ? ` (${seconds.toFixed(1)} s)` : ''}.`;
 }
 
 // ---- Export for NEBULA3D ----------------------------------------------------------------

@@ -6,8 +6,8 @@
 [![Runs in the browser](https://img.shields.io/badge/runs-in%20your%20browser-6b6b6b)](https://drthyang.github.io/neutron-nexus-viewer/)
 
 **Reciprocal-space slices and line cuts of 3-D neutron and X-ray scattering data, with
-symmetry averaging, artifact masking, dataset comparison, a 3-D view, I(Q) and reduction of
-raw Rigaku single-crystal X-ray frames, all in your browser.**
+symmetry averaging, artifact masking, dataset comparison, a 3-D view, I(Q), reindexing with a
+new UB and reduction of raw Rigaku single-crystal X-ray frames, all in your browser.**
 
 **▶ Try it: [drthyang.github.io/neutron-nexus-viewer](https://drthyang.github.io/neutron-nexus-viewer/)** —
 nothing to install, and your data never leaves your machine. Open a Mantid `.nxs`
@@ -15,7 +15,7 @@ file, or [the example](https://drthyang.github.io/neutron-nexus-viewer/?demo): o
 short-range-order diffuse scattering condenses into superlattice peaks.
 
 <p align="center">
-  <img src="docs/screenshot.png" alt="NeXus Viewer comparing the example crystal at 300 K and 10 K: the HK, HL and KL slices are each split along their diagonal, with 300 K in the lower-left half and 10 K in the upper-right half. A line cut drawn on the HL slice along L through the M point (0.5, 0, L) is plotted in the fourth view: at 300 K a broad, continuous diffuse rod, at 10 K sharp superlattice peaks at even L. The control panel shows the processing pipeline with 6/mmm symmetry averaging and a mask, and the header row the click modes Navigate, Zoom, Move and Cut, the A / Split / B switch and the color scale." width="100%" />
+  <img src="docs/screenshot.png" alt="NeXus Viewer comparing the example crystal at 300 K and 10 K: the HK, HL and KL slices are each split along their diagonal, with 300 K in the lower-left half and 10 K in the upper-right half. A line cut drawn on the HL slice along L through the M point (0.5, 0, L) is plotted in the fourth view: at 300 K a broad, continuous diffuse rod, at 10 K sharp superlattice peaks at even L. The control panel shows the processing pipeline, one line per stage, with 6/mmm symmetry averaging, a mask and the Reindex card, and the header row the click modes, the A / Split / B switch and the color scale." width="100%" />
 </p>
 
 ## Goals
@@ -78,9 +78,9 @@ Tests (`npm install && npm test`), the code layout and deployment are covered in
 
 | Document | What it covers |
 | --- | --- |
-| [User guide](docs/USER_GUIDE.md) | The interface on each kind of screen, every control, line cuts, comparison, layouts, export, remote files and supported formats |
-| [Method](docs/METHOD.md) | How slices, line cuts, symmetry averaging, masking, comparison, the 3-D view, I(Q) and the NEBULA3D export are computed, and how they are validated |
-| [Development](docs/DEVELOPMENT.md) | Code layout, tests and fixtures, example data, dependencies and deployment |
+| [User guide](docs/USER_GUIDE.md) | The interface on each kind of screen, every control, line cuts, comparison, reindexing with a new UB, Rigaku reduction, layouts, export, remote files and supported formats |
+| [Method](docs/METHOD.md) | How slices, line cuts, symmetry averaging, masking, comparison, the 3-D view, I(Q), reindexing, the NEBULA3D export and the Rigaku reduction are computed, and how they are validated |
+| [Development](docs/DEVELOPMENT.md) | Code layout, tests and fixtures, example data, the screenshot, dependencies and deployment |
 
 ## License
 
