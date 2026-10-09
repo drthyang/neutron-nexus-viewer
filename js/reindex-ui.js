@@ -45,11 +45,13 @@ export function setupReindex(hooks) {
     $('ri-progress-fill').style.width = `${Math.round(100 * Math.min(1, Math.max(0, fraction)))}%`;
   };
 
-  /** The panel card: what A is indexed with, or why it cannot be reindexed. */
+  /** The panel card: whether A has a UB to reindex from, and why not. */
   function refresh() {
     const A = hooks.datasetA(), why = reindexProblem(A);
     $('reindex-open').disabled = !!why;
-    note($('reindex-status'), why || `Indexed with the file's UB: ${cellText(A.lattice)}.`);
+    $('reindex-state').textContent = why ? 'unavailable' : 'file UB';
+    $('reindex-state').title = why ? '' : `A is indexed with its file's UB: ${cellText(A.lattice)}`;
+    note($('reindex-status'), why);
   }
 
   // ---- UB file ----------------------------------------------------------------------

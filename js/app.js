@@ -604,7 +604,7 @@ function describe() {
   $('dataset-facts').textContent = datasetFacts(meta);
   $('dataset-facts').hidden = false;
   $('open').title = `${others().length ? 'Dataset A: ' : ''}${sourceName} (${mb(sourceSize)})\n${datasetDetails(meta, mask)}\nClick to open another file.`;
-  $('pipe-measured').textContent = `${(stats.valid / 1e6).toFixed(1)} M · ${pct(stats.fraction)} of the grid`;
+  $('pipe-measured').textContent = `${pct(stats.fraction)} · ${(stats.valid / 1e6).toFixed(1)} M`;
 
   // Full details in the info popover.
   const items = [
@@ -675,7 +675,7 @@ function updateStates() {
   $('sym-state').className = `state${sym ? ' on' : ''}`;
   $('symmetry').classList.toggle('active', sym);
   $('pipe-sym').className = sym ? 'on' : 'off';
-  $('pipe-sym-text').textContent = sym ? `${symmetry.name} · ${symmetry.ops.length} operations` : 'none — voxels used as measured';
+  $('pipe-sym-text').textContent = sym ? `${symmetry.name} · ${symmetry.ops.length} ops` : 'none';
   const removed = mask ? pct((mask.edge + mask.outlier) / mask.measured) : null;
   if (!$('mask-apply').disabled) {
     $('mask-state').textContent = mask ? `${removed} removed` : 'off';
@@ -684,13 +684,10 @@ function updateStates() {
   $('mask').classList.toggle('active', !!mask);
   $('mask').classList.toggle('mask-on', !!mask);
   $('pipe-mask').className = mask ? 'ok' : 'off';
-  $('pipe-mask-text').textContent = mask
-    ? `${removed} removed${mask.radius ? ` · edge ${mask.radius}` : ''}${mask.k ? ` · ${mask.k}σ outliers` : ''}${$('mask-removed').checked ? ' · showing removed' : ''}`
-    : 'off — all measured voxels';
+  $('pipe-mask-text').textContent = mask ? `${removed} removed${$('mask-removed').checked ? ' · shown' : ''}` : 'off';
   // One-line summaries shown on collapsed panel sections.
   const shown = ['A', ...readyOthers().map((o) => o.letter)];
-  $('pipe-views').textContent = shown.length > 1
-    ? `3 slices, ${shown.join(' | ')} ${others().length > 1 ? 'quadrants' : 'split'} + 3-D (A) + I(Q)` : '3 slices + 3-D + I(Q)';
+  $('pipe-views').textContent = shown.length > 1 ? `${shown.join(' | ')} ${others().length > 1 ? 'quadrants' : 'split'}` : 'A';
   $('sum-processing').textContent = `${mask ? `mask ${removed}` : 'no mask'} · ${sym ? symmetry.name : 'no symmetry'}`;
 }
 
@@ -1839,9 +1836,9 @@ function showSymmetry() {
   const { ops } = symmetry, statusEl = $('sym-status');
   statusEl.className = 'note';
   if (ops.length === 1) {
-    statusEl.textContent = 'No symmetry averaging: each voxel is used as measured.';
+    statusEl.textContent = '';
   } else {
-    let text = `${ops.length} operations; equivalent voxels are pooled with equal weight.`;
+    let text = `${ops.length} operations, pooled with equal weight.`;
     const hkl = meta.dims.every((d) => d.basis) || meta.dims.every((d) => isDirect(d) && d.length > 0);
     if (meta.lattice && hkl) {
       const change = metricChange(ops, meta.lattice);
@@ -1850,10 +1847,10 @@ function showSymmetry() {
           + 'They are not symmetries of this lattice; check the setting.';
         statusEl.className = 'note warn';
       } else {
-        text += ` Cell metric (${meta.lattice.source}) preserved to ${(100 * change).toFixed(2)}%.`;
+        text += ` Metric (${meta.lattice.source}) kept to ${(100 * change).toFixed(2)}%.`;
       }
     } else if (!hkl) {
-      text += ' Axes have no HKL basis or cell axes, so operations act on the display axes directly.';
+      text += ' No HKL basis: they act on the display axes.';
     }
     statusEl.textContent = text;
   }
@@ -1893,15 +1890,14 @@ function showMask(seconds) {
   statusEl.className = 'note';
   updateStates();
   if (!mask) {
-    statusEl.textContent = 'No mask: all measured voxels are used.';
+    statusEl.textContent = '';
     return;
   }
   const { measured, edge, outlier, radius, k, group } = mask;
   const parts = [];
   if (radius) parts.push(`${pct(edge / measured)} within ${radius} voxel${radius === 1 ? '' : 's'} of coverage edges`);
   if (k) parts.push(`${pct(outlier / measured)} above ${k}σ of their ${group} equivalents`);
-  statusEl.className = 'note ok';
-  statusEl.textContent = `Removed ${pct((edge + outlier) / measured)} of measured voxels: ${parts.join(', ')}${seconds ? ` (${seconds.toFixed(1)} s)` : ''}.`;
+  statusEl.textContent = `${parts.join(', ')}${seconds ? ` (${seconds.toFixed(1)} s)` : ''}.`;
 }
 
 // ---- Export for NEBULA3D ----------------------------------------------------------------
@@ -1925,11 +1921,11 @@ function showExport() {
   exportState('', 'ready');
   const sym = symmetry.ops.length > 1, voxels = plan.shape.reduce((a, b) => a * b);
   const parts = [
-    `${plan.shape.join(' × ')} (H × K × L)${plan.padded ? ', padded to be symmetric about 0' : ''}`,
-    sym ? `${symmetry.name} averaged` : 'not symmetrized',
+    `${plan.shape.join(' × ')}${plan.padded ? ' (padded about 0)' : ''}`,
+    sym ? symmetry.name : 'not symmetrized',
     mask ? `mask ${pct((mask.edge + mask.outlier) / mask.measured)}` : 'no mask',
   ];
-  if (readyOthers().length) parts.push('dataset A');
+  if (readyOthers().length) parts.push('A');
   const warnings = [];
   if (!sym) warnings.push('NEBULA3D expects a symmetrized volume: choose a Laue class first.');
   if (voxels > 80e6) warnings.push(`NEBULA3D in the browser handles up to about 80 M voxels; this is ${Math.round(voxels / 1e6)} M, so use its desktop app.`);
@@ -1989,7 +1985,7 @@ function exportState(kind, state) {
   $('export-state').className = `state ${kind}`.trim();
   $('sum-export').textContent = `I(Q) · NEBULA3D · ${state}`;
   $('pipe-export').className = kind === 'ok' ? 'ok' : 'off';
-  $('pipe-export-text').textContent = { sent: 'volume sent to NEBULA3D', saved: 'volume saved for NEBULA3D' }[state] ?? 'next analysis: export the volume';
+  $('pipe-export-text').textContent = { sent: 'sent', saved: 'saved' }[state] ?? 'not yet';
 }
 
 /**
@@ -2471,17 +2467,17 @@ function showPowder() {
     state('', powder.a.error ? 'unavailable' : 'off');
     statusEl.className = powder.a.error ? 'note error' : 'note';
     statusEl.textContent = powder.a.error
-      || (powder.requested ? 'Computed when its view is shown.' : 'Not computed yet: choose Show I(Q), or I(Q) in the header of the 3-D view.');
+      || (powder.requested ? 'Computed when its view is shown.' : '');
     powder.caption.textContent = powder.a.error ? 'unavailable' : '';
     powder.caption.title = powder.a.error;
     return;
   }
   const sets = layers.filter(([, l]) => l.data);
   const last = Math.max(...sets.map(([, l]) => lastShell(l.data))), end = A.edges[last + 1];
-  const errors = sets.map(([k, l]) => [k, l.data.errors ? `σ from ${l.data.errors}` : l.data.errorsNote || 'no uncertainties in the file']);
+  const errors = sets.map(([k, l]) => [k, l.data.errors ? `σ from ${l.data.errors}` : l.data.errorsNote || 'no σ in the file']);
   const facts = [
     `${last + 1} shells (${binsLabel(powder.plan.bins)}) from ${fmt(A.edges[0], 3)} to ${fmt(end, 2)} Å⁻¹`,
-    A.order > 1 ? `${A.symmetry} averaged` : 'not symmetrized',
+    A.order > 1 ? A.symmetry : 'not symmetrized',
     A.masked && mask ? `mask ${pct((mask.edge + mask.outlier) / mask.measured)}` : 'no mask',
     ...(errors.every(([, t]) => t === errors[0][1]) ? [errors[0][1].replace('the file', sets.length > 1 ? 'the files' : 'the file')] : errors.map(([k, t]) => `${k}: ${t}`)),
   ];

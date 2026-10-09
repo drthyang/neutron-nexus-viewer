@@ -213,7 +213,9 @@ body.panel-collapsed .app { grid-template-columns: 0 minmax(0, 1fr); }
 body.panel-collapsed .panel { visibility: hidden; }
 .panel { display: flex; flex-direction: column; min-height: 0; overflow-x: hidden; overflow-y: auto; background: var(--surface); border-right: 1px solid var(--border); }
 /* Long names and numbers wrap inside the panel instead of widening it. */
-.panel .note, .panel .sub-hint, .panel .kv dd, .panel .pipe-name { overflow-wrap: anywhere; }
+.panel .note, .panel .kv dd { overflow-wrap: anywhere; }
+/* Status lines are left empty when the badge says it all. */
+.panel .note:empty { display: none; }
 .panel > * { flex: none; }
 /* Copyright, license and documentation, as in the other apps. */
 .credit { font-size: 1.1rem; color: var(--text-3); }
@@ -238,7 +240,8 @@ body.panel-collapsed .panel { visibility: hidden; }
 .sub.active.mask-on { border-color: var(--green-line); background: #f4fbf8; }
 .sub-head { display: flex; align-items: center; gap: 0.8rem; }
 .sub-title { font-size: 1.25rem; font-weight: 650; }
-.sub-hint { font-size: 1.1rem; color: var(--text-3); line-height: 1.45; margin: -0.4rem 0 0; }
+/* What a card does is its title's tooltip. */
+.sub-head[title] .sub-title { cursor: help; }
 .state { margin-left: auto; display: inline-flex; align-items: center; height: 2rem; padding: 0 0.8rem; border-radius: 999px; font-family: var(--font-mono); font-size: 1.05rem; font-weight: 650; background: var(--surface-3); color: var(--text-3); white-space: nowrap; }
 .state.on { background: var(--accent); color: #fff; }
 .state.ok { background: var(--green); color: #fff; }
@@ -253,6 +256,10 @@ body.panel-collapsed .panel { visibility: hidden; }
 .kv dd { margin: 0; font-family: var(--font-mono); font-size: 1.15rem; color: var(--text); line-height: 1.5; word-break: break-word; }
 .ops { font-size: 1.1rem; color: var(--text-3); }
 .ops summary { cursor: pointer; font-size: 1.15rem; color: var(--text-2); }
+/* Help text, folded until asked for. */
+.help { font-size: 1.2rem; line-height: 1.5; color: var(--text-3); }
+.help summary { cursor: pointer; font-size: 1.15rem; color: var(--text-2); }
+.help p { margin: 0.6rem 0 0; }
 .ops div { margin-top: 0.8rem; font-family: var(--font-mono); line-height: 1.8; word-spacing: 0.6rem; color: var(--text-2); }
 .compare-actions { justify-content: flex-end; }
 .file-line { display: flex; align-items: center; gap: 0.8rem; min-width: 0; padding: 0.7rem 0.9rem; border: 1px solid var(--border); border-radius: var(--radius-sm); background: var(--surface); font-size: 1.2rem; font-weight: 600; }
@@ -266,7 +273,7 @@ body.panel-collapsed .panel { visibility: hidden; }
 
 /* Pipeline: measured -> mask -> symmetry -> views */
 .pipeline { list-style: none; margin: 0; padding: 0; display: flex; flex-direction: column; }
-.pipeline li { position: relative; display: grid; grid-template-columns: 1.8rem minmax(0, 1fr) auto; align-items: center; gap: 1rem; min-height: 3.4rem; padding: 0.4rem 0.8rem 0.4rem 0.4rem; border-radius: 0.8rem; }
+.pipeline li { position: relative; display: grid; grid-template-columns: 1.8rem minmax(0, 1fr); align-items: center; gap: 1rem; min-height: 2.8rem; padding: 0.2rem 0.8rem 0.2rem 0.4rem; border-radius: 0.8rem; }
 .pipeline li[data-target] { cursor: pointer; }
 .pipeline li[data-target]:hover { background: var(--surface-2); }
 .pipeline li::before { content: ""; position: absolute; left: 1.2rem; top: -0.4rem; bottom: -0.4rem; width: 2px; background: var(--border); z-index: 0; }
@@ -275,8 +282,9 @@ body.panel-collapsed .panel { visibility: hidden; }
 .pipe-dot { position: relative; z-index: 1; width: 1.2rem; height: 1.2rem; margin-left: 0.3rem; border-radius: 50%; background: var(--surface); border: 2px solid var(--border-strong); }
 .pipeline li.on .pipe-dot { border-color: var(--accent); background: var(--accent); }
 .pipeline li.ok .pipe-dot { border-color: var(--green); background: var(--green); }
-.pipe-name { font-size: 1.25rem; font-weight: 600; }
-.pipe-name small { display: block; font-weight: 400; font-size: 1.1rem; color: var(--text-3); font-family: var(--font-mono); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+/* One line per step: the name, and its state on the right. */
+.pipe-name { display: flex; align-items: baseline; gap: 1rem; min-width: 0; font-size: 1.25rem; font-weight: 600; white-space: nowrap; }
+.pipe-name small { min-width: 0; margin-left: auto; font-weight: 400; font-size: 1.1rem; color: var(--text-3); font-family: var(--font-mono); overflow: hidden; text-overflow: ellipsis; }
 .pipeline li.off .pipe-name { color: var(--text-2); }
 
 /* ---- work area: header row + views --------------------------------------------------- */
@@ -374,6 +382,7 @@ body.panel-collapsed .panel { visibility: hidden; }
 .pop-title { font-size: 1.25rem; font-weight: 650; }
 .pop-body { padding: 1.4rem; display: flex; flex-direction: column; gap: 1.2rem; }
 .field { display: flex; flex-direction: column; gap: 0.6rem; min-width: 0; }
+.method { display: flex; flex-direction: column; gap: 1.2rem; margin-top: 1rem; }
 .method h4 { margin: 0 0 0.3rem; font-size: 1rem; font-weight: 650; letter-spacing: 0.07em; text-transform: uppercase; color: var(--text-2); }
 .method p { margin: 0; font-size: 1.2rem; line-height: 1.55; color: var(--text-3); }
 .pop-links { display: flex; align-items: center; gap: 1.2rem; font-size: 1.15rem; }
@@ -640,11 +649,10 @@ body.dragging.drop-b::after { content: "Drop to compare as dataset " attr(data-d
         </ol>
 
         <div id="symmetry" class="sub">
-          <div class="sub-head">
+          <div class="sub-head" title="Averages each voxel with its symmetry-equivalent voxels.">
             <svg width="16" height="16" viewBox="0 0 18 18" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linejoin="round" aria-hidden="true"><path d="M9 1.8 15.3 5.4v7.2L9 16.2 2.7 12.6V5.4Z"/><circle cx="9" cy="9" r="2"/></svg>
             <span class="sub-title">Symmetry averaging</span><span id="sym-state" class="state">none</span>
           </div>
-          <p class="sub-hint">Averages each voxel with its symmetry-equivalent voxels.</p>
           <div class="prow"><label class="plabel" for="sym-preset">Laue class</label><select id="sym-preset"></select></div>
           <div class="field">
             <label class="plabel label" for="sym-ops" title="Operations in h,k,l (or real-space x,y,z), separated by ;">Generators</label>
@@ -655,17 +663,16 @@ body.dragging.drop-b::after { content: "Drop to compare as dataset " attr(data-d
         </div>
 
         <div id="mask" class="sub">
-          <div class="sub-head">
+          <div class="sub-head" title="Drops bad voxels (detector edges, outliers) before averaging.">
             <svg width="16" height="16" viewBox="0 0 18 18" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M9 2.5 16 6 9 9.5 2 6Z"/><path d="M3.5 9.25 2 10l7 3.5 7-3.5-1.5-.75"/><path d="M3.5 13.25 2 14l7 3.5 7-3.5-1.5-.75" opacity="0.55"/></svg>
             <span class="sub-title">Mask</span><span id="mask-state" class="state">off</span>
           </div>
-          <p class="sub-hint">Drops bad voxels (detector edges, outliers) before averaging.</p>
           <div class="pair">
             <label class="field" title="Remove measured voxels within this many voxels of unmeasured ones (detector and coverage edges)"><span class="label">Edge erosion</span><input id="mask-erode" class="num" type="number" min="0" max="10" step="1" value="1"></label>
             <label class="field" title="Remove voxels more than k robust sigmas above the median of their symmetry equivalents; 0 disables. Needs a Laue class."><span class="label">Outlier cut k·σ</span><input id="mask-k" class="num" type="number" min="0" step="0.5" value="0"></label>
           </div>
           <span class="inline"><button id="mask-apply" class="btn btn-primary" type="button" style="flex: 1">Apply mask</button><button id="mask-clear" class="btn btn-ghost" type="button" disabled>Clear</button></span>
-          <p id="mask-status" class="note">No mask: all measured voxels are used.</p>
+          <p id="mask-status" class="note"></p>
           <div class="inline" style="justify-content: space-between">
             <label class="switch" title="Average only the removed voxels, to check what the mask takes out"><input id="mask-removed" type="checkbox" disabled><span class="switch-track"></span><span class="switch-label">Show removed voxels</span></label>
             <button id="mask-download" class="btn btn-ghost btn-xs" type="button" disabled title="Gzipped .npy in signal order: 1 = edge, 2 = outlier">Download</button>
@@ -673,11 +680,10 @@ body.dragging.drop-b::after { content: "Drop to compare as dataset " attr(data-d
         </div>
 
         <div id="reindex-sub" class="sub">
-          <div class="sub-head">
+          <div class="sub-head" title="Resamples the volume onto the HKL grid of another UB matrix, such as a refined one or another cell setting, as a new dataset.">
             <svg width="16" height="16" viewBox="0 0 18 18" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linejoin="round" aria-hidden="true"><rect x="2" y="2" width="9" height="9" rx="1"/><path d="M11.5 6.5 16 11l-4.5 4.5L7 11Z" opacity="0.6"/></svg>
-            <span class="sub-title">Reindex · new UB</span>
+            <span class="sub-title">Reindex · new UB</span><span id="reindex-state" class="state">—</span>
           </div>
-          <p class="sub-hint">Resamples the volume onto the HKL grid of another UB matrix, such as a refined one or another cell setting, as a new dataset.</p>
           <span class="inline"><button id="reindex-open" class="btn btn-ghost" type="button" style="flex: 1" disabled title="An ISAW UB file (.mat), as Mantid's SaveIsawUB writes it">Load ISAW UB file…</button></span>
           <p id="reindex-status" class="note"></p>
         </div>
@@ -688,20 +694,18 @@ body.dragging.drop-b::after { content: "Drop to compare as dataset " attr(data-d
       <button class="psec-head" type="button" aria-expanded="true"><svg class="chev" width="12" height="12" viewBox="0 0 12 12" aria-hidden="true"><path d="M2.5 4.5 6 8l3.5-3.5" fill="none" stroke="currentColor" stroke-width="1.4" stroke-linecap="round" stroke-linejoin="round"/></svg><span class="psec-title">Export</span><span id="sum-export" class="psec-sum">I(Q) · NEBULA3D</span></button>
       <div class="psec-body">
         <div id="powder" class="sub">
-          <div class="sub-head">
+          <div class="sub-head" title="Reduces the masked, symmetrized volume to 1-D: the mean intensity in each |Q| shell, over the part of the shell that has data.">
             <svg width="16" height="16" viewBox="0 0 18 18" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M2.5 2.5v13h13"/><path d="M4.5 12.5c1.5 0 2-7.5 3.2-7.5s1.3 5 2.6 5 1.4-2.5 2.4-2.5 1.2 3 2.3 3"/></svg>
             <span class="sub-title">I(Q) · powder average</span><span id="powder-state" class="state">off</span>
           </div>
-          <p class="sub-hint">Reduces the masked, symmetrized volume to 1-D: the mean intensity in each |Q| shell, over the part of the shell that has data.</p>
           <p id="powder-status" class="note"></p>
           <span class="inline"><button id="powder-show" class="btn btn-ghost" type="button" style="flex: 1" title="Show I(Q) in the fourth view, in place of the 3-D view">Show I(Q)</button><button id="powder-download" class="btn btn-ghost" type="button" title="Save I(Q) as text: Q, I, σ, coverage and voxels per shell">Download</button></span>
         </div>
         <div id="export" class="sub">
-          <div class="sub-head">
+          <div class="sub-head" title="Hands the masked, symmetrized volume to NEBULA3D for 3D-ΔPDF analysis, in a new tab or as a file.">
             <svg width="16" height="16" viewBox="0 0 18 18" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M9 11V2.5M5.5 6 9 2.5 12.5 6"/><path d="M3 10.5v3.5a1.5 1.5 0 0 0 1.5 1.5h9a1.5 1.5 0 0 0 1.5-1.5v-3.5"/></svg>
             <span class="sub-title">NEBULA3D · 3D-ΔPDF</span><span id="export-state" class="state">ready</span>
           </div>
-          <p class="sub-hint">The last step here: hand the masked, symmetrized volume to NEBULA3D for 3D-ΔPDF analysis, in a new tab or as a file.</p>
           <p id="export-status" class="note"></p>
           <span class="inline"><button id="export-open" class="btn btn-primary" type="button" style="flex: 1" title="Open NEBULA3D in a new tab and load this volume there">Open in NEBULA3D ↗</button><button id="export-run" class="btn btn-ghost" type="button" title="Save the file, to load it in NEBULA3D with Load volume…">Download</button></span>
         </div>
@@ -770,7 +774,8 @@ body.dragging.drop-b::after { content: "Drop to compare as dataset " attr(data-d
   <div class="pop-head"><span class="pop-title">Reduce Rigaku XRD frames</span>
     <button id="rk-close" class="icon-btn" type="button" title="Close" aria-label="Close"><svg width="12" height="12" viewBox="0 0 12 12" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" aria-hidden="true"><path d="M2 2l8 8M10 2l-8 8"/></svg></button></div>
   <div class="pop-body">
-    <p class="note">Choose a CrysAlisPro experiment folder: the <code>frames/*.rod_img</code> with the <code>.par</code> and <code>expinfo/*_crystal.ini</code> next to them. The frames are decoded, a detector mask is built, Bragg peaks are found and the geometry is refined against them, and every pixel is mapped into an HKL grid, all in this tab, on all CPU cores; nothing is uploaded. About 40 s for 3,600 frames on an 8-core laptop. <a href="https://github.com/drthyang/neutron-nexus-viewer/blob/main/docs/METHOD.md#rigaku-reduction" target="_blank" rel="noopener noreferrer">Method</a></p>
+    <p class="note">Choose a CrysAlisPro experiment folder: the <code>frames/*.rod_img</code> with the <code>.par</code> and <code>expinfo/*_crystal.ini</code>. It is reduced in this tab; nothing is uploaded.</p>
+    <details class="help"><summary>What the reduction does</summary><p>The frames are decoded, a detector mask is built, Bragg peaks are found and the geometry is refined against them, and every pixel is mapped into an HKL grid, on all CPU cores. About 40 s for 3,600 frames on an 8-core laptop. <a href="https://github.com/drthyang/neutron-nexus-viewer/blob/main/docs/METHOD.md#rigaku-reduction" target="_blank" rel="noopener noreferrer">Method</a></p></details>
     <div class="inline"><button id="rk-folder" class="btn btn-primary" type="button">Choose folder…</button></div>
     <input id="rk-input" type="file" webkitdirectory multiple hidden>
     <div id="rk-options" hidden>
@@ -783,7 +788,7 @@ body.dragging.drop-b::after { content: "Drop to compare as dataset " attr(data-d
           <label id="rk-bkg-bin-wrap" class="rk-bkg-scale">ω bin (°) <input id="rk-bkg-bin" class="num" type="number" min="0" step="any" value="5" title="Background frames are averaged in bins of this width of the scan angle, then interpolated to each frame"></label>
           <label class="rk-bkg-scale">Scale <input id="rk-bkg-scale" class="num" type="number" min="0" step="any" value="1" title="Factor on the background before subtraction; 1 subtracts it as measured"></label></div>
         <input id="rk-bkg-input" type="file" webkitdirectory multiple hidden>
-        <p id="rk-bkg-note" class="note">Frames at the experiment's distance, 2θ arm, beamstop, collimator and exposure: an empty mount scanned with the same runs, or air with the crystal and mount out of the beam. They are subtracted per pixel as counts (rate × each frame's exposure), before the solid-angle and polarization correction.</p></div>
+        <p id="rk-bkg-note" class="note" title="Frames at the experiment's distance, 2θ arm, beamstop, collimator and exposure. They are subtracted per pixel as counts (rate × each frame's exposure), before the solid-angle and polarization correction.">An empty mount scanned with the same runs, or air with the crystal out of the beam, at the experiment's setup.</p></div>
       <div class="field"><span class="label">Output cell (HKL indexing)</span>
         <div id="rk-cell" class="segmented fill" data-value="ub"><button type="button" data-value="ub" class="on">CrysAlis cell</button><button type="button" data-value="x2">2 × 2 × 2 cell</button><span id="rk-ortho-wrap" hidden style="display: contents"><button type="button" data-value="ortho" title="a′ = a, b′ = a + 2b, c′ = c">Orthohexagonal</button></span><span id="rk-match-wrap" hidden style="display: contents"><button type="button" data-value="match">Match dataset A</button></span></div>
         <div id="rk-matrix" class="rk-matrix" role="group" aria-label="Output cell vectors in units of the refined cell vectors a, b, c">
@@ -820,7 +825,7 @@ body.dragging.drop-b::after { content: "Drop to compare as dataset " attr(data-d
   <div class="pop-head"><span class="pop-title">Reindex with a new UB</span>
     <button id="ri-close" class="icon-btn" type="button" title="Close" aria-label="Close"><svg width="12" height="12" viewBox="0 0 12 12" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" aria-hidden="true"><path d="M2 2l8 8M10 2l-8 8"/></svg></button></div>
   <div class="pop-body">
-    <p class="note">Both UBs map indices to the same Q in the sample frame, so the new indices are H′ = T·H with T = UB<sub>new</sub>⁻¹·UB<sub>old</sub>. Each new voxel averages sub-samples spread over it, each taking the measured voxel of A it falls in. The volume is used as measured: mask and symmetrize the result. <a href="https://github.com/drthyang/neutron-nexus-viewer/blob/main/docs/METHOD.md#reindexing-with-a-new-ub" target="_blank" rel="noopener noreferrer">Method</a></p>
+    <p class="note">New indices H′ = T·H with T = UB<sub>new</sub>⁻¹·UB<sub>old</sub>. A is resampled as measured: mask and symmetrize the result. <a href="https://github.com/drthyang/neutron-nexus-viewer/blob/main/docs/METHOD.md#reindexing-with-a-new-ub" target="_blank" rel="noopener noreferrer">Method</a></p>
     <div class="inline"><button id="ri-file" class="btn btn-ghost" type="button">Choose another UB file…</button></div>
     <input id="ri-input" type="file" accept=".mat,.txt,.ub" hidden>
     <div id="ri-options" hidden>
@@ -850,13 +855,13 @@ body.dragging.drop-b::after { content: "Drop to compare as dataset " attr(data-d
   <div class="pop-body"><dl id="info-meta" class="kv" style="grid-template-columns: max-content minmax(0, 1fr)"></dl></div>
   <div class="pop-head" style="border-top: 1px solid var(--border)"><span class="pop-title">Method</span>
     <span class="pop-links" title="Documentation on GitHub"><a href="https://github.com/drthyang/neutron-nexus-viewer/blob/main/docs/USER_GUIDE.md" target="_blank" rel="noopener noreferrer">User guide</a><a href="https://github.com/drthyang/neutron-nexus-viewer/blob/main/docs/METHOD.md" target="_blank" rel="noopener noreferrer">Method</a><a href="https://github.com/drthyang/neutron-nexus-viewer/blob/main/docs/DEVELOPMENT.md" target="_blank" rel="noopener noreferrer">Development</a></span></div>
-  <div class="pop-body method">
+  <div class="pop-body"><details class="help"><summary>How slices, symmetry, the mask, the 3-D view and I(Q) are computed</summary><div class="method">
     <div><h4>Slices</h4><p>Each pixel is the equal-weight mean of the unique finite, unmasked voxels in the slab, pooled with all their symmetry equivalents. No smoothing or interpolation; grey means no measured contribution.</p></div>
     <div><h4>Symmetry</h4><p>Generators are closed into a group, and every operation must map bin centers onto bin centers. A warning appears when the operations change the cell metric by more than 2%. Oblique axes use the reciprocal metric from the UB matrix.</p></div>
     <div><h4>Mask</h4><p>Edge erosion removes measured voxels near unmeasured ones, where detector edges leave spurious values; the outlier cut removes voxels far above the median of their equivalents (1.4826·MAD). The mask acts before averaging.</p></div>
     <div><h4>3-D view</h4><p>The volume is binned by an odd factor with blocks aligned to the origin, symmetrized and masked the same way, and drawn as a transparent isosurface with the current slices as planes.</p></div>
     <div><h4>I(Q)</h4><p>Each shell's intensity is the mean over the voxels with data in it, so gaps and masks do not lower it. Symmetry orbits count with their multiplicity, voxels are split into sub-cells shared between shells, and σ is propagated from the file's uncertainties.</p></div>
-  </div>
+  </div></details></div>
 </div>
 
 <div id="pop-display" class="popover" role="dialog" aria-label="Display options" hidden style="width: 30rem">
@@ -883,14 +888,12 @@ body.dragging.drop-b::after { content: "Drop to compare as dataset " attr(data-d
 <div id="pop-iq" class="popover" role="dialog" aria-label="I(Q) options" hidden style="width: 32rem">
   <div class="pop-head"><span class="pop-title">I(Q)</span></div>
   <div class="pop-body">
-    <div class="field"><span class="label">Q bins (ΔQ field)</span>
-      <p class="note"><code>0.05</code>: shells of 0.05 Å⁻¹ from Q min to Q max. <code>-0.01</code>: logarithmic shells, ΔQ/Q = 1%. <code>0.5, 0.02, 3, 0.05, 10</code>: 0.02 Å⁻¹ from 0.5 to 3, then 0.05 to 10. As in Mantid's Rebin, a range ends with a bin of 0.25 to 1.25 steps. The slider changes a single step and recomputes as it moves.</p></div>
-    <div class="field"><span class="label">Split voxels</span>
+    <details class="help"><summary>Q bins: what the ΔQ field takes</summary><p><code>0.05</code>: shells of 0.05 Å⁻¹ from Q min to Q max. <code>-0.01</code>: logarithmic shells, ΔQ/Q = 1%. <code>0.5, 0.02, 3, 0.05, 10</code>: 0.02 Å⁻¹ from 0.5 to 3, then 0.05 to 10. As in Mantid's Rebin, a range ends with a bin of 0.25 to 1.25 steps. The slider changes a single step and recomputes as it moves.</p></details>
+    <div class="field" title="Each voxel is divided into n³ sub-cells, binned by their own |Q|, so a voxel is shared between the shells it overlaps. Binning whole voxels by their centres aliases when ΔQ is close to the voxel size; 3³ takes about twice as long as 2³."><span class="label">Split voxels</span>
       <div id="iq-split" class="segmented fill" data-value="2"><button type="button" data-value="1">Centres</button><button type="button" data-value="2" class="on">2³</button><button type="button" data-value="3">3³</button></div></div>
-    <p class="note">Each voxel is divided into n³ sub-cells, binned by their own |Q|, so a voxel is shared between the shells it overlaps. Binning whole voxels by their centres aliases when ΔQ is close to the voxel size; 3³ takes about twice as long as 2³.</p>
     <label class="switch"><input id="iq-band" type="checkbox" checked><span class="switch-track"></span><span class="switch-label">Error band (±σ)</span></label>
     <label class="switch" title="Fraction of each shell's volume that has data (right axis)"><input id="iq-coverage" type="checkbox" checked><span class="switch-track"></span><span class="switch-label">Shell coverage</span></label>
-    <p class="note">Drag to zoom (a flat drag zooms Q only), double-click for the full range. In Move mode, drag to pan.</p>
+    <p class="note">Drag to zoom, double-click for the full range.</p>
   </div>
 </div>
 
@@ -899,7 +902,8 @@ body.dragging.drop-b::after { content: "Drop to compare as dataset " attr(data-d
   <div class="pop-body">
     <div class="prow" title="Spacing of the cut's points along its axis; empty for that axis's bin width"><label class="plabel" for="cut-step">Step</label><input id="cut-step" class="num" type="number" min="0" step="any" aria-label="Cut step"></div>
     <label class="switch"><input id="cut-band" type="checkbox" checked><span class="switch-track"></span><span class="switch-label">Error band (±σ)</span></label>
-    <p class="note">In <b>Cut</b> mode, drag across a slice to draw a cut, and drag an end to change it; hold Shift to keep it along a lattice direction. A cut drawn in a slice lies in its plane and follows the slice's position; typed ends that share no coordinate make a cut free in 3-D, such as one along (H, H, H). Each point averages the voxels in a rod of diameter W around the line, pooled with their symmetry equivalents as in the slices.</p>
+    <p class="note">In <b>Cut</b> mode, drag across a slice; Shift keeps it along a lattice direction.</p>
+    <details class="help"><summary>More about cuts</summary><p>Drag an end to change a cut. A cut drawn in a slice lies in its plane and follows the slice's position; typed ends that share no coordinate make a cut free in 3-D, such as one along (H, H, H). Each point averages the voxels in a rod of diameter W around the line, pooled with their symmetry equivalents as in the slices.</p></details>
   </div>
 </div>
 
