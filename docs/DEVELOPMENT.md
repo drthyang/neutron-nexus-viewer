@@ -24,7 +24,7 @@ CI runs the same tests on every push (`.github/workflows/test.yml`).
 | --- | --- |
 | `index.html` | Markup and styles (light variant of the nebula3d design tokens). Sizes are in rem, 10 px at 1×; a script in its head scales the root size on large screens at 100%, and the canvases draw at the same scale |
 | `js/app.js` | UI: control panel, views, layouts, interaction, canvas drawing (the slices, and the 1-D plots of I(Q) and the line cut) and the second (comparison) dataset |
-| `js/worker.js` | Module worker (one per open dataset): opens the file with h5wasm, holds the volume, answers slice, line cut, mask, isosurface, I(Q) and export requests |
+| `js/worker.js` | Module worker (one per open dataset): opens the file with h5wasm, holds the volume, answers slice, line cut, mask, isosurface, I(Q), export and reindexing requests |
 | `js/nexus.js` | Finds the histogram (and its uncertainties) in the file, reads it, and handles the UB matrix and lattice geometry |
 | `js/slab.js` | Slab selection and symmetry-pooled slab averaging (pure functions) |
 | `js/cut.js` | Line cuts: the points and band of a cut in a slice, and its symmetry-pooled profile with σ (pure functions) |
@@ -33,6 +33,8 @@ CI runs the same tests on every push (`.github/workflows/test.yml`).
 | `js/iso.js` | Origin-aligned coarse binning, orbit means and surface nets |
 | `js/powder.js` | I(Q): the \|Q\| metric, shells, and the normalized spherical average with split voxels and propagated uncertainties |
 | `js/export.js` | NEBULA3D export: grid plan and padding, full-volume symmetrization, HDF5 writer |
+| `js/reindex.js` | Reindexing with another UB: ISAW UB files, the transformation between the indexings, the new grid, and the resampling with propagated σ (pure functions) |
+| `js/reindex-ui.js` | The *Reindex with a new UB* dialog; the work runs in dataset A's worker, and the file is written by the Rigaku reduction's Mantid writer |
 | `js/rigaku-format.js` | Rigaku Oxford Diffraction frames: header, TY6 decoding with the header-statistics check, and the CrysAlisPro text files (.par, crystal.ini, datacoll.ini) |
 | `js/rigaku-geometry.js` | Kappa-goniometer and detector geometry, Ewald prediction, cells, and the Levenberg-Marquardt fit |
 | `js/rigaku-reduce.js` | The reduction: detector mask, 3-D peak search, geometry refinement, gridding, and the Mantid `SaveMD`-layout writer |

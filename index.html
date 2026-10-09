@@ -358,6 +358,8 @@ body.panel-collapsed .panel { visibility: hidden; }
   /* The layout control in the workspace header has both. */
   .layout-btn { display: none; }
   .view-foot input.foot-grow { min-width: 3.6rem; }
+  /* The slab thickness slider shares the room with the center slider, so a slice's footer keeps to one line. */
+  .view-foot input.foot-fixed:not(.short) { flex: 1 1 0; width: auto; min-width: 3.6rem; }
 }
 .view-actions .segmented.sm { height: 2.4rem; margin-right: 0.4rem; }
 .view-actions .segmented.sm button { padding: 0 0.7rem; font-size: 1.1rem; }
@@ -406,23 +408,29 @@ body.panel-collapsed .panel { visibility: hidden; }
 .rk-bad { color: var(--red); }
 .rk-actions { display: flex; flex-wrap: wrap; gap: 0.8rem; }
 .rk-foot { display: flex; justify-content: flex-end; gap: 0.8rem; padding: 1.2rem 1.4rem; border-top: 1px solid var(--border); }
+/* ---- Reindex dialog (same frame as the Rigaku one) ------------------------------------ */
+.rk-dialog #ri-options, .rk-dialog #ri-result { display: flex; flex-direction: column; gap: 1.2rem; }
+.rk-dialog #ri-options[hidden], .rk-dialog #ri-result[hidden] { display: none; }
+.ri-steps { display: grid; grid-template-columns: repeat(4, minmax(0, 1fr)); gap: 1.2rem; }
+.ri-mono { font-family: var(--font-mono); font-size: 1.15rem; }
+@media (max-width: 560px) { .ri-steps { grid-template-columns: repeat(2, minmax(0, 1fr)); } }
 
 /* ---- start, loading, toast --------------------------------------------------------- */
-.stage { height: calc(100vh - var(--topbar)); height: calc(100dvh - var(--topbar)); display: grid; place-items: center; padding: 2.4rem; overflow: auto; }
-.hero { width: min(68rem, 100%); background: var(--surface); border: 1px solid var(--border); border-radius: 1.6rem; box-shadow: var(--shadow-1); padding: 4rem 4.4rem; text-align: center; }
+/* One column no wider than the screen, so the start page never scrolls sideways. */
+.stage { height: calc(100vh - var(--topbar)); height: calc(100dvh - var(--topbar)); display: grid; grid-template-columns: minmax(0, 1fr); place-items: center; padding: 2.4rem; overflow: auto; }
+.hero { width: min(60rem, 100%); background: var(--surface); border: 1px solid var(--border); border-radius: 1.6rem; box-shadow: var(--shadow-1); padding: 3.6rem 4rem 2.4rem; text-align: center; }
 .hero-glyph { display: inline-grid; place-items: center; width: 5.6rem; height: 5.6rem; border-radius: 1.4rem; background: linear-gradient(145deg, var(--surface), var(--surface-3)); border: 1px solid var(--border-strong); color: var(--accent); }
-.hero h1 { margin: 1.8rem 0 0.8rem; font-size: 2.2rem; font-weight: 700; letter-spacing: -0.015em; }
-.hero > p { margin: 0 auto; max-width: 52rem; font-size: 1.35rem; line-height: 1.6; color: var(--text-2); }
-.hero-actions { display: flex; align-items: center; justify-content: center; gap: 1.2rem; margin: 2.2rem 0 2.6rem; font-size: 1.25rem; color: var(--text-3); }
-.features { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 1rem; margin: 0; padding: 0; list-style: none; text-align: left; }
-.features li { display: flex; gap: 1rem; padding: 1.2rem; border-radius: var(--radius); background: var(--surface-2); border: 1px solid var(--border-subtle); }
-.features li svg { color: var(--accent); margin-top: 1px; }
-.features b { display: block; font-size: 1.25rem; font-weight: 650; }
-.features span { font-size: 1.15rem; color: var(--text-3); line-height: 1.45; }
-.hero > .hero-alt { margin: -1.2rem auto 2.4rem; font-size: 1.25rem; color: var(--text-3); }
-.linklike { border: 0; background: none; padding: 0; color: var(--accent-hi); font-size: inherit; cursor: pointer; text-decoration: underline; text-underline-offset: 2px; }
-.hero > .credit { max-width: none; margin: 1.8rem 0 0; padding-top: 1.6rem; border-top: 1px solid var(--border-subtle); font-size: 1.1rem; color: var(--text-3); }
-.hero > .privacy { margin: 2.2rem auto 0; font-size: 1.15rem; color: var(--text-3); }
+.hero h1 { margin: 1.8rem 0 0.8rem; font-size: 2.2rem; font-weight: 700; letter-spacing: -0.015em; text-wrap: balance; }
+.hero > p { margin: 0 auto; max-width: 48rem; font-size: 1.35rem; line-height: 1.6; color: var(--text-2); text-wrap: balance; }
+.hero-actions { display: flex; flex-wrap: wrap; align-items: center; justify-content: center; gap: 1.2rem; margin: 2.4rem 0 1.2rem; }
+.hero > .privacy { font-size: 1.2rem; color: var(--text-3); }
+.features { display: flex; flex-wrap: wrap; justify-content: center; gap: 0.6rem; margin: 2.4rem 0 0; padding: 0; list-style: none; }
+.features li { display: inline-flex; align-items: center; gap: 0.6rem; height: 2.8rem; padding: 0 1.1rem; border-radius: 999px; background: var(--surface-2); border: 1px solid var(--border-subtle); font-size: 1.2rem; font-weight: 550; color: var(--text-2); white-space: nowrap; }
+.features li svg { color: var(--accent); }
+.hero > .credit { max-width: none; margin: 2.4rem 0 0; padding-top: 1.6rem; border-top: 1px solid var(--border-subtle); font-size: 1.1rem; color: var(--text-3); }
+.hero > .credit a, .nobr { white-space: nowrap; }
+/* Nothing can be dropped on a phone or tablet without a mouse. */
+@media (hover: none) and (pointer: coarse) { .drop-hint { display: none; } }
 .loading-card { width: min(52rem, 100%); background: var(--surface); border: 1px solid var(--border); border-radius: 1.4rem; box-shadow: var(--shadow-1); padding: 2rem 2.2rem; }
 .load-head { display: flex; align-items: center; gap: 1.2rem; margin-bottom: 1.6rem; }
 .load-icon { position: relative; display: grid; place-items: center; width: 3.8rem; height: 3.8rem; border-radius: 0.9rem; background: var(--accent-soft); color: var(--accent-hi); flex: none; }
@@ -482,6 +490,8 @@ body.dragging.drop-b::after { content: "Drop to compare as dataset " attr(data-d
   .display-bar { flex-wrap: wrap; }
   .display-bar + .spacer { display: none; }
   .stage { height: auto; min-height: calc(100vh - var(--topbar)); }
+  /* When comparing, the file names get the top bar's room: no wordmark, status text or Compare label. */
+  body.comparing :is(.brand b, .brand + .vdiv, .status-text, .ds-add-text) { display: none; }
 }
 /* Tablets held upright: the views in two columns. */
 @media (min-width: 700px) and (max-width: 1000px) {
@@ -491,8 +501,18 @@ body.dragging.drop-b::after { content: "Drop to compare as dataset " attr(data-d
 @media (max-width: 640px) {
   .topbar { padding: 0 1rem; gap: 0.8rem; }
   .brand b, .status-text, .hide-sm { display: none !important; }
-  .hero { padding: 2.8rem 2rem; }
-  .features { grid-template-columns: minmax(0, 1fr); }
+  .stage { padding: 1.6rem 1.2rem; }
+  .hero { padding: 2.8rem 2rem 2rem; }
+  /* The start page's buttons, one per row at full width, and the credit on two lines, as in the panel. */
+  .hero-actions { flex-direction: column; align-items: stretch; }
+  .hero > .credit > .nobr { display: block; }
+  .hero > .credit > .nobr + .sep { display: none; }
+}
+/* Phones held sideways: the start page without its icon, so the buttons show without scrolling. */
+@media (max-height: 560px) {
+  .hero-glyph { display: none; }
+  .hero { padding-top: 2.4rem; }
+  .hero h1 { margin-top: 0; }
 }
 
 /* ---- touch screens: controls 36–44 px tall, sliders with a larger grip ------------------ */
@@ -550,7 +570,7 @@ body.dragging.drop-b::after { content: "Drop to compare as dataset " attr(data-d
       </div>
     </template>
     <button id="compare-open" class="btn btn-ghost ds-add hide-sm" type="button" hidden title="Compare with a second file (B): every slice is split along its diagonal, and I(Q) shows both. Or drop a file here.">
-      <svg width="14" height="14" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linejoin="round" aria-hidden="true"><path d="M1.75 1.75v12.5h12.5Z" fill="currentColor" opacity="0.22" stroke="none"/><rect x="1.75" y="1.75" width="12.5" height="12.5" rx="1.5"/><path d="M2.25 2.25l11.5 11.5"/></svg>Compare…</button>
+      <svg width="14" height="14" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linejoin="round" aria-hidden="true"><path d="M1.75 1.75v12.5h12.5Z" fill="currentColor" opacity="0.22" stroke="none"/><rect x="1.75" y="1.75" width="12.5" height="12.5" rx="1.5"/><path d="M2.25 2.25l11.5 11.5"/></svg><span class="ds-add-text">Compare…</span></button>
   </div>
   <input id="file" type="file" accept=".nxs,.nx5,.h5,.hdf5,.hdf" hidden>
   <input id="file-b" type="file" accept=".nxs,.nx5,.h5,.hdf5,.hdf" hidden>
@@ -572,26 +592,25 @@ body.dragging.drop-b::after { content: "Drop to compare as dataset " attr(data-d
 <section id="intro" class="stage">
   <div class="hero">
     <span class="hero-glyph"><svg width="28" height="28" viewBox="0 0 18 18" fill="currentColor" aria-hidden="true"><circle cx="3.5" cy="3.5" r="1.3"/><circle cx="9" cy="3.5" r="1.3"/><circle cx="14.5" cy="3.5" r="1.3"/><circle cx="3.5" cy="9" r="1.3"/><circle cx="9" cy="9" r="2"/><circle cx="14.5" cy="9" r="1.3"/><circle cx="3.5" cy="14.5" r="1.3"/><circle cx="9" cy="14.5" r="1.3"/><circle cx="14.5" cy="14.5" r="1.3"/></svg></span>
-    <h1>Explore 3-D neutron and X-ray scattering</h1>
-    <p>Open a Mantid <code>MDHistoWorkspace</code> written by <code>SaveMD</code>, a NEBULA3D volume or 3D-ΔPDF, or any NeXus/HDF5 file whose <code>NXdata</code> group holds a 3-D histogram, or reduce the raw frames of a Rigaku single-crystal X-ray experiment.</p>
+    <h1>Explore 3-D scattering volumes</h1>
+    <p>Neutron or X-ray: open a Mantid <code>MDHistoWorkspace</code>, a NEBULA3D volume or any <span class="nobr">3-D</span> NeXus/HDF5 histogram.</p>
     <div class="hero-actions">
       <button id="open-intro" class="btn btn-primary btn-lg" type="button">Open .nxs file…</button>
-      <button id="open-example" class="btn btn-ghost btn-lg" type="button" title="Two synthetic datasets (3 MB): the same crystal at 300 K and 10 K, symmetrized, masked and compared in split view">Try the example</button>
+      <button id="open-example" class="btn btn-ghost btn-lg" type="button" title="One synthetic crystal at 300 K and 10 K (3 MB), symmetrized, masked and compared in split view: diffuse scattering above the transition, superlattice peaks below">Try the example</button>
       <button id="rigaku-intro" class="btn btn-ghost btn-lg" type="button" title="Reduce the raw frames of a Rigaku (CrysAlisPro) single-crystal XRD experiment to an HKL volume, in this browser">Reduce Rigaku XRD…</button>
     </div>
-    <p class="hero-alt">The example compares one crystal at 300 K and 10 K: short-range order above the transition, long-range order below.</p>
-    <ul class="features">
-      <li><svg width="16" height="16" viewBox="0 0 18 18" fill="currentColor" aria-hidden="true"><circle cx="3.5" cy="3.5" r="1.3"/><circle cx="9" cy="3.5" r="1.3"/><circle cx="14.5" cy="3.5" r="1.3"/><circle cx="3.5" cy="9" r="1.3"/><circle cx="9" cy="9" r="2"/><circle cx="14.5" cy="9" r="1.3"/><circle cx="3.5" cy="14.5" r="1.3"/><circle cx="9" cy="14.5" r="1.3"/><circle cx="14.5" cy="14.5" r="1.3"/></svg>
-        <div><b>Orthogonal slices</b><span>HK, HL and KL cuts in the true lattice geometry, linked by clicking.</span></div></li>
-      <li><svg width="16" height="16" viewBox="0 0 18 18" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linejoin="round" aria-hidden="true"><path d="M9 1.8 15.3 5.4v7.2L9 16.2 2.7 12.6V5.4Z"/><circle cx="9" cy="9" r="2"/></svg>
-        <div><b>Symmetry averaging</b><span>Any Laue class or your own operations, pooled exactly on the bin grid.</span></div></li>
-      <li><svg width="16" height="16" viewBox="0 0 18 18" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M9 2.5 16 6 9 9.5 2 6Z"/><path d="M3.5 9.25 2 10l7 3.5 7-3.5-1.5-.75"/></svg>
-        <div><b>Artifact masking</b><span>Remove detector-edge voxels and symmetry outliers before averaging.</span></div></li>
-      <li><svg width="16" height="16" viewBox="0 0 18 18" fill="none" stroke="currentColor" stroke-width="1.6" aria-hidden="true"><circle cx="9" cy="9" r="7"/><circle cx="9" cy="9" r="3.6"/><circle cx="9" cy="9" r="0.8" fill="currentColor" stroke="none"/></svg>
-        <div><b>3-D view</b><span>Transparent isosurface with the current slices as planes.</span></div></li>
+    <p class="privacy"><span class="drop-hint">Or drop a file anywhere. </span>Files are read in your browser, never uploaded.</p>
+    <!-- What the viewer does, one or two words each; the user guide has the rest. -->
+    <ul class="features" aria-label="Features">
+      <li><svg width="14" height="14" viewBox="0 0 18 18" fill="currentColor" aria-hidden="true"><circle cx="3.5" cy="3.5" r="1.3"/><circle cx="9" cy="3.5" r="1.3"/><circle cx="14.5" cy="3.5" r="1.3"/><circle cx="3.5" cy="9" r="1.3"/><circle cx="9" cy="9" r="2"/><circle cx="14.5" cy="9" r="1.3"/><circle cx="3.5" cy="14.5" r="1.3"/><circle cx="9" cy="14.5" r="1.3"/><circle cx="14.5" cy="14.5" r="1.3"/></svg>Slices</li>
+      <li><svg width="14" height="14" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" aria-hidden="true"><path d="M3.5 12.5l9-9"/><circle cx="3" cy="13" r="1.6" fill="currentColor" stroke="none"/><circle cx="13" cy="3" r="1.6" fill="currentColor" stroke="none"/></svg>Line cuts</li>
+      <li><svg width="14" height="14" viewBox="0 0 18 18" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linejoin="round" aria-hidden="true"><path d="M9 1.8 15.3 5.4v7.2L9 16.2 2.7 12.6V5.4Z"/><circle cx="9" cy="9" r="2"/></svg>Symmetry averaging</li>
+      <li><svg width="14" height="14" viewBox="0 0 18 18" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M9 2.5 16 6 9 9.5 2 6Z"/><path d="M3.5 9.25 2 10l7 3.5 7-3.5-1.5-.75"/></svg>Masking</li>
+      <li><svg width="14" height="14" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linejoin="round" aria-hidden="true"><path d="M1.75 1.75v12.5h12.5Z" fill="currentColor" opacity="0.3" stroke="none"/><rect x="1.75" y="1.75" width="12.5" height="12.5" rx="1"/><path d="M2.25 2.25l11.5 11.5"/></svg>Comparison</li>
+      <li><svg width="14" height="14" viewBox="0 0 18 18" fill="none" stroke="currentColor" stroke-width="1.6" aria-hidden="true"><circle cx="9" cy="9" r="7"/><circle cx="9" cy="9" r="3.6"/><circle cx="9" cy="9" r="0.8" fill="currentColor" stroke="none"/></svg>3-D view</li>
+      <li><svg width="14" height="14" viewBox="0 0 18 18" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M2.5 2.5v13h13"/><path d="M4.5 12.5c1.5 0 2-7.5 3.2-7.5s1.3 5 2.6 5 1.4-2.5 2.4-2.5 1.2 3 2.3 3"/></svg>I(Q)</li>
     </ul>
-    <p class="privacy">Or drop a file anywhere. Everything runs in your browser; the file is never uploaded.</p>
-    <p class="credit">© 2026 Tsung-Han Yang<span class="sep" aria-hidden="true">·</span><a href="https://github.com/drthyang/neutron-nexus-viewer/blob/main/LICENSE" target="_blank" rel="noopener noreferrer">AGPLv3</a><span class="sep" aria-hidden="true">·</span><a href="https://github.com/drthyang/neutron-nexus-viewer#readme" target="_blank" rel="noopener noreferrer">About &amp; documentation</a></p>
+    <p class="credit"><span class="nobr">© 2026 Tsung-Han Yang</span><span class="sep" aria-hidden="true">·</span><a href="https://github.com/drthyang/neutron-nexus-viewer/blob/main/LICENSE" target="_blank" rel="noopener noreferrer">AGPLv3</a><span class="sep" aria-hidden="true">·</span><a href="https://github.com/drthyang/neutron-nexus-viewer#readme" target="_blank" rel="noopener noreferrer">About &amp; documentation</a></p>
   </div>
 </section>
 
@@ -651,6 +670,16 @@ body.dragging.drop-b::after { content: "Drop to compare as dataset " attr(data-d
             <label class="switch" title="Average only the removed voxels, to check what the mask takes out"><input id="mask-removed" type="checkbox" disabled><span class="switch-track"></span><span class="switch-label">Show removed voxels</span></label>
             <button id="mask-download" class="btn btn-ghost btn-xs" type="button" disabled title="Gzipped .npy in signal order: 1 = edge, 2 = outlier">Download</button>
           </div>
+        </div>
+
+        <div id="reindex-sub" class="sub">
+          <div class="sub-head">
+            <svg width="16" height="16" viewBox="0 0 18 18" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linejoin="round" aria-hidden="true"><rect x="2" y="2" width="9" height="9" rx="1"/><path d="M11.5 6.5 16 11l-4.5 4.5L7 11Z" opacity="0.6"/></svg>
+            <span class="sub-title">Reindex · new UB</span>
+          </div>
+          <p class="sub-hint">Resamples the volume onto the HKL grid of another UB matrix, such as a refined one or another cell setting, as a new dataset.</p>
+          <span class="inline"><button id="reindex-open" class="btn btn-ghost" type="button" style="flex: 1" disabled title="An ISAW UB file (.mat), as Mantid's SaveIsawUB writes it">Load ISAW UB file…</button></span>
+          <p id="reindex-status" class="note"></p>
         </div>
 
       </div>
@@ -784,6 +813,35 @@ body.dragging.drop-b::after { content: "Drop to compare as dataset " attr(data-d
     </div>
   </div>
   <div class="rk-foot"><button id="rk-cancel" class="btn btn-ghost" type="button">Close</button><button id="rk-run" class="btn btn-primary" type="button" disabled>Reduce</button></div>
+</dialog>
+
+<!-- Reindex dataset A with a new UB (reindex-ui.js) -->
+<dialog id="reindex" class="rk-dialog" aria-label="Reindex with a new UB">
+  <div class="pop-head"><span class="pop-title">Reindex with a new UB</span>
+    <button id="ri-close" class="icon-btn" type="button" title="Close" aria-label="Close"><svg width="12" height="12" viewBox="0 0 12 12" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" aria-hidden="true"><path d="M2 2l8 8M10 2l-8 8"/></svg></button></div>
+  <div class="pop-body">
+    <p class="note">Both UBs map indices to the same Q in the sample frame, so the new indices are H′ = T·H with T = UB<sub>new</sub>⁻¹·UB<sub>old</sub>. Each new voxel averages sub-samples spread over it, each taking the measured voxel of A it falls in. The volume is used as measured: mask and symmetrize the result. <a href="https://github.com/drthyang/neutron-nexus-viewer/blob/main/docs/METHOD.md#reindexing-with-a-new-ub" target="_blank" rel="noopener noreferrer">Method</a></p>
+    <div class="inline"><button id="ri-file" class="btn btn-ghost" type="button">Choose another UB file…</button></div>
+    <input id="ri-input" type="file" accept=".mat,.txt,.ub" hidden>
+    <div id="ri-options" hidden>
+      <dl id="ri-summary" class="kv rk-kv"></dl>
+      <div id="ri-steps" class="ri-steps">
+        <div class="field"><label class="label" for="ri-step-0">Voxel H′</label><input id="ri-step-0" class="num" type="number" min="0" step="any"></div>
+        <div class="field"><label class="label" for="ri-step-1">Voxel K′</label><input id="ri-step-1" class="num" type="number" min="0" step="any"></div>
+        <div class="field"><label class="label" for="ri-step-2">Voxel L′</label><input id="ri-step-2" class="num" type="number" min="0" step="any"></div>
+        <div class="field"><label class="label" for="ri-nsub">Sub-samples</label><input id="ri-nsub" class="num" type="number" min="1" max="8" step="1" title="Sub-samples per axis of each new voxel; n³ in all"></div>
+      </div>
+      <p id="ri-grid-note" class="note"></p>
+    </div>
+    <div id="ri-progress" hidden><div class="boot-bar"><div id="ri-progress-fill" class="boot-fill"></div></div>
+      <div class="load-foot"><span id="ri-progress-label"></span><span id="ri-progress-pct"></span></div></div>
+    <p id="ri-note" class="note" hidden></p>
+    <div id="ri-result" hidden>
+      <dl id="ri-report" class="kv rk-kv"></dl>
+      <div class="inline rk-actions"><button id="ri-open-new" class="btn btn-primary" type="button">Open as a new dataset</button><button id="ri-open-compare" class="btn btn-ghost" type="button" title="Drawn on A's axes: equal coordinates are equal indices, not equal Q">Open to compare with A</button><button id="ri-download" class="btn btn-ghost" type="button" title="Mantid MDHistoWorkspace (SaveMD layout) with the new UB: LoadMD reads it">Download .nxs</button></div>
+    </div>
+  </div>
+  <div class="rk-foot"><button id="ri-cancel" class="btn btn-ghost" type="button">Close</button><button id="ri-run" class="btn btn-primary" type="button" disabled>Reindex</button></div>
 </dialog>
 
 <!-- Popovers, positioned under their trigger buttons by app.js -->
