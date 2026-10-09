@@ -405,6 +405,12 @@ body.panel-collapsed .panel { visibility: hidden; }
 .rk-bad { color: var(--red); }
 .rk-actions { display: flex; flex-wrap: wrap; gap: 0.8rem; }
 .rk-foot { display: flex; justify-content: flex-end; gap: 0.8rem; padding: 1.2rem 1.4rem; border-top: 1px solid var(--border); }
+/* ---- Reindex dialog (same frame as the Rigaku one) ------------------------------------ */
+.rk-dialog #ri-options, .rk-dialog #ri-result { display: flex; flex-direction: column; gap: 1.2rem; }
+.rk-dialog #ri-options[hidden], .rk-dialog #ri-result[hidden] { display: none; }
+.ri-steps { display: grid; grid-template-columns: repeat(4, minmax(0, 1fr)); gap: 1.2rem; }
+.ri-mono { font-family: var(--font-mono); font-size: 1.15rem; }
+@media (max-width: 560px) { .ri-steps { grid-template-columns: repeat(2, minmax(0, 1fr)); } }
 
 /* ---- start, loading, toast --------------------------------------------------------- */
 /* One column no wider than the screen, so the start page never scrolls sideways. */
@@ -663,6 +669,16 @@ body.dragging.drop-b::after { content: "Drop to compare as dataset " attr(data-d
           </div>
         </div>
 
+        <div id="reindex-sub" class="sub">
+          <div class="sub-head">
+            <svg width="16" height="16" viewBox="0 0 18 18" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linejoin="round" aria-hidden="true"><rect x="2" y="2" width="9" height="9" rx="1"/><path d="M11.5 6.5 16 11l-4.5 4.5L7 11Z" opacity="0.6"/></svg>
+            <span class="sub-title">Reindex · new UB</span>
+          </div>
+          <p class="sub-hint">Resamples the volume onto the HKL grid of another UB matrix, such as a refined one or another cell setting, as a new dataset.</p>
+          <span class="inline"><button id="reindex-open" class="btn btn-ghost" type="button" style="flex: 1" disabled title="An ISAW UB file (.mat), as Mantid's SaveIsawUB writes it">Load ISAW UB file…</button></span>
+          <p id="reindex-status" class="note"></p>
+        </div>
+
       </div>
     </section>
     <section class="psec" data-sec="export">
@@ -786,6 +802,35 @@ body.dragging.drop-b::after { content: "Drop to compare as dataset " attr(data-d
     </div>
   </div>
   <div class="rk-foot"><button id="rk-cancel" class="btn btn-ghost" type="button">Close</button><button id="rk-run" class="btn btn-primary" type="button" disabled>Reduce</button></div>
+</dialog>
+
+<!-- Reindex dataset A with a new UB (reindex-ui.js) -->
+<dialog id="reindex" class="rk-dialog" aria-label="Reindex with a new UB">
+  <div class="pop-head"><span class="pop-title">Reindex with a new UB</span>
+    <button id="ri-close" class="icon-btn" type="button" title="Close" aria-label="Close"><svg width="12" height="12" viewBox="0 0 12 12" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" aria-hidden="true"><path d="M2 2l8 8M10 2l-8 8"/></svg></button></div>
+  <div class="pop-body">
+    <p class="note">Both UBs map indices to the same Q in the sample frame, so the new indices are H′ = T·H with T = UB<sub>new</sub>⁻¹·UB<sub>old</sub>. Each new voxel averages sub-samples spread over it, each taking the measured voxel of A it falls in. The volume is used as measured: mask and symmetrize the result. <a href="https://github.com/drthyang/neutron-nexus-viewer/blob/main/docs/METHOD.md#reindexing-with-a-new-ub" target="_blank" rel="noopener noreferrer">Method</a></p>
+    <div class="inline"><button id="ri-file" class="btn btn-ghost" type="button">Choose another UB file…</button></div>
+    <input id="ri-input" type="file" accept=".mat,.txt,.ub" hidden>
+    <div id="ri-options" hidden>
+      <dl id="ri-summary" class="kv rk-kv"></dl>
+      <div id="ri-steps" class="ri-steps">
+        <div class="field"><label class="label" for="ri-step-0">Voxel H′</label><input id="ri-step-0" class="num" type="number" min="0" step="any"></div>
+        <div class="field"><label class="label" for="ri-step-1">Voxel K′</label><input id="ri-step-1" class="num" type="number" min="0" step="any"></div>
+        <div class="field"><label class="label" for="ri-step-2">Voxel L′</label><input id="ri-step-2" class="num" type="number" min="0" step="any"></div>
+        <div class="field"><label class="label" for="ri-nsub">Sub-samples</label><input id="ri-nsub" class="num" type="number" min="1" max="8" step="1" title="Sub-samples per axis of each new voxel; n³ in all"></div>
+      </div>
+      <p id="ri-grid-note" class="note"></p>
+    </div>
+    <div id="ri-progress" hidden><div class="boot-bar"><div id="ri-progress-fill" class="boot-fill"></div></div>
+      <div class="load-foot"><span id="ri-progress-label"></span><span id="ri-progress-pct"></span></div></div>
+    <p id="ri-note" class="note" hidden></p>
+    <div id="ri-result" hidden>
+      <dl id="ri-report" class="kv rk-kv"></dl>
+      <div class="inline rk-actions"><button id="ri-open-new" class="btn btn-primary" type="button">Open as a new dataset</button><button id="ri-open-compare" class="btn btn-ghost" type="button" title="Drawn on A's axes: equal coordinates are equal indices, not equal Q">Open to compare with A</button><button id="ri-download" class="btn btn-ghost" type="button" title="Mantid MDHistoWorkspace (SaveMD layout) with the new UB: LoadMD reads it">Download .nxs</button></div>
+    </div>
+  </div>
+  <div class="rk-foot"><button id="ri-cancel" class="btn btn-ghost" type="button">Close</button><button id="ri-run" class="btn btn-primary" type="button" disabled>Reindex</button></div>
 </dialog>
 
 <!-- Popovers, positioned under their trigger buttons by app.js -->

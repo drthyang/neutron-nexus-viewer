@@ -89,6 +89,14 @@ The mask removes voxels from the measured data before symmetry averaging:
 
 *Apply mask* builds it (a few seconds for a 401³ volume), and *Clear* removes it. *Show removed voxels* averages only what the mask took out, so you can check that it hits artifacts. *Download* saves the mask as a gzipped NumPy `.npy` in the signal's storage order (1 = edge, 2 = outlier): `signal[mask > 0] = np.nan` applies it in Python. See [Method → Mask](METHOD.md#masking-detector-edge-artifacts).
 
+## Reindexing with a new UB
+
+*Load ISAW UB file…* (in the Processing panel, under the mask) resamples dataset A onto the HKL grid of another UB matrix, such as one refined in Mantid or one in another cell setting, and opens the result as a new dataset or to compare. The file is an ISAW UB file (`.mat`), as Mantid's `SaveIsawUB` writes it. A needs HKL axes with uniform bins and a UB matrix, as Mantid `MDHistoWorkspace` files and NEBULA3D volumes have.
+
+The dialog shows both cells and the transformation between the indexings, H′ = T·H. When T is close to an integer matrix, it names the setting (the identity for a refined UB of the same cell) and the angle by which the orientation turned. Otherwise it warns that the new UB describes a differently oriented lattice, which usually means a UB from another sample frame. The new grid covers the measured voxels. Each voxel size defaults to one old voxel along that direction, rounded to 1/n so that integer indices fall on voxel centres; *Sub-samples* sets how many samples per axis each new voxel averages. A 101³ volume takes under a second; grids above 65 M voxels are refused, so use larger voxels there.
+
+The result has [H,0,0], [0,K,0] and [0,0,L] axes of the new cell, the new UB, uncertainties when A has them, and the transformation, the previous UB and both file names in its logs. *Download .nxs* saves it as a Mantid file that `LoadMD` reads. The volume is resampled as measured, so mask and symmetrize the result. A dataset opened to compare is drawn on A's axes: equal coordinates are equal indices, which are not the same Q in the two indexings. See [Method → Reindexing](METHOD.md#reindexing-with-a-new-ub).
+
 ## Display
 
 The color scale is set in the workspace header, above the views: the colormap, vmin and vmax on either side of the colorbar, and the scale.

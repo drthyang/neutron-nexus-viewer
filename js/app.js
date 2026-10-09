@@ -3,6 +3,7 @@ import { cutAxis, cutBand, cutCrossing, cutEdges } from './cut.js';
 import { exportPlan } from './export.js';
 import { cartesianBasis, isDirect, nominalCell, planeGeometry, reciprocalMetric } from './nexus.js';
 import { parseBins, powderPlan, qExtent } from './powder.js';
+import { setupReindex } from './reindex-ui.js';
 import { setupRigaku } from './rigaku-ui.js';
 import { IDENTITY_MAP } from './slab.js';
 import { closeGroup, formatOp, indexMaps, metricChange, parseOps, PRESETS } from './symmetry.js';
@@ -78,6 +79,8 @@ let ownRanges = false, ranges = [], rangeK = 0;
 // The export for NEBULA3D being built: { name, send, attrs }. `handoff` is the
 // NEBULA3D tab it is sent to (Open in NEBULA3D): { id, win | channel, origin, ready, file, sent }.
 let exportJob = null, handoff = null;
+// The Reindex with a new UB dialog (reindex-ui.js): { handle, refresh, reset }.
+let reindexUI = null;
 // ?nebula3d= points Open in NEBULA3D at another deployment (a local dev server).
 const NEBULA3D_URL = new URLSearchParams(location.search).get('nebula3d') || 'https://drthyang.github.io/nebula3d/';
 const newLayer = () => ({ data: null, version: 0, busy: false, wanted: null, image: null, imageKey: null, error: '' });
@@ -307,6 +310,7 @@ function openFile(file) {
   for (const d of others()) d.worker?.terminate();
   slots = [null, null, null];
   exportJob = null;
+  reindexUI?.reset();
   jobs.clear();
   showCompare();
   closePopovers();
@@ -381,6 +385,7 @@ const handlers = {
     meta.seconds = seconds;
     status('ok', 'ready');
     setupViewer();
+    reindexUI.refresh();
     show('workspace');
     showCompare();
     redraw();
@@ -494,6 +499,10 @@ const handlers = {
   'progress-cut': (msg) => cutProgress(0, msg),
   cut: (msg) => cutResult(0, msg),
   'cut-error': ({ message }) => cutResult(0, null, message),
+  'reindex-plan': (msg) => reindexUI.handle(msg),
+  'progress-reindex': (msg) => reindexUI.handle(msg),
+  'reindex-file': (msg) => reindexUI.handle(msg),
+  'reindex-error': (msg) => reindexUI.handle(msg),
 };
 
 /**
@@ -3824,6 +3833,19 @@ setupRigaku({
   openCompare: (file) => openCompare(file, freeSlot()),
   canCompare: () => panels.length > 0 && freeSlot() >= 0,
   datasetA: () => (panels.length ? meta : null),
+});
+// Reindex A with a new UB (reindex-ui.js), in A's worker; the result opens the same way.
+reindexUI = setupReindex({
+  openFile: (file) => {
+    pendingCompare = [];
+    pendingProcessing = null;
+    openFile(file);
+  },
+  openCompare: (file) => openCompare(file, freeSlot()),
+  canCompare: () => panels.length > 0 && freeSlot() >= 0,
+  datasetA: () => (panels.length ? meta : null),
+  name: () => sourceName,
+  post: (message) => worker.postMessage(message),
 });
 segmented($('compare-view'), (value) => {
   compareView = value;

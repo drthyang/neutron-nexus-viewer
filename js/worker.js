@@ -9,6 +9,7 @@ import { binVolume, coarseGrid, orbitMean, surfaceNets } from './iso.js';
 import { edgeMask, maskStats, outlierMask } from './mask.js';
 import { describeFile, loadVariance, loadVolume } from './nexus.js';
 import { powderAverage } from './powder.js';
+import { measuredBox, reindexGeometry, reindexVolume } from './reindex.js';
 import { averageSlab, selectBins } from './slab.js';
 import { indexMaps } from './symmetry.js';
 
@@ -27,8 +28,13 @@ self.onmessage = async ({ data }) => {
     else if (data.type === 'export') await exportVolume(data);
     else if (data.type === 'powder') powder(data);
     else if (data.type === 'cut') cut(data);
+    else if (data.type === 'reindex-plan') reindexPlan(data);
+    else if (data.type === 'reindex') await reindex(data);
   } catch (err) {
-    const type = { iso: 'iso-error', mask: 'mask-error', 'mask-download': 'mask-error', export: 'export-error', powder: 'powder-error', cut: 'cut-error' }[data.type] ?? 'error';
+    const type = {
+      iso: 'iso-error', mask: 'mask-error', 'mask-download': 'mask-error', export: 'export-error', powder: 'powder-error', cut: 'cut-error',
+      'reindex-plan': 'reindex-error', reindex: 'reindex-error',
+    }[data.type] ?? 'error';
     self.postMessage({ type, id: data.id, fixed: data.fixed, message: err?.message ?? String(err) });
   }
 };
@@ -225,6 +231,48 @@ function cut({ id, cut: spec, maps, symmetry, removed }) {
     type: 'cut', id, ...result, symmetry, order: maps.length, masked: !!mask, removed: invert, errors, errorsNote: varianceNote,
     seconds: (performance.now() - t0) / 1000,
   }, [result.edges.buffer, result.intensity.buffer, result.sigma.buffer, result.voxels.buffer]);
+}
+
+// Reindexing with another UB (see reindex.js): `T` maps the file's indices to the new ones.
+// The plan is the box of the measured voxels in the new indices.
+function reindexPlan({ id, T }) {
+  if (!volume) throw new Error('No histogram loaded.');
+  const { TW, axes } = reindexGeometry(info.dims, T);
+  const box = measuredBox(volume, info.shape, axes, TW);
+  if (!box) throw new Error('The volume has no measured voxels.');
+  self.postMessage({ type: 'reindex-plan', id, box });
+}
+
+// The volume as measured (the user mask and symmetry are not applied), resampled onto
+// `grid` with nsub³ sub-samples per voxel, as a Mantid MDHistoWorkspace with the new UB.
+async function reindex({ id, T, grid, nsub, ub, cell, title, logs }) {
+  if (!volume) throw new Error('No histogram loaded.');
+  const t0 = performance.now();
+  let last = 0;
+  const progress = (label, from, to) => (fraction) => {
+    const now = performance.now();
+    if (now - last > 100 || fraction === 1) {
+      last = now;
+      self.postMessage({ type: 'progress-reindex', id, label, fraction: from + (to - from) * fraction });
+    }
+  };
+  const start = variance === undefined && info.errors ? 0.1 : 0;
+  readVariance(progress('Reading uncertainties', 0, start));
+  const { M, axes } = reindexGeometry(info.dims, T);
+  const out = reindexVolume(volume, variance, info.shape, axes, M, grid, nsub, progress('Resampling', start, 0.8));
+  self.postMessage({ type: 'progress-reindex', id, label: 'Writing HDF5', fraction: 0.8 });
+  const [{ FS }, { writeMantidMD }] = await Promise.all([h5wasm.ready, import('./rigaku-reduce.js')]);
+  const file = '/reindexed.nxs';
+  writeMantidMD(h5wasm, file, {
+    shape: [grid.shape[2], grid.shape[1], grid.shape[0]], edges: grid.edges, signal: out.signal, errors2: out.errors2, events: out.events,
+    ub, cell, title, logs,
+  });
+  const blob = new Blob([FS.readFile(file)], { type: 'application/x-hdf5' });
+  FS.unlink(file);
+  self.postMessage({
+    type: 'reindex-file', id, blob, covered: out.covered, voxels: grid.voxels, errors: !!variance, errorsNote: varianceNote,
+    seconds: (performance.now() - t0) / 1000,
+  });
 }
 
 // The symmetrized, masked volume as a NEBULA3D input file (see export.js):
