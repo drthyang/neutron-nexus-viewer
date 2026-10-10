@@ -474,16 +474,17 @@ export function makeGrid(min, max, step, origin = [0, 0, 0]) {
 
 /**
  * Accumulators for a grid: counts, Poisson variance, normalization weight, pixel-frames, and
- * with `background` the air-scatter counts expected in the same pixel-frames (B).
+ * with `background` the background counts expected in the same pixel-frames (B) and their
+ * variance from the background's counting statistics (EB2, see trackBackground).
  */
 export function makeAccumulators(grid, { background = false } = {}) {
   const n = grid.shape[0] * grid.shape[1] * grid.shape[2];
   try {
     const acc = { S: new Float64Array(n), E2: new Float32Array(n), W: new Float64Array(n), N: new Uint32Array(n) };
-    if (background) acc.B = new Float64Array(n);
+    if (background) { acc.B = new Float64Array(n); acc.EB2 = new Float32Array(n); }
     return acc;
   } catch {
-    throw new Error(`Could not allocate ${(n * (background ? 32 : 24) / 1e9).toFixed(2)} GB for ${n.toLocaleString()} voxels; use a larger voxel or a smaller range.`);
+    throw new Error(`Could not allocate ${(n * (background ? 36 : 24) / 1e9).toFixed(2)} GB for ${n.toLocaleString()} voxels; use a larger voxel or a smaller range.`);
   }
 }
 
@@ -842,9 +843,10 @@ export const HYPIX3000_BOUNDARIES = {
  *   normalization ('sap': solid angle + polarization, or 'rate'), refine (true),
  *   boundaries (extra chip-boundary lines).
  * `source.background` = { frames: [{ run, frame, read }], mode: 'static' | 'rotation', omegaBin }
- * adds a measured background as the accumulator B (finishVolume subtracts it): static, for air
- * scatter with the crystal and mount out of the beam; rotation, for an empty mount scanned like
- * the experiment (each sample run uses the background run with the same fixed angles).
+ * adds a measured background as the accumulator B and its variance as EB2 (finishVolume subtracts
+ * the one and propagates the other): static, for air scatter with the crystal and mount out of
+ * the beam; rotation, for an empty mount scanned like the experiment (each sample run uses the
+ * background run with the same fixed angles).
  * `pool` (a WorkerPool of rigaku-map-worker.js) runs the per-frame work in parallel with
  * bit-identical results.
  * Returns { acc, grid, model, report } (see writeReduced to make the NeXus file).
@@ -1020,7 +1022,7 @@ export async function reduceRigaku(source, fmt, opts = {}, onProgress = () => {}
       const model = await staticBackground(fmt, bgIndex, first, unmasked, () => tick(bgLabel));
       stats.medianRelativeError = relErrors(model.counts);
       stats.meanRate = model.rate.reduce((a, v) => a + v, 0) / model.rate.length;
-      frameBackground = async (i) => frameBackgroundCounts(model, headers[i]);
+      frameBackground = async (i) => ({ counts: frameBackgroundCounts(model, headers[i]), model });
     } else {
       // every sample run needs a background run with the same scan axis and fixed angles
       const missing = runIds.filter((r) => { const h = headers[runStart[runIds.indexOf(r)]]; return !matchBackgroundRun(bgIndex, h.scanAxis, h.start); });
@@ -1045,7 +1047,7 @@ export async function reduceRigaku(source, fmt, opts = {}, onProgress = () => {}
           stats.meanRate = rateSum / rateN;
         }
         stats.matched[frames[i].run] = bgRun.run;
-        return frameBackgroundCounts(cached, h);
+        return { counts: frameBackgroundCounts(cached, h), model: cached };
       };
     }
     report.background = {
@@ -1054,11 +1056,12 @@ export async function reduceRigaku(source, fmt, opts = {}, onProgress = () => {}
       method: bgMode === 'static'
         ? 'static: per-pixel rate = summed counts / summed exposure over all background frames; x each sample frame\'s exposure, accumulated as B; signal = (S - scale x B) / W'
         : `rotation-resolved: each sample run uses the background run with the same scan axis and fixed angles; per-pixel rate = summed counts / summed exposure in ${bgWidth} deg bins of the scan angle, interpolated linearly to each frame's mid angle; x the frame's exposure, accumulated as B; signal = (S - scale x B) / W`,
-      errors: 'the errors are the Poisson errors of the measured counts; the background\'s own statistical error (median relative error per pixel and bin in stats) is not propagated',
+      errors: 'errors^2 = (Poisson variance of the measured counts + scale^2 x variance of B) / W^2; a background rate (one pixel in one bin) has variance counts / exposure^2 and is shared by the frames that use it, so its terms are summed before squaring while the pixel stays in one voxel',
     };
   }
   const acc = makeAccumulators(grid, { background: !!bgIndex });
   const nSub = opts.nSub ?? 5, label3 = 'Mapping pixels to HKL (3 of 3)';
+  const tracker = bgIndex ? makeBackgroundTracker(unmasked.length) : null;
   const setup = {
     nx, ny, unmasked: Int32Array.from(unmasked), nSub, T, sap: (opts.normalization ?? 'sap') === 'sap', mono: source.monochromator,
     model: { g: model.g, ub: model.ub, perRun: model.perRun, drift: model.drift },
@@ -1066,20 +1069,28 @@ export async function reduceRigaku(source, fmt, opts = {}, onProgress = () => {}
   const ctx = mapContext(setup), np = ctx.np;
   if (pool) {
     await pool.all({ type: 'map-init', setup });
+    const bgModels = new Map(); // the background model of each frame in flight (start runs ahead of apply)
     await pool.ordered(frames.length, async (i) => {
-      const f = frames[i], buf = await f.read(), b = frameBackground ? await frameBackground(i) : null;
-      return { msg: { type: 'map', buf, h: headers[i], run: f.run, grid, b }, transfer: [buf, ...(b ? [b.buffer] : [])] };
-    }, (i, d) => { applyRecords(acc, d); tick(label3); });
+      const f = frames[i], buf = await f.read(), bg = frameBackground ? await frameBackground(i) : null;
+      if (bg) bgModels.set(i, bg.model);
+      return { msg: { type: 'map', buf, h: headers[i], run: f.run, grid, b: bg?.counts ?? null }, transfer: [buf, ...(bg ? [bg.counts.buffer] : [])] };
+    }, (i, d) => {
+      applyRecords(acc, d);
+      if (tracker) { trackBackground(tracker, acc.EB2, bgModels.get(i), headers[i], d.vox, d.split, nSub); bgModels.delete(i); }
+      tick(label3);
+    });
   } else {
     const out = { x: new Float64Array(3 * np), c: new Int32Array(np), w: new Float64Array(np) };
     const vox = new Int32Array(np);
     for (let i = 0; i < frames.length; i++) {
       const A = mapFrame(ctx, fmt, await frames[i].read(), headers[i], frames[i].run, out);
-      const b = frameBackground ? await frameBackground(i) : null;
-      applyFrame(acc, vox, out.c, out.w, indexFrame(grid, out.x, A, vox), nSub, b);
+      const bg = frameBackground ? await frameBackground(i) : null, split = indexFrame(grid, out.x, A, vox);
+      applyFrame(acc, vox, out.c, out.w, split, nSub, bg?.counts ?? null);
+      if (tracker) trackBackground(tracker, acc.EB2, bg.model, headers[i], vox, split, nSub);
       tick(label3);
     }
   }
+  if (tracker) flushBackground(tracker, acc.EB2);
   report.seconds = (Date.now() - t0) / 1000;
   report.normalization = setup.sap ? 'counts / (s x pixel solid angle x polarization) x Omega_ref' : 'counts / (s x pixel)';
   report.omegaRef = ctx.omegaRef;
@@ -1089,13 +1100,13 @@ export async function reduceRigaku(source, fmt, opts = {}, onProgress = () => {}
 
 /**
  * Signal, errors^2 and pixel-frame counts in (L, K, H) order; NaN where nothing was
- * measured. With a background accumulator, signal = (S - backgroundScale x B) / W; the errors
- * stay the Poisson errors of the measured counts. `zeros` counts voxels with no measured
+ * measured. With a background accumulator, signal = (S - backgroundScale x B) / W and
+ * errors^2 = (E2 + backgroundScale^2 x EB2) / W^2. `zeros` counts voxels with no measured
  * counts, `negative` (with a background) covered voxels whose signal is below zero. With
  * `inPlace`, the signal reuses acc.S and the counts acc.W (saving memory).
  */
 export function finishVolume(acc, { inPlace = false, backgroundScale = 1 } = {}) {
-  const n = acc.S.length, B = acc.B ?? null;
+  const n = acc.S.length, B = acc.B ?? null, EB2 = acc.EB2 ?? null, s2 = backgroundScale * backgroundScale;
   const signal = inPlace ? acc.S : new Float64Array(n), errors2 = new Float64Array(n);
   let covered = 0, zeros = 0, negative = 0;
   for (let v = 0; v < n; v++) {
@@ -1105,7 +1116,7 @@ export function finishVolume(acc, { inPlace = false, backgroundScale = 1 } = {})
       if (S === 0) zeros++;
       signal[v] = (B ? S - backgroundScale * B[v] : S) / W;
       if (signal[v] < 0) negative++;
-      errors2[v] = acc.E2[v] / (W * W);
+      errors2[v] = (EB2 ? acc.E2[v] + s2 * EB2[v] : acc.E2[v]) / (W * W);
       covered++;
     } else {
       signal[v] = NaN;
@@ -1216,19 +1227,102 @@ export async function rotationBackground(fmt, run, ref, unmasked, width, onFrame
  */
 export function frameBackgroundCounts(model, h) {
   if (model.mode === 'static') return Float64Array.from(model.rate, (v) => v * h.exposure);
+  const { j, u } = frameBins(model, h), r0 = model.rates[j], r1 = u ? model.rates[j + 1] : r0;
+  const out = new Float64Array(r0.length), t = h.exposure;
+  for (let p = 0; p < out.length; p++) out[p] = ((1 - u) * r0[p] + u * r1[p]) * t;
+  return out;
+}
+
+/**
+ * The background bins a sample frame interpolates: its rate is (1 - u) x bin j + u x bin j + 1,
+ * with u = 0 at and beyond the end bins (and for a static background, one bin).
+ */
+function frameBins(model, h) {
+  if (model.mode === 'static') return { j: 0, u: 0 };
   const axis = model.axis, mid = 0.5 * (h.start[axis] + h.end[axis]), c = model.centres, n = c.length;
   if (mid < model.range[0] - 1e-6 || mid > model.range[1] + 1e-6) {
     throw new Error(`The background run ${model.run} covers ${ANGLES[axis]} ${model.range[0]} to ${model.range[1]} deg, not ${mid}.`);
   }
-  let r0 = model.rates[0], r1 = r0, u = 0;
-  if (mid >= c[n - 1]) { r0 = r1 = model.rates[n - 1]; } else if (mid > c[0]) {
-    let j = 0;
-    while (c[j + 1] <= mid) j++;
-    r0 = model.rates[j]; r1 = model.rates[j + 1]; u = (mid - c[j]) / (c[j + 1] - c[j]);
+  if (mid >= c[n - 1]) return { j: n - 1, u: 0 };
+  if (mid <= c[0]) return { j: 0, u: 0 };
+  let j = 0;
+  while (c[j + 1] <= mid) j++;
+  return { j, u: (mid - c[j]) / (c[j + 1] - c[j]) };
+}
+
+/**
+ * The variance of the background counts B in each voxel (acc.EB2). A background rate, one pixel
+ * in one bin (or in the static average), is counts / exposure with variance counts / exposure².
+ * It serves every sample frame that interpolates that bin, so its error is shared: while a pixel
+ * stays in one voxel, its terms on the same rate are summed before squaring, as split counts
+ * are. A pixel that leaves a voxel and comes back later starts a new, independent sum.
+ *
+ * Feed every sample frame in scan order, with the background model it used and its voxels from
+ * indexFrame; flushBackground adds the sums still open at the end. The tracker is indexed like
+ * the frame's unmasked pixels.
+ */
+export function makeBackgroundTracker(np) {
+  return { v: new Int32Array(np).fill(-1), j: new Int32Array(np), a0: new Float64Array(np), a1: new Float64Array(np), model: null, C: null, k: null };
+}
+
+/**
+ * The tracker's rates for a background model: the counts C[j] of each bin, and k[j] =
+ * 1 / exposure², so that rate j at pixel p has variance C[j][p] x k[j]. Past the last bin k is 0.
+ */
+function useModel(tr, model) {
+  const C = model.mode === 'static' ? [model.counts] : model.counts.slice();
+  const T = model.mode === 'static' ? [model.exposure] : model.exposure;
+  tr.k = Float64Array.from({ length: C.length + 1 }, (_, j) => (j < C.length ? 1 / (T[j] * T[j]) : 0));
+  C.push(C[C.length - 1]); // read, with k = 0, for rate j + 1 of the last bin
+  tr.C = C;
+  tr.model = model;
+}
+
+/** Add one sample frame (header h, its voxels vox and split from indexFrame) to the tracker. */
+export function trackBackground(tr, EB2, model, h, vox, split, nsub) {
+  if (tr.model !== model) { flushBackground(tr, EB2); useModel(tr, model); } // a new background run: new rates
+  const { j, u } = frameBins(model, h), t = h.exposure, w0 = (1 - u) * t, w1 = u * t;
+  const { v: tv, j: tj, a0, a1, C, k } = tr;
+  // pixel p puts c0 x rate j + c1 x rate j + 1 in voxel v; tracked: a0 x rate J + a1 x rate J + 1 in tv
+  const add = (p, v, c0, c1) => {
+    const J = tj[p];
+    if (tv[p] === v) {
+      if (J === j) { a0[p] += c0; a1[p] += c1; return; }
+      if (J === j - 1) { EB2[v] += a0[p] * a0[p] * C[J][p] * k[J]; a0[p] = a1[p] + c0; a1[p] = c1; tj[p] = j; return; }
+      if (J === j + 1) { EB2[v] += a1[p] * a1[p] * C[J + 1][p] * k[J + 1]; a1[p] = a0[p] + c1; a0[p] = c0; tj[p] = j; return; }
+    }
+    if (tv[p] >= 0) EB2[tv[p]] += a0[p] * a0[p] * C[J][p] * k[J] + a1[p] * a1[p] * C[J + 1][p] * k[J + 1];
+    tv[p] = v; tj[p] = j; a0[p] = c0; a1[p] = c1;
+  };
+  for (let p = 0, o = 0; p < vox.length; p++) {
+    const v = vox[p];
+    if (v >= 0) {
+      if (tv[p] === v && tj[p] === j) { a0[p] += w0; a1[p] += w1; } // the usual case, inline
+      else add(p, v, w0, w1);
+    } else if (v === -2) {
+      // a split pixel's sub-samples, in runs of one voxel: a frame's short arc does not return to a voxel
+      for (let s = o, end = o + nsub; s < end;) {
+        const q = split[s];
+        let e = s + 1;
+        while (e < end && split[e] === q) e++;
+        if (q >= 0) { const f = (e - s) / nsub; add(p, q, f * w0, f * w1); }
+        s = e;
+      }
+      o += nsub;
+    }
   }
-  const out = new Float64Array(r0.length), t = h.exposure;
-  for (let p = 0; p < out.length; p++) out[p] = ((1 - u) * r0[p] + u * r1[p]) * t;
-  return out;
+}
+
+/** Add every open sum to EB2 (at the end, or before the rates change). */
+export function flushBackground(tr, EB2) {
+  const { v: tv, j: tj, a0, a1, C, k } = tr;
+  for (let p = 0; p < tv.length; p++) {
+    const v = tv[p];
+    if (v < 0) continue;
+    const J = tj[p];
+    EB2[v] += a0[p] * a0[p] * C[J][p] * k[J] + a1[p] * a1[p] * C[J + 1][p] * k[J + 1];
+    tv[p] = -1;
+  }
 }
 
 /** Bin edges of a grid, per axis (H, K, L). */

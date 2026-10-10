@@ -8,7 +8,8 @@
 //   peaks {bufs, hs, mask, bg}    -> {peaks}       one run's Bragg peaks (pass 2)
 //   map-init {setup}              -> {}            pass 3 context (mapContext)
 //   map {buf, h, run, grid, b}    -> {v, s, e, w, b}  one frame's contributions, grouped by voxel (pass 3);
-//                                   b: the background counts of its unmasked pixels, or null
+//                                   b: the background counts of its unmasked pixels, or null; with b
+//                                   also {vox, split}, its pixels' voxels, for trackBackground
 // Errors are returned as {error}.
 
 import * as fmt from './rigaku-format.js';
@@ -41,9 +42,11 @@ const handlers = {
     return {};
   },
   map: ({ buf, h, run, grid, b }) => {
-    const A = mapFrame(ctx, fmt, buf, h, run, frame);
-    const rec = frameRecords(vox, frame.c, frame.w, indexFrame(grid, frame.x, A, vox), ctx.nSub, grid.shape[0] * grid.shape[1] * grid.shape[2], b);
-    return [rec, [rec.v.buffer, rec.s.buffer, rec.e.buffer, rec.w.buffer, ...(rec.b ? [rec.b.buffer] : [])]];
+    const A = mapFrame(ctx, fmt, buf, h, run, frame), split = indexFrame(grid, frame.x, A, vox);
+    const rec = frameRecords(vox, frame.c, frame.w, split, ctx.nSub, grid.shape[0] * grid.shape[1] * grid.shape[2], b);
+    const transfer = [rec.v.buffer, rec.s.buffer, rec.e.buffer, rec.w.buffer];
+    if (b) { Object.assign(rec, { vox: vox.slice(), split }); transfer.push(rec.b.buffer, rec.vox.buffer, split.buffer); }
+    return [rec, transfer];
   },
 };
 

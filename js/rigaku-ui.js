@@ -273,7 +273,7 @@ export function setupRigaku(hooks) {
       ? `rotation-resolved, ${fmt(b.binWidth, 3)}° bins (${fmt(st.binExposure?.[0], 1)}–${fmt(st.binExposure?.[1], 1)} s each); runs ${Object.entries(st.matched).map(([s0, b0]) => `${s0}←${b0}`).join(', ')}`
       : 'static (one average)';
     return `${b.frames.toLocaleString()} frames in ${b.runs} run${b.runs === 1 ? '' : 's'} (${esc(b.stem)}), ${fmt(b.exposure, 1)} s; ${how}; mean ${fmt(st.meanRate, 4)} counts/s per pixel; `
-      + `scale ${fmt(b.scale, 4)}; per-pixel rate statistical error ${err} (median, not propagated); ${b.negativeVoxels.toLocaleString()} measured voxels below zero`;
+      + `scale ${fmt(b.scale, 4)}; per-pixel rate statistical error ${err} (median, propagated into σ); ${b.negativeVoxels.toLocaleString()} measured voxels below zero`;
   }
 
   function showReport(r, name, size) {

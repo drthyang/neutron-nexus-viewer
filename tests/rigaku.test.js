@@ -10,8 +10,8 @@ import {
   predict, prepare, rot, transformCell, transpose,
 } from '../js/rigaku-geometry.js';
 import {
-  PeakSearch, accumulateFrame, applyFrame, applyRecords, detectorMask, finishVolume, frameRecords, gridEdges, makeAccumulators,
-  makeGrid, reduceRigaku, writeMantidMD,
+  PeakSearch, accumulateFrame, applyFrame, applyRecords, detectorMask, finishVolume, flushBackground, frameRecords, gridEdges,
+  makeAccumulators, makeBackgroundTracker, makeGrid, reduceRigaku, trackBackground, writeMantidMD,
 } from '../js/rigaku-reduce.js';
 import { WorkerPool } from '../js/rigaku-pool.js';
 import { nodeWorker } from './node-worker.js';
@@ -168,6 +168,88 @@ test('records grouped by voxel block add up bit-identically to the pixel-order s
     applyRecords(b, frameRecords(vox, c, w, sp, nsub, nvox));
   }
   for (const k of ['S', 'E2', 'W', 'N']) assert.ok(Buffer.from(a[k].buffer).equals(Buffer.from(b[k].buffer)), `${k} differs`);
+});
+
+test('background variance: a rate shared by several frames in one voxel is summed before squaring', () => {
+  // Pixels sweep through voxels over the frames of three runs: an ascending and a descending omega
+  // scan against two background runs (5 deg bins, interpolated), then a static background. They
+  // dwell a few frames per voxel, cross into the next one within a frame (split), and some leave
+  // the grid for a frame. The exact variance of B, sum over rates of (summed coefficient)^2 x
+  // counts / exposure^2, is computed here term by term and compared with the tracker's.
+  const r = rng(5), np = 300, nsub = 4, nvox = 5000;
+  const binned = (run, lo, hi) => {
+    const centres = [], exposure = [], counts = [];
+    for (let a = lo; a < hi; a += 5) {
+      centres.push(a + 2.5 + (r() - 0.5));
+      exposure.push(40 + 20 * r());
+      counts.push(Float64Array.from({ length: np }, () => Math.floor(1 + 200 * r())));
+    }
+    return { mode: 'rotation', axis: 0, run, range: [lo, hi], centres, exposure, counts, rates: counts.map((c, j) => c.map((v) => v / exposure[j])) };
+  };
+  const still = { mode: 'static', exposure: 300, counts: Float64Array.from({ length: np }, () => Math.floor(1 + 500 * r())) };
+  still.rate = still.counts.map((v) => v / still.exposure);
+  const runs = [{ model: binned(1, 0, 30), from: 0, step: 0.5 }, { model: binned(2, 0, 30), from: 30, step: -0.5 }, { model: still, from: 0, step: 0.5 }];
+  const variance = (key) => {
+    const [run, j, p] = key.split(':');
+    return run === 's' ? still.counts[+p] / still.exposure ** 2 : runs[+run].model.counts[+j][+p] / runs[+run].model.exposure[+j] ** 2;
+  };
+  const acc = { EB2: new Float32Array(nvox) }, tr = makeBackgroundTracker(np), exact = new Map();
+  let independent = 0; // the variance if every term had its own rate
+  const term = (v, key, coef) => {
+    if (!exact.has(v)) exact.set(v, new Map());
+    const m = exact.get(v);
+    m.set(key, (m.get(key) ?? 0) + coef);
+    independent += coef * coef * variance(key);
+  };
+  for (const [ri, { model, from, step }] of runs.entries()) {
+    const at = Int32Array.from({ length: np }, () => Math.floor(r() * (nvox - 400))), left = Int32Array.from({ length: np }, () => 1 + Math.floor(r() * 4));
+    for (let f = 0; f < 60; f++) {
+      const w0 = from + f * step, h = { start: [Math.min(w0, w0 + step)], end: [Math.max(w0, w0 + step)], exposure: 2 + (f % 3) };
+      const vox = new Int32Array(np), split = [];
+      for (let p = 0; p < np; p++) {
+        if (--left[p] === 0) { // into the next voxel, partway through this frame
+          const m = 1 + Math.floor(r() * (nsub - 1));
+          vox[p] = -2;
+          for (let k = 0; k < nsub; k++) split.push(k < m ? at[p] : at[p] + 7);
+          at[p] += 7; left[p] = 1 + Math.floor(r() * 4);
+        } else vox[p] = r() < 0.05 ? -1 : at[p];
+      }
+      trackBackground(tr, acc.EB2, model, h, vox, Int32Array.from(split), nsub);
+      // the expected coefficients, from this frame's bins found independently
+      const mid = 0.5 * (h.start[0] + h.end[0]), t = h.exposure;
+      let j = 0, u = 0;
+      if (model.mode === 'rotation') {
+        const c = model.centres;
+        if (mid >= c.at(-1)) j = c.length - 1;
+        else if (mid > c[0]) { while (c[j + 1] <= mid) j++; u = (mid - c[j]) / (c[j + 1] - c[j]); }
+      }
+      const add = (v, p, f) => {
+        term(v, `${ri === 2 ? 's' : ri}:${j}:${p}`, f * (1 - u) * t);
+        if (u) term(v, `${ri}:${j + 1}:${p}`, f * u * t);
+      };
+      for (let p = 0, o = 0; p < np; p++) {
+        if (vox[p] >= 0) add(vox[p], p, 1);
+        else if (vox[p] === -2) {
+          const first = split[o], m = split.slice(o, o + nsub).filter((v) => v === first).length;
+          add(first, p, m / nsub);
+          add(split[o + nsub - 1], p, (nsub - m) / nsub);
+          o += nsub;
+        }
+      }
+    }
+  }
+  flushBackground(tr, acc.EB2);
+  let checked = 0, exactSum = 0;
+  for (const [v, m] of exact) {
+    let want = 0;
+    for (const [key, coef] of m) want += coef * coef * variance(key);
+    assert.ok(Math.abs(acc.EB2[v] - want) <= 1e-5 * want, `voxel ${v}: ${acc.EB2[v]} vs ${want}`);
+    exactSum += want;
+    checked++;
+  }
+  assert.ok(checked > 1000);
+  assert.ok(acc.EB2.every((v, i) => exact.has(i) || v === 0));
+  assert.ok(exactSum > 1.5 * independent, `${exactSum} vs ${independent}`); // shared rates: about 3 times more here, with 1-4 frames per voxel
 });
 
 test('detector mask: beamstop with penumbra, chip-boundary triplet, dead pixel, border', () => {
@@ -330,12 +412,12 @@ test('parallel workers give a bit-identical reduction (peaks, geometry, accumula
   assert.deepEqual(par.model.g, serial.model.g);
   assert.deepEqual(par.report.mask, serial.report.mask);
   assert.ok(serial.acc.B && par.acc.B);
-  for (const k of ['S', 'E2', 'W', 'N', 'B']) {
+  for (const k of ['S', 'E2', 'W', 'N', 'B', 'EB2']) {
     const a = serial.acc[k], b = par.acc[k];
     assert.equal(a.length, b.length);
     assert.ok(Buffer.from(a.buffer).equals(Buffer.from(b.buffer)), `${k} differs`);
   }
-  assert.ok(serial.acc.N.some((v) => v > 0));
+  assert.ok(serial.acc.N.some((v) => v > 0) && serial.acc.EB2.some((v) => v > 0));
 });
 
 /** A smooth air-scatter pattern, brightest near the beam centre (integer counts per frame). */
@@ -378,6 +460,20 @@ test('air-scatter background: subtracting it recovers the crystal-only signal', 
   assert.ok(covered > 1000);
   assert.ok(maxDiff < 1e-12, `background-subtracted signal differs by ${maxDiff}`);
   assert.ok(rawExcess > 10, 'without subtraction the air scatter is in the signal');
+  // the background's counting error is in sigma: errors^2 = (E2 + scale^2 x EB2) / W^2
+  const half = finishVolume(b.acc, { backgroundScale: 0.5 });
+  let withBackground = 0;
+  for (let v = 0; v < vb.errors2.length; v++) {
+    const W = b.acc.W[v];
+    if (!(W > 0)) continue;
+    assert.equal(b.acc.EB2[v] > 0, b.acc.B[v] > 0);
+    assert.equal(raw.errors2[v], b.acc.E2[v] / (W * W));
+    assert.equal(vb.errors2[v], (b.acc.E2[v] + b.acc.EB2[v]) / (W * W));
+    assert.equal(half.errors2[v], (b.acc.E2[v] + 0.25 * b.acc.EB2[v]) / (W * W));
+    if (b.acc.EB2[v] > 0) withBackground++;
+  }
+  assert.ok(withBackground > 1000);
+  assert.match(b.report.background.errors, /variance of B/);
   // a background from a different setup is refused
   const far = backgroundFrames(clean, pattern, 2, { distance: 46 });
   await assert.rejects(reduceRigaku(source(withAir, far), fmt, opts), /not the experiment's setup/);

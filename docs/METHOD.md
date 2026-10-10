@@ -150,7 +150,7 @@ Both kinds:
 - *Checks:* every background frame is decoded and checked like the experiment's. Its detector size, binning, pixel size, distance, 2θ arm and wavelength must match, or it is refused.
 - *Normalization:* a sample pixel-frame receives rate × that frame's exposure, shared over its sub-steps like its counts and accumulated separately as B. The raw counts S stay as measured, and signal = (S − s·B)/W. The background is therefore subtracted as counts, before the solid-angle and polarization correction.
 - *Scale s:* 1 by default. A value below 1 is the ad hoc correction for over-subtraction next to the beam, where a crystal attenuates the beam that scatters from the air behind it.
-- *Errors:* they remain the Poisson errors of the measured counts. The background's own statistical error is not propagated, following mdx2; the report gives its median relative size.
+- *Errors:* σ² = (Poisson variance of the measured counts + s² · Var B) / W². A background rate (one pixel in one bin) is counts / exposure, with variance counts / exposure². Every sample frame that interpolates its bin shares it, so its error is not independent from frame to frame: while a pixel stays in one voxel, its terms on the same rate are summed before squaring, as split counts are. A pixel that leaves a voxel and comes back later starts an independent sum. mdx2 leaves this error out; the report gives its median relative size per pixel and bin.
 - *What it does not remove:* fluorescence and Compton scattering from the sample.
 
 The file records the background frames, exposure and scale in a log.
@@ -178,6 +178,7 @@ The file records the background frames, exposure and scale in a log.
   - It recovers the background-free signal to 10⁻¹². That holds for a static background with 3 s sample frames against 10 s background frames. It also holds for a rotation-resolved background with one-frame bins, where the mount background varies strongly with ω.
   - 5° bins leave under a fifth of the residual a static average leaves.
   - A run without a matching background run is refused.
+  - The variance of B equals, to float32 precision, the exact sum over rates of (summed coefficient)² × variance. The check covers pixels that stay several frames in a voxel or split between voxels, ascending and descending scans with interpolated bins, and a static background. There it is about 3 times the variance of independent terms. σ² is (E2 + s² · EB2) / W² for any scale s.
 
   The Python implementation was run with the same geometry, mask and grid on 664 real frames. Its background accumulator agrees to 1.4 × 10⁻¹⁴ (static) and 1.6 × 10⁻¹³ (rotation, 5° bins) over 3.3 million voxels.
 - *Parallel workers:* serial and parallel reductions give byte-identical accumulators and the same refined model. This was checked on simulated frames (tests, and in a browser with real Web Workers and nested workers) and on 736 and 3,608 real frames.
