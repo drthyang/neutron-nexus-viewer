@@ -4,7 +4,8 @@
 //
 // Messages in:  { type: 'scan', files: [{ file, path }] }
 //               { type: 'scan-background', files } (air-scatter frames; files: [] clears them)
-//               { type: 'reduce', options } (options.backgroundMode 'static' | 'rotation', backgroundBin
+//               { type: 'reduce', options } (options.backgroundMode 'static' | 'rotation' with the
+//               background frames, or 'isotropic', estimated from the frames without any; backgroundBin
 //               in degrees, backgroundScale: factor on the background)
 // Messages out: { type: 'scanned', summary } | { type: 'background', summary } | { type: 'progress', label, fraction }
 //               { type: 'done', blob, name, report } | { type: 'error', message }
@@ -137,9 +138,10 @@ async function reduce(options) {
   const runs = new Map([...exp.runs].map(([r, list]) => [r, list.map(({ frame, file }) => ({ frame, read: () => file.arrayBuffer() }))]));
   const source = { runs, label: exp.stem, laue: meta.crystal.laue, monochromator: meta.par.monochromator, ubCandidates: meta.ubCandidates };
   const scale = options.backgroundScale ?? 1;
-  if (bkg) {
+  const iso = options.backgroundMode === 'isotropic';
+  if (bkg || iso) {
     if (!(scale >= 0 && Number.isFinite(scale))) throw new Error('The background scale must be a number of 0 or more.');
-    source.background = {
+    source.background = iso ? { mode: 'isotropic', omegaBin: options.backgroundBin ?? 5 } : {
       frames: bkg.frames.map(({ run, frame, file }) => ({ run, frame, read: () => file.arrayBuffer() })),
       mode: options.backgroundMode ?? 'static', omegaBin: options.backgroundBin ?? 5,
     };
@@ -164,7 +166,7 @@ async function reduce(options) {
   const v = finishVolume(res.acc, { inPlace: true, backgroundScale: scale });
   report.covered = v.covered;
   report.measuredZero = v.zeros;
-  if (report.background) Object.assign(report.background, { stem: bkg.stem, scale, negativeVoxels: v.negative });
+  if (report.background) Object.assign(report.background, { stem: iso ? null : bkg.stem, scale, negativeVoxels: v.negative });
   const cell = report.grid.cell;
   const rows = [0, 3, 6].map((i) => report.grid.transform.slice(i, i + 3));
   const { FS } = await h5wasm.ready;
@@ -179,9 +181,9 @@ async function reduce(options) {
       xrd_signal_definition: report.normalization,
       xrd_cell_transform: `rows = output basis vectors in units of the refined cell (a b c): ${rows.map((r) => `(${r.join(', ')})`).join(' ')}; output indices = T x refined indices`,
       ...(report.background ? {
-        xrd_background: `${report.background.mode === 'rotation' ? 'rotation-resolved' : 'static'} background from ${report.background.frames} frames `
-          + `(${bkg.stem}, ${report.background.exposure} s), subtracted per pixel as counts before normalization, scale ${scale}: `
-          + `${report.background.method}; ${report.background.errors}`,
+        xrd_background: (iso ? 'isotropic background estimated from the experiment\'s frames'
+          : `${report.background.mode === 'rotation' ? 'rotation-resolved' : 'static'} background from ${report.background.frames} frames (${bkg.stem}, ${report.background.exposure} s)`)
+          + `, subtracted per pixel as counts before normalization, scale ${scale}: ${report.background.method}; ${report.background.errors}`,
       } : {}),
       xrd_reduction_report: JSON.stringify(report),
       xrd_source: `${exp.stem} (${report.frames} frames, runs ${report.runs.join(', ')})`,
@@ -191,7 +193,7 @@ async function reduce(options) {
   FS.unlink(path);
   const num = (x) => String(Number(x.toPrecision(6)));
   const cellTag = report.grid.multiplier ? `x${num(report.grid.multiplier)}` : `T${rows.map((r) => `(${r.map(num).join(',')})`).join('')}`;
-  const bkgTag = report.background ? `_bkg${report.background.mode === 'rotation' ? 'rot' : ''}${scale === 1 ? '' : num(scale)}` : '';
+  const bkgTag = report.background ? `_bkg${{ rotation: 'rot', isotropic: 'iso' }[report.background.mode] ?? ''}${scale === 1 ? '' : num(scale)}` : '';
   const name = `${exp.stem}_hkl_${cellTag}_step${Number(grid.step.toPrecision(6))}${bkgTag}.nxs`;
   self.postMessage({ type: 'done', blob, name, report });
 }

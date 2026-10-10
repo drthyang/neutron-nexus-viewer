@@ -40,6 +40,7 @@ The histogram is held in memory as float32. A 401³ volume needs about 260 MB an
 
      The background is subtracted pixel by pixel as counts (rate × each frame's exposure), before the solid-angle and polarization correction. *Scale* multiplies it first; keep it at 1 unless the region next to the beam goes negative. The background's own counting error is added to σ. It does not remove fluorescence or Compton scattering from the sample.
      - *Remove* drops the background folder.
+   - **Isotropic background** (optional): without a measured background, *Estimate from the frames* removes a Kapton mount and air. Their scattering depends only on 2θ; in every *ω bin* (5° by default) each ring of 2θ gets the level of its pixels, leaving out Bragg peaks, diffuse features and shadows, and the level is interpolated to each frame. It removes everything isotropic, so also Compton scattering, fluorescence and the isotropic part of the sample's own scattering (I(Q) is lower). *Scale* multiplies it. The result's report gives the level over ω, and the report file the level against 2θ. It can't be combined with a measured background.
    - **Output cell**: the indexing of the volume, as a transformation of the refined cell. Each row of the matrix is an output basis vector in units of a, b, c: a′ = 1 0 0 is a, and b′ = 1 2 0 is a + 2b. Entries may be fractions such as 1/2. The note below shows the resulting cell. Presets:
      - *CrysAlis cell*: the identity.
      - *2 × 2 × 2 cell*: doubles every index, as in neutron reductions that use a doubled cell.
@@ -62,7 +63,7 @@ The report lists:
 
 *Download .nxs* saves a Mantid `MDHistoWorkspace` that `LoadMD` reads. Voxels without data are NaN, and `num_events` counts the detector pixel-frames in each voxel. *Report (.json)* saves the full report with the refined model.
 
-Not applied: absorption (it needs the crystal's shape) and symmetry averaging (use **Symmetry averaging** in the panel). Without a measured background, air scatter shows near Q = 0; fluorescence and Compton scattering from the sample stay even with one. Where runs with different absorption meet, the volume can show steps. The method is in [Method → Rigaku reduction](METHOD.md#rigaku-reduction).
+Not applied: absorption (it needs the crystal's shape) and symmetry averaging (use **Symmetry averaging** in the panel). Without a background, air scatter shows near Q = 0; a measured one leaves the sample's fluorescence and Compton scattering, which an estimated isotropic one also removes. Where runs with different absorption meet, the volume can show steps. The method is in [Method → Rigaku reduction](METHOD.md#rigaku-reduction).
 
 ## The screen
 

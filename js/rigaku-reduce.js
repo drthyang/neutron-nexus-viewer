@@ -474,17 +474,19 @@ export function makeGrid(min, max, step, origin = [0, 0, 0]) {
 
 /**
  * Accumulators for a grid: counts, Poisson variance, normalization weight, pixel-frames, and
- * with `background` the background counts expected in the same pixel-frames (B) and their
- * variance from the background's counting statistics (EB2, see trackBackground).
+ * with `background` the background counts expected in the same pixel-frames (B) and, with
+ * `variance`, their variance from the background's counting statistics (EB2, see trackBackground).
  */
-export function makeAccumulators(grid, { background = false } = {}) {
+export function makeAccumulators(grid, { background = false, variance = background } = {}) {
   const n = grid.shape[0] * grid.shape[1] * grid.shape[2];
   try {
     const acc = { S: new Float64Array(n), E2: new Float32Array(n), W: new Float64Array(n), N: new Uint32Array(n) };
-    if (background) { acc.B = new Float64Array(n); acc.EB2 = new Float32Array(n); }
+    if (background) acc.B = new Float64Array(n);
+    if (background && variance) acc.EB2 = new Float32Array(n);
     return acc;
   } catch {
-    throw new Error(`Could not allocate ${(n * (background ? 36 : 24) / 1e9).toFixed(2)} GB for ${n.toLocaleString()} voxels; use a larger voxel or a smaller range.`);
+    const bytes = 24 + (background ? 8 : 0) + (background && variance ? 4 : 0);
+    throw new Error(`Could not allocate ${(n * bytes / 1e9).toFixed(2)} GB for ${n.toLocaleString()} voxels; use a larger voxel or a smaller range.`);
   }
 }
 
@@ -846,7 +848,9 @@ export const HYPIX3000_BOUNDARIES = {
  * adds a measured background as the accumulator B and its variance as EB2 (finishVolume subtracts
  * the one and propagates the other): static, for air scatter with the crystal and mount out of
  * the beam; rotation, for an empty mount scanned like the experiment (each sample run uses the
- * background run with the same fixed angles).
+ * background run with the same fixed angles). { mode: 'isotropic', omegaBin, ringWidth, kHigh,
+ * kLow, minPixels }, without frames, estimates an isotropic background (a Kapton mount, air)
+ * from the experiment's own frames instead (isotropicEstimator), as B without EB2.
  * `pool` (a WorkerPool of rigaku-map-worker.js) runs the per-frame work in parallel with
  * bit-identical results.
  * Returns { acc, grid, model, report } (see writeReduced to make the NeXus file).
@@ -859,10 +863,11 @@ export async function reduceRigaku(source, fmt, opts = {}, onProgress = () => {}
   const report = { label: source.label, runs: runIds, frames: frames.length, options: { ...opts, boundaries: undefined } };
   let done = 0;
   const bgFrames = source.background?.frames ?? [], bgMode = source.background?.mode ?? 'static';
-  const bgWidth = source.background?.omegaBin ?? 5;
+  const bgWidth = source.background?.omegaBin ?? 5, iso = bgMode === 'isotropic';
+  if (iso && bgFrames.length) throw new Error('An isotropic background is estimated from the experiment\'s frames; it takes no background frames.');
   if (bgFrames.length && !['static', 'rotation'].includes(bgMode)) throw new Error(`Unknown background mode "${bgMode}".`);
-  if (bgFrames.length && !(bgWidth > 0)) throw new Error('The background bin width must be positive.');
-  const total = 3 * frames.length + 2 * bgFrames.length;
+  if ((bgFrames.length || iso) && !(bgWidth > 0)) throw new Error('The background bin width must be positive.');
+  const total = (iso ? 4 : 3) * frames.length + 2 * bgFrames.length;
   const tick = (label) => onProgress(label, ++done / total);
 
   report.threads = pool ? pool.size : 1;
@@ -1012,6 +1017,13 @@ export async function reduceRigaku(source, fmt, opts = {}, onProgress = () => {}
   // Pass 3: gridding
   const unmasked = [];
   for (let k = 0; k < nx * ny; k++) if (!mask[k]) unmasked.push(k);
+  const nSub = opts.nSub ?? 5, label3 = 'Mapping pixels to HKL (3 of 3)';
+  const setup = {
+    nx, ny, unmasked: Int32Array.from(unmasked), nSub, T, sap: (opts.normalization ?? 'sap') === 'sap', mono: source.monochromator,
+    model: { g: model.g, ub: model.ub, perRun: model.perRun, drift: model.drift },
+  };
+  const ctx = mapContext(setup), np = ctx.np;
+  if (pool) await pool.all({ type: 'map-init', setup });
 
   // Background: the counts it puts in each sample frame's unmasked pixels (rate x exposure)
   let frameBackground = null;
@@ -1058,17 +1070,37 @@ export async function reduceRigaku(source, fmt, opts = {}, onProgress = () => {}
         : `rotation-resolved: each sample run uses the background run with the same scan axis and fixed angles; per-pixel rate = summed counts / summed exposure in ${bgWidth} deg bins of the scan angle, interpolated linearly to each frame's mid angle; x the frame's exposure, accumulated as B; signal = (S - scale x B) / W`,
       errors: 'errors^2 = (Poisson variance of the measured counts + scale^2 x variance of B) / W^2; a background rate (one pixel in one bin) has variance counts / exposure^2 and is shared by the frames that use it, so its terms are summed before squaring while the pixel stays in one voxel',
     };
+  } else if (iso) {
+    // estimated from the frames themselves: a level per ring of 2theta and omega bin
+    const bg = source.background, ringWidth = bg.ringWidth ?? 2 * Math.atan(model.g.pixelMM / model.g.distance) / DEG;
+    if (!(ringWidth > 0)) throw new Error('The ring width must be positive.');
+    const clip = { kHigh: bg.kHigh ?? 2.5, kLow: bg.kLow ?? 3, minPixels: bg.minPixels ?? 30 };
+    const rings = detectorRings(ctx, ringWidth), est = isotropicEstimator(rings, { omegaBin: bgWidth, ...clip });
+    const label = 'Estimating the isotropic background';
+    if (pool) {
+      await pool.ordered(frames.length, async (i) => {
+        const f = frames[i], buf = await f.read();
+        return { msg: { type: 'counts', buf, h: headers[i], run: f.run }, transfer: [buf] };
+      }, (i, d) => { est.add(frames[i].run, headers[i], d.c, d.w); tick(label); });
+    } else {
+      const sapCtx = { ...ctx, sap: true }, out = { x: new Float64Array(3 * np), c: new Int32Array(np), w: new Float64Array(np) };
+      for (let i = 0; i < frames.length; i++) {
+        mapFrame(sapCtx, fmt, await frames[i].read(), headers[i], frames[i].run, out);
+        est.add(frames[i].run, headers[i], out.c, out.w);
+        tick(label);
+      }
+    }
+    const models = est.finish();
+    frameBackground = async (i) => { const m = models.get(frames[i].run); return { counts: frameBackgroundCounts(m, headers[i]), model: m }; };
+    report.background = {
+      mode: 'isotropic', binWidth: bgWidth, ringWidth, clip, stats: isotropicStats(models, rings),
+      method: `isotropic, estimated from the experiment's frames: per run, the frames are summed in ${bgWidth} deg bins of the scan angle; in each ring of ${Number(ringWidth.toPrecision(4))} deg of 2theta, level = sum counts / sum W over the pixels kept by iterative clipping of z = (C - level x W) / sqrt(level x W) above ${clip.kHigh} and below -${clip.kLow} times the rms z of the kept pixels (Bragg peaks, diffuse features and shadows are left out); interpolated linearly in 2theta between ring centres and in the scan angle between bin centres; level x the pixel's solid angle x polarization x exposure, accumulated as B; signal = (S - scale x B) / W. It removes everything isotropic: a Kapton mount and air, but also Compton scattering, fluorescence and the isotropic part of the sample's own scattering`,
+      errors: 'errors^2 = Poisson variance of the measured counts / W^2; the levels\' own error is not propagated: each averages a ring\'s pixels over a bin\'s frames, so it adds about the voxel\'s share of those pixel-frames (typically under 1e-3) of the Poisson variance',
+    };
   }
-  const acc = makeAccumulators(grid, { background: !!bgIndex });
-  const nSub = opts.nSub ?? 5, label3 = 'Mapping pixels to HKL (3 of 3)';
+  const acc = makeAccumulators(grid, { background: !!bgIndex || iso, variance: !!bgIndex });
   const tracker = bgIndex ? makeBackgroundTracker(unmasked.length) : null;
-  const setup = {
-    nx, ny, unmasked: Int32Array.from(unmasked), nSub, T, sap: (opts.normalization ?? 'sap') === 'sap', mono: source.monochromator,
-    model: { g: model.g, ub: model.ub, perRun: model.perRun, drift: model.drift },
-  };
-  const ctx = mapContext(setup), np = ctx.np;
   if (pool) {
-    await pool.all({ type: 'map-init', setup });
     const bgModels = new Map(); // the background model of each frame in flight (start runs ahead of apply)
     await pool.ordered(frames.length, async (i) => {
       const f = frames[i], buf = await f.read(), bg = frameBackground ? await frameBackground(i) : null;
@@ -1227,6 +1259,16 @@ export async function rotationBackground(fmt, run, ref, unmasked, width, onFrame
  */
 export function frameBackgroundCounts(model, h) {
   if (model.mode === 'static') return Float64Array.from(model.rate, (v) => v * h.exposure);
+  if (model.mode === 'rings') { // an isotropic level, interpolated in 2theta and in the scan angle, times the pixel's weight
+    const { j, u } = frameBins(model, h), L0 = model.levels[j], L1 = u ? model.levels[j + 1] : L0, { lo, frac, geo } = model;
+    const out = new Float64Array(geo.length), t = h.exposure;
+    for (let p = 0; p < out.length; p++) {
+      const r = lo[p], f = frac[p];
+      const a0 = f ? (1 - f) * L0[r] + f * L0[r + 1] : L0[r], a1 = f ? (1 - f) * L1[r] + f * L1[r + 1] : L1[r];
+      out[p] = ((1 - u) * a0 + u * a1) * geo[p] * t;
+    }
+    return out;
+  }
   const { j, u } = frameBins(model, h), r0 = model.rates[j], r1 = u ? model.rates[j + 1] : r0;
   const out = new Float64Array(r0.length), t = h.exposure;
   for (let p = 0; p < out.length; p++) out[p] = ((1 - u) * r0[p] + u * r1[p]) * t;
@@ -1323,6 +1365,177 @@ export function flushBackground(tr, EB2) {
     EB2[v] += a0[p] * a0[p] * C[J][p] * k[J] + a1[p] * a1[p] * C[J + 1][p] * k[J + 1];
     tv[p] = -1;
   }
+}
+
+// ---- Isotropic background estimated from the frames (Kapton mount, air) -------------------------
+
+/**
+ * The detector's rings for an isotropic background: each unmasked pixel's ring of 2theta, of
+ * `ringWidth` degrees, seen from the goniometer centre, and geo = solid angle x polarization /
+ * Omega_ref, the normalization weight of one second (mapFrame's, with the crystal at the centre).
+ * The pixels are also listed ring by ring: order[start[r] .. start[r + 1]). A pixel's level is
+ * interpolated linearly in 2theta between the centres of rings lo[p] and lo[p] + 1 (at frac[p]).
+ */
+export function detectorRings(ctx, ringWidth) {
+  const { np, lab, normal, px2, omegaRef, pol } = ctx;
+  const ring = new Int32Array(np), geo = new Float64Array(np), t = new Float64Array(np);
+  let nRings = 0;
+  for (let p = 0; p < np; p++) {
+    const Dx = lab[3 * p], Dy = lab[3 * p + 1], Dz = lab[3 * p + 2];
+    const r = Math.sqrt(Dx * Dx + Dy * Dy + Dz * Dz), sx = Dx / r, sy = Dy / r, sz = Dz / r;
+    t[p] = Math.acos(Math.max(-1, Math.min(1, -sz))) / DEG / ringWidth; // the beam travels along -Z
+    ring[p] = Math.floor(t[p]);
+    nRings = Math.max(nRings, ring[p] + 1);
+    geo[p] = px2 * (sx * normal[0] + sy * normal[1] + sz * normal[2]) / (r * r) * pol(sx, sy, sz) / omegaRef;
+  }
+  const lo = new Int32Array(np), frac = new Float64Array(np);
+  for (let p = 0; p < np; p++) {
+    const c = Math.min(Math.max(t[p] - 0.5, 0), Math.max(nRings - 1, 0)); // in ring centres, held at the ends
+    lo[p] = Math.min(Math.floor(c), Math.max(nRings - 2, 0));
+    frac[p] = nRings > 1 ? c - lo[p] : 0;
+  }
+  const start = new Int32Array(nRings + 1), order = new Int32Array(np);
+  for (let p = 0; p < np; p++) start[ring[p] + 1]++;
+  for (let r = 0; r < nRings; r++) start[r + 1] += start[r];
+  const next = start.slice(0, nRings);
+  for (let p = 0; p < np; p++) order[next[ring[p]]++] = p;
+  return { ring, geo, lo, frac, nRings, ringWidth, start, order };
+}
+
+/**
+ * The isotropic level of every ring in one omega bin, from each pixel's counts C and
+ * normalization weight W summed over the bin's frames. In each ring the level is
+ * L = sum C / sum W over the pixels kept by iterative clipping of z = (C - L W) / sqrt(L W):
+ * pixels above kHigh x s (Bragg peaks, diffuse features) or below -kLow x s (shadows) are left
+ * out, s being the rms z of the kept pixels (to start, the median level and 1.4826 x the median
+ * |z|). NaN where fewer than minPixels are kept. `kept` is the fraction kept in each ring.
+ */
+export function ringLevels(rings, C, W, { kHigh = 2.5, kLow = 3, minPixels = 30 } = {}) {
+  const { nRings, start, order } = rings;
+  const level = new Float64Array(nRings).fill(NaN), kept = new Float64Array(nRings);
+  let most = 0;
+  for (let r = 0; r < nRings; r++) most = Math.max(most, start[r + 1] - start[r]);
+  const keep = new Uint8Array(most), tmp = new Float64Array(most);
+  const zOf = (q, L) => { const e = L * W[q]; return (C[q] - e) / Math.sqrt(Math.max(e, 1)); };
+  for (let r = 0; r < nRings; r++) {
+    const a = start[r], n = start[r + 1] - a;
+    let m = 0;
+    for (let i = 0; i < n; i++) { const q = order[a + i]; if (W[q] > 0) tmp[m++] = C[q] / W[q]; }
+    if (m < minPixels) continue;
+    let L = select(tmp, m, m >> 1);
+    m = 0;
+    for (let i = 0; i < n; i++) { const q = order[a + i]; if (W[q] > 0) tmp[m++] = Math.abs(zOf(q, L)); }
+    let s = 1.4826 * select(tmp, m, m >> 1) || 1;
+    keep.fill(0, 0, n);
+    let nk = 0;
+    for (let it = 0; it < 50; it++) {
+      let changed = false, sc = 0, sw = 0, z2 = 0;
+      nk = 0;
+      for (let i = 0; i < n; i++) {
+        const q = order[a + i];
+        if (!(W[q] > 0)) continue;
+        const z = zOf(q, L), k = z <= kHigh * s && z >= -kLow * s ? 1 : 0;
+        if (k !== keep[i]) { keep[i] = k; changed = true; }
+        if (k) { sc += C[q]; sw += W[q]; nk++; }
+      }
+      if (!(sw > 0)) break;
+      L = sc / sw;
+      for (let i = 0; i < n; i++) if (keep[i]) { const z = zOf(order[a + i], L); z2 += z * z; }
+      s = Math.sqrt(z2 / nk) || 1;
+      if (!changed) break;
+    }
+    kept[r] = nk / m;
+    if (nk >= minPixels) level[r] = L;
+  }
+  return { level, kept };
+}
+
+/** Rings without a level take one interpolated linearly between their neighbours (held at the ends; 0 if none has one). */
+function fillRings(level) {
+  const ok = [];
+  for (let r = 0; r < level.length; r++) if (level[r] === level[r]) ok.push(r);
+  if (!ok.length) return level.fill(0);
+  for (let r = 0, k = 0; r < level.length; r++) {
+    if (level[r] === level[r]) continue;
+    while (k < ok.length - 1 && ok[k + 1] < r) k++;
+    const lo = ok[k], hi = ok[k + 1];
+    level[r] = r < lo || hi === undefined ? level[r < lo ? lo : ok.at(-1)] : level[lo] + (level[hi] - level[lo]) * (r - lo) / (hi - lo);
+  }
+  return level;
+}
+
+/**
+ * Isotropic background estimated from the experiment's own frames: add every frame in order
+ * (its counts c and normalization weights w of the unmasked pixels, from mapFrame with the
+ * solid-angle and polarization weights); the frames of each run are summed in omega bins of
+ * `omegaBin` degrees, and each bin gives a level per ring (ringLevels). finish() returns, per
+ * run, a model for frameBackgroundCounts: mode 'rings', the levels at each bin's
+ * exposure-weighted mean angle, interpolated linearly in between as for a measured background.
+ */
+export function isotropicEstimator(rings, { omegaBin = 5, ...clip } = {}) {
+  const np = rings.ring.length, C = new Float64Array(np), W = new Float64Array(np), runs = new Map();
+  let cur = null;
+  const close = () => {
+    if (!cur) return;
+    const { level, kept } = ringLevels(rings, C, W, clip);
+    runs.get(cur.run).bins.push({ centre: cur.angleSum / cur.exposure, exposure: cur.exposure, level: fillRings(level), kept });
+    C.fill(0);
+    W.fill(0);
+    cur = null;
+  };
+  return {
+    add(run, h, c, w) {
+      const axis = h.scanAxis, mid = 0.5 * (h.start[axis] + h.end[axis]);
+      if (!runs.has(run)) runs.set(run, { axis, a0: h.start[axis], lo: Infinity, hi: -Infinity, bins: [] });
+      const R = runs.get(run), j = Math.floor((mid - R.a0) / omegaBin + 1e-9);
+      if (cur && (cur.run !== run || cur.j !== j)) close();
+      cur ??= { run, j, exposure: 0, angleSum: 0 };
+      for (let p = 0; p < np; p++) { C[p] += c[p]; W[p] += w[p]; }
+      cur.exposure += h.exposure;
+      cur.angleSum += mid * h.exposure;
+      R.lo = Math.min(R.lo, h.start[axis], h.end[axis]);
+      R.hi = Math.max(R.hi, h.start[axis], h.end[axis]);
+    },
+    finish() {
+      close();
+      const models = new Map();
+      for (const [run, R] of runs) {
+        const bins = R.bins.sort((x, y) => x.centre - y.centre);
+        models.set(run, {
+          mode: 'rings', axis: R.axis, run, range: [R.lo, R.hi], width: omegaBin, lo: rings.lo, frac: rings.frac, geo: rings.geo,
+          centres: bins.map((b) => b.centre), exposure: bins.map((b) => b.exposure), levels: bins.map((b) => b.level), kept: bins.map((b) => b.kept),
+        });
+      }
+      return models;
+    },
+  };
+}
+
+/**
+ * For the report: the level against 2theta (exposure-weighted over every bin, null for rings
+ * without pixels) and, per bin, its amplitude (median over rings of level / profile) and the
+ * median fraction of pixels kept.
+ */
+export function isotropicStats(models, rings) {
+  const { nRings, ringWidth, start } = rings, sum = new Float64Array(nRings);
+  const has = (r) => start[r + 1] > start[r];
+  const median = (a) => { a.sort((x, y) => x - y); return a.length ? a[a.length >> 1] : null; };
+  let exposure = 0;
+  for (const m of models.values()) m.levels.forEach((L, b) => { for (let r = 0; r < nRings; r++) sum[r] += L[r] * m.exposure[b]; exposure += m.exposure[b]; });
+  const profile = Array.from(sum, (v, r) => (has(r) ? v / exposure : null));
+  const bins = [];
+  for (const m of models.values()) {
+    m.levels.forEach((L, b) => {
+      const ratio = [], kept = [];
+      for (let r = 0; r < nRings; r++) if (has(r) && profile[r] > 0) { ratio.push(L[r] / profile[r]); kept.push(m.kept[b][r]); }
+      bins.push({ run: m.run, angle: m.centres[b], amplitude: median(ratio), kept: median(kept) });
+    });
+  }
+  const r0 = profile.findIndex((v) => v !== null), r1 = profile.findLastIndex((v) => v !== null);
+  return {
+    twoTheta: [r0 * ringWidth, (r1 + 1) * ringWidth], profile: profile.slice(r0, r1 + 1), bins,
+    medianKept: median(bins.map((b) => b.kept).filter((v) => v !== null)),
+  };
 }
 
 /** Bin edges of a grid, per axis (H, K, L). */

@@ -155,6 +155,16 @@ Both kinds:
 
 The file records the background frames, exposure and scale in a log.
 
+**Isotropic background estimated from the frames (optional).** For a Kapton mount and air without an empty-mount scan. Their scattering is isotropic about the beam, so it depends only on 2θ, while the amount of mount in the beam changes with ω. It is estimated from the experiment's own frames, in a pass before the gridding:
+- *Rings:* each unmasked pixel is assigned to a ring of 2θ seen from the goniometer centre. The rings are two pixels wide by default (2 · atan(pixel / distance)).
+- *Bins:* per run, the frames are summed in bins of the scan angle (5° by default), giving each pixel its counts C and normalization weight W (solid angle × polarization × exposure, as in the volume).
+- *Level:* in each ring and bin, L = Σ C / Σ W over the pixels kept by iterative clipping of z = (C − L·W) / √(L·W). Pixels above 2.5 s (Bragg peaks, diffuse features) or below −3 s (shadows, such as the pin's) are left out, s being the rms z of the kept pixels. The first pass starts from the median level and 1.4826 × the median |z|. Rings with fewer than 30 pixels kept take a level interpolated from their neighbours.
+- *Background:* a pixel-frame gets the level interpolated linearly in 2θ between ring centres and in the scan angle between bin centres, × its solid angle × polarization × exposure. It is accumulated as B and subtracted like a measured background, with the same *Scale*.
+- *Errors:* the levels' own error is not propagated. Each averages a ring's pixels over a bin's frames, so it adds about the voxel's share of those pixel-frames (typically under 10⁻³) to the Poisson variance.
+- *What it removes:* everything isotropic. That is the Kapton mount and air, but also Compton scattering, fluorescence and the isotropic part of the sample's own scattering, which lowers I(Q). Part of a broad diffuse feature that is less than about 2.5 σ above the ring's level stays in the estimate. A reference Kapton profile, scaled per frame, would remove the mount alone.
+
+The report gives the level against 2θ, each bin's level relative to it, and the fraction of pixels kept.
+
 **Grid and output.**
 - *Indices:* the output cell is a transformation T of the refined cell. Each row of T gives an output basis vector in units of a, b, c (a′ᵢ = Σⱼ Tᵢⱼ aⱼ), and the output indices are T · (h, k, l). Entries may be fractions. The determinant must be positive, so the cell stays right-handed and its orientation is a proper rotation for Mantid. Presets:
   - identity;
@@ -178,6 +188,7 @@ The file records the background frames, exposure and scale in a log.
   - It recovers the background-free signal to 10⁻¹². That holds for a static background with 3 s sample frames against 10 s background frames. It also holds for a rotation-resolved background with one-frame bins, where the mount background varies strongly with ω.
   - 5° bins leave under a fifth of the residual a static average leaves.
   - A run without a matching background run is refused.
+  - The isotropic estimate removes a simulated Kapton halo whose amount changes by 60 % with ω, leaving 2.2 % (rms) of it, with Bragg peaks within 2 %. The level of one ring is recovered within 1 % next to Bragg peaks, a diffuse streak over 8 % of the ring and a shadow over 5 %. Serial and parallel estimates are byte-identical.
   - The variance of B equals, to float32 precision, the exact sum over rates of (summed coefficient)² × variance. The check covers pixels that stay several frames in a voxel or split between voxels, ascending and descending scans with interpolated bins, and a static background. There it is about 3 times the variance of independent terms. σ² is (E2 + s² · EB2) / W² for any scale s.
 
   The Python implementation was run with the same geometry, mask and grid on 664 real frames. Its background accumulator agrees to 1.4 × 10⁻¹⁴ (static) and 1.6 × 10⁻¹³ (rotation, 5° bins) over 3.3 million voxels.

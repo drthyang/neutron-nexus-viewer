@@ -184,7 +184,21 @@ export function setupRigaku(hooks) {
     bkgText = !b ? '' : b.matches ? `${what}; same detector setup as the experiment.`
       : `${what}: not the experiment's setup (${b.differences.join('; ')}), so it will not be used.`;
     bkgNote();
+    // one background or the other: a measured one turns the estimate off
+    $('rk-iso').disabled = !!background;
+    $('rk-iso').closest('.switch').title = background ? 'Remove the measured background to estimate one from the frames instead' : ISO_TITLE;
+    if (background) { $('rk-iso').checked = false; isoChanged(); }
   }
+  // ---- isotropic background, estimated from the frames (Kapton mount, air) ------------------
+  const ISO_TITLE = $('rk-iso').closest('.switch').title;
+  function isoChanged() {
+    const on = $('rk-iso').checked;
+    $('rk-iso-opts').hidden = !on;
+    $('rk-iso-note').hidden = !on;
+    $('rk-bkg-folder').disabled = on;
+    $('rk-bkg-folder').title = on ? 'Turn off the estimated background to use a measured one' : '';
+  }
+  $('rk-iso').onchange = isoChanged;
   $('rk-bkg-folder').onclick = () => $('rk-bkg-input').click();
   $('rk-bkg-input').onchange = () => {
     const files = [...$('rk-bkg-input').files].map((file) => ({ file, path: file.webkitRelativePath || file.name }));
@@ -237,7 +251,14 @@ export function setupRigaku(hooks) {
     const N = readMatrix();
     if (N instanceof Error) throw new Error(`Output cell: ${N.message}`);
     opts.transform = N;
-    if (background) {
+    if ($('rk-iso').checked) {
+      if (background) throw new Error('Use either the measured background or the estimated one, not both.');
+      opts.backgroundMode = 'isotropic';
+      opts.backgroundScale = Number($('rk-iso-scale').value);
+      opts.backgroundBin = Number($('rk-iso-bin').value);
+      if (!(opts.backgroundScale >= 0)) throw new Error('The background scale must be a number of 0 or more.');
+      if (!(opts.backgroundBin > 0)) throw new Error('The ω bin of the estimated background must be positive.');
+    } else if (background) {
       opts.backgroundScale = Number($('rk-bkg-scale').value);
       opts.backgroundMode = $('rk-bkg-mode').dataset.value;
       opts.backgroundBin = Number($('rk-bkg-bin').value);
@@ -268,6 +289,13 @@ export function setupRigaku(hooks) {
   };
 
   function backgroundRow(b) {
+    if (b.mode === 'isotropic') {
+      const st = b.stats, amps = st.bins.map((x) => x.amplitude).filter((v) => v !== null);
+      return `isotropic, estimated from the frames in ${fmt(b.binWidth, 3)}° bins of ω and ${fmt(b.ringWidth, 3)}° rings of 2θ `
+        + `(${fmt(st.twoTheta[0], 3)}–${fmt(st.twoTheta[1], 3)}°); median ${fmt(100 * st.medianKept, 1)} % of a ring's pixels kept; `
+        + `level over ω ${fmt(Math.min(...amps), 2)}–${fmt(Math.max(...amps), 2)} × its mean; scale ${fmt(b.scale, 4)}; `
+        + `${b.negativeVoxels.toLocaleString()} measured voxels below zero. The profile against 2θ is in the report (.json)`;
+    }
     const st = b.stats, err = st.medianRelativeError === null || st.medianRelativeError === undefined ? '—' : `${fmt(100 * st.medianRelativeError, 1)} %`;
     const how = b.mode === 'rotation'
       ? `rotation-resolved, ${fmt(b.binWidth, 3)}° bins (${fmt(st.binExposure?.[0], 1)}–${fmt(st.binExposure?.[1], 1)} s each); runs ${Object.entries(st.matched).map(([s0, b0]) => `${s0}←${b0}`).join(', ')}`

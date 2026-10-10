@@ -6,12 +6,12 @@ import h5wasm from 'h5wasm/node';
 import { describeFile, loadVariance, loadVolume } from '../js/nexus.js';
 import * as fmt from '../js/rigaku-format.js';
 import {
-  M_CRYSALIS, bMatrix, cellFromUB, crystalSystem, gonio, inv3, levenbergMarquardt, mul, mulv, norm, parseFraction, parseTransform, pixelX,
-  predict, prepare, rot, transformCell, transpose,
+  DEG, M_CRYSALIS, bMatrix, cellFromUB, crystalSystem, gonio, inv3, levenbergMarquardt, mul, mulv, norm, parseFraction, parseTransform, pixelToLab,
+  pixelX, predict, prepare, rot, transformCell, transpose,
 } from '../js/rigaku-geometry.js';
 import {
   PeakSearch, accumulateFrame, applyFrame, applyRecords, detectorMask, finishVolume, flushBackground, frameRecords, gridEdges,
-  makeAccumulators, makeBackgroundTracker, makeGrid, reduceRigaku, trackBackground, writeMantidMD,
+  makeAccumulators, makeBackgroundTracker, makeGrid, polarizationModel, reduceRigaku, ringLevels, trackBackground, writeMantidMD,
 } from '../js/rigaku-reduce.js';
 import { WorkerPool } from '../js/rigaku-pool.js';
 import { nodeWorker } from './node-worker.js';
@@ -541,4 +541,113 @@ test('rotation-resolved background: a mount background that changes with omega i
   // a sample run without a background run at its kappa and phi is refused
   const other = backgroundScan(clean, mount, { runs: [[54, 0], [54, 45]] });
   await assert.rejects(reduceRigaku(source(withMount, other, { mode: 'rotation', omegaBin: 1 }), fmt, opts), /No background run was measured like run 2 \(kappa 54, phi 90\)/);
+});
+
+test('ring levels: the isotropic level of a ring, without its Bragg peaks, diffuse streak and shadow', () => {
+  // one ring of 4000 pixels with weights 0.5-1.5 (solid angle x polarization x frames) at level 20,
+  // Poisson-like noise, 1 % of pixels in Bragg peaks, a diffuse streak over 8 % of the ring and a
+  // shadow over 5 %; a second ring with too few pixels has no level
+  const r = rng(3), n = 4000, L = 20, C = new Float64Array(n + 10), W = new Float64Array(n + 10);
+  const gauss = () => Math.sqrt(-2 * Math.log(r() || 1e-12)) * Math.cos(2 * Math.PI * r());
+  for (let p = 0; p < n; p++) {
+    W[p] = 0.5 + r();
+    let mean = L * W[p];
+    if (p % 100 === 7) mean += 5000 * r(); // Bragg peaks
+    if (p >= 1000 && p < 1320) mean *= 1.6; // a diffuse streak
+    if (p >= 3000 && p < 3200) mean *= 0.2; // shadow of the pin
+    C[p] = Math.max(0, Math.round(mean + Math.sqrt(mean) * gauss()));
+  }
+  for (let p = n; p < n + 10; p++) { W[p] = 1; C[p] = 40; }
+  const ring = Int32Array.from({ length: n + 10 }, (_, p) => (p < n ? 0 : 1));
+  const rings = { nRings: 2, ringWidth: 1, start: Int32Array.of(0, n, n + 10), order: Int32Array.from({ length: n + 10 }, (_, p) => p), ring };
+  const { level, kept } = ringLevels(rings, C, W);
+  assert.ok(Math.abs(level[0] / L - 1) < 0.01, `level ${level[0]}`);
+  assert.ok(kept[0] > 0.85 && kept[0] < 0.95, `kept ${kept[0]}`); // not the peaks, nor most of the streak and shadow
+  assert.ok(Number.isNaN(level[1]));
+  // a plain mean would be far off
+  let sc = 0, sw = 0;
+  for (let p = 0; p < n; p++) { sc += C[p]; sw += W[p]; }
+  assert.ok(sc / sw > 1.5 * L);
+});
+
+/** An isotropic halo (counts per pixel and frame), like a Kapton mount's, as the reduction weights pixels. */
+function kaptonHalo(sim, mono, amplitude) {
+  const G = prepare(sim.model.g), pol = polarizationModel(mono), { nx, ny } = sim;
+  const out = new Float64Array(nx * ny);
+  for (let j = 0; j < ny; j++) for (let i = 0; i < nx; i++) {
+    const P = pixelToLab(G, i, j), r = Math.hypot(...P), s = P.map((v) => v / r);
+    const tth = Math.acos(-s[2]) / DEG, cosIn = s[0] * G.normal[0] + s[1] * G.normal[1] + s[2] * G.normal[2];
+    const halo = Math.exp(-0.5 * ((tth - 24) / 5) ** 2) + 0.3 * Math.exp(-0.5 * ((tth - 40) / 8) ** 2);
+    out[j * nx + i] = amplitude * halo * cosIn / (r / sim.model.g.distance) ** 2 * pol(...s);
+  }
+  return out;
+}
+
+test('isotropic background: a Kapton halo that changes with omega is estimated from the frames and removed', async () => {
+  const mono = { theta: 6.07, plane: 'E1E3' };
+  const shape = kaptonHalo(simulateExperiment({ nFrames: 1 }), mono, 30);
+  const amount = (r, f) => 1 + 0.6 * Math.exp(-(((f - 80) / 25) ** 2)) + 0.1 * r; // more Kapton in the beam at some omega
+  const clean = simulateExperiment(), withKapton = simulateExperiment({ airScatter: (r, f) => Int32Array.from(shape, (v) => Math.round(v * amount(r, f))) });
+  const model = { ...clean.model, perRun: new Map(), drift: new Map() }, mask = new Uint8Array(clean.nx * clean.ny);
+  const source = (sim, background) => {
+    const runs = new Map();
+    for (const fr of sim.frames) {
+      if (!runs.has(fr.run)) runs.set(fr.run, []);
+      runs.get(fr.run).push({ frame: fr.frame, read: async () => fr.bytes.buffer.slice(0) });
+    }
+    return { runs, ubCandidates: {}, label: 'simulated', monochromator: mono, ...(background ? { background } : {}) };
+  };
+  const opts = { model, mask, transform: [2, 0, 0, 0, 2, 0, 0, 0, 2], step: 0.1, nSub: 3 };
+  const iso = { mode: 'isotropic', omegaBin: 5 };
+  // the flat background of the simulated frames is isotropic too: compare with the clean frames, also estimated
+  const a = await reduceRigaku(source(clean, iso), fmt, opts);
+  const b = await reduceRigaku(source(withKapton, iso), fmt, opts);
+  assert.equal(b.report.background.mode, 'isotropic');
+  assert.ok(!b.acc.EB2 && b.acc.B);
+  const st = b.report.background.stats;
+  assert.ok(st.profile.length > 20 && st.medianKept > 0.8, JSON.stringify({ n: st.profile.length, kept: st.medianKept }));
+  // the amplitude per bin follows the amount of Kapton in the beam
+  const peak = st.bins.filter((x) => x.run === 1).reduce((m, x) => (x.amplitude > m.amplitude ? x : m));
+  assert.ok(Math.abs(peak.angle - (-70 + 80)) < 10, `amplitude peaks at omega ${peak.angle}`);
+  const va = finishVolume(a.acc), vb = finishVolume(b.acc), raw = finishVolume(b.acc, { backgroundScale: 0 }), rawA = finishVolume(a.acc, { backgroundScale: 0 });
+  let k2 = 0, d2 = 0, n = 0;
+  for (let v = 0; v < va.signal.length; v++) {
+    if (!(a.acc.W[v] > 0)) continue;
+    const kapton = (raw.signal[v] - rawA.signal[v]), residual = vb.signal[v] - va.signal[v];
+    k2 += kapton * kapton; d2 += residual * residual; n++;
+  }
+  assert.ok(n > 1000);
+  assert.ok(Math.sqrt(d2 / k2) < 0.03, `the Kapton left after subtraction: ${(100 * Math.sqrt(d2 / k2)).toFixed(2)} % (rms)`);
+  // the Bragg peaks stay: the brightest voxels lose only the background under them
+  const order = [...va.signal.keys()].filter((v) => a.acc.W[v] > 0).sort((x, y) => rawA.signal[y] - rawA.signal[x]).slice(0, 20);
+  for (const v of order) assert.ok(Math.abs(vb.signal[v] / va.signal[v] - 1) < 0.02, `peak voxel ${vb.signal[v]} vs ${va.signal[v]}`);
+  // and measured frames are refused with it
+  await assert.rejects(reduceRigaku(source(clean, { ...iso, frames: backgroundFrames(clean, shape.map(Math.round), 1) }), fmt, opts), /takes no background frames/);
+});
+
+test('isotropic background: parallel workers give a bit-identical estimate and reduction', async () => {
+  const mono = { theta: 6.07, plane: 'E1E3' }, shape = kaptonHalo(simulateExperiment({ nFrames: 1 }), mono, 20);
+  const sim = simulateExperiment({ nFrames: 60, airScatter: (r, f) => Int32Array.from(shape, (v) => Math.round(v * (1 + 0.01 * f))) });
+  const model = { ...sim.model, perRun: new Map(), drift: new Map() }, mask = new Uint8Array(sim.nx * sim.ny);
+  const source = () => {
+    const runs = new Map();
+    for (const fr of sim.frames) {
+      if (!runs.has(fr.run)) runs.set(fr.run, []);
+      runs.get(fr.run).push({ frame: fr.frame, read: async () => fr.bytes.buffer.slice(0) });
+    }
+    return { runs, ubCandidates: {}, label: 'simulated', monochromator: mono, background: { mode: 'isotropic', omegaBin: 5 } };
+  };
+  const opts = { model, mask, transform: [2, 0, 0, 0, 2, 0, 0, 0, 2], step: 0.1, nSub: 3 };
+  const serial = await reduceRigaku(source(), fmt, opts);
+  const pool = new WorkerPool([0, 1, 2].map(() => nodeWorker(new URL('../js/rigaku-map-worker.js', import.meta.url))));
+  let par;
+  try {
+    await pool.ready();
+    par = await reduceRigaku(source(), fmt, opts, () => {}, pool);
+  } finally {
+    pool.terminate();
+  }
+  assert.deepEqual(par.report.background.stats, serial.report.background.stats);
+  for (const k of ['S', 'E2', 'W', 'N', 'B']) assert.ok(Buffer.from(serial.acc[k].buffer).equals(Buffer.from(par.acc[k].buffer)), `${k} differs`);
+  assert.ok(serial.acc.B.some((v) => v > 0));
 });

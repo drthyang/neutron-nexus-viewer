@@ -10,12 +10,14 @@
 //   map {buf, h, run, grid, b}    -> {v, s, e, w, b}  one frame's contributions, grouped by voxel (pass 3);
 //                                   b: the background counts of its unmasked pixels, or null; with b
 //                                   also {vox, split}, its pixels' voxels, for trackBackground
+//   counts {buf, h, run}          -> {c, w}        one frame's counts and solid-angle x polarization
+//                                   weights of its unmasked pixels, for isotropicEstimator
 // Errors are returned as {error}.
 
 import * as fmt from './rigaku-format.js';
 import { frameRecords, indexFrame, makeSums, mapContext, mapFrame, runPeaks, sumFrame } from './rigaku-reduce.js';
 
-let sums = null, img = null, ctx = null, frame = null, vox = null;
+let sums = null, img = null, ctx = null, sapCtx = null, frame = null, vox = null;
 
 const handlers = {
   ping: () => ({}),
@@ -37,6 +39,7 @@ const handlers = {
   peaks: ({ bufs, hs, mask, bg, nx, ny }) => ({ peaks: runPeaks(fmt, bufs, hs, mask, bg, nx, ny) }),
   'map-init': ({ setup }) => {
     ctx = mapContext(setup);
+    sapCtx = { ...ctx, sap: true };
     frame = { x: new Float64Array(3 * ctx.np), c: new Int32Array(ctx.np), w: new Float64Array(ctx.np) };
     vox = new Int32Array(ctx.np);
     return {};
@@ -47,6 +50,11 @@ const handlers = {
     const transfer = [rec.v.buffer, rec.s.buffer, rec.e.buffer, rec.w.buffer];
     if (b) { Object.assign(rec, { vox: vox.slice(), split }); transfer.push(rec.b.buffer, rec.vox.buffer, split.buffer); }
     return [rec, transfer];
+  },
+  counts: ({ buf, h, run }) => {
+    const out = { x: frame.x, c: new Int32Array(ctx.np), w: new Float64Array(ctx.np) };
+    mapFrame(sapCtx, fmt, buf, h, run, out);
+    return [{ c: out.c, w: out.w }, [out.c.buffer, out.w.buffer]];
   },
 };
 
