@@ -5,9 +5,15 @@
   "description": "Static browser viewer for reciprocal-space slices of 3-D neutron and X-ray scattering histograms",
   "license": "AGPL-3.0-or-later",
   "scripts": {
-    "test": "node --test"
+    "test": "node --test",
+    "mcp": "node agent/main.js"
   },
-  "devDependencies": {
-    "h5wasm": "0.10.3"
+  "dependencies": {
+    "@modelcontextprotocol/sdk": "^1.32.1",
+    "h5wasm": "0.10.3",
+    "zod": "^4.6.5"
+  },
+  "engines": {
+    "node": ">=20.10"
   }
 }

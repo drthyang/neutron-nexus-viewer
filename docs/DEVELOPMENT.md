@@ -44,6 +44,7 @@ CI runs the same tests on every push (`.github/workflows/test.yml`).
 | `js/rigaku-ui.js` | The *Reduce Rigaku XRD* dialog |
 | `js/view3d.js` | three.js scene, loaded when the 3-D view opens |
 | `js/colormaps.js` | Colormap lookup tables (generated) |
+| `agent/` | The agent tools and the MCP server (Node only, not loaded by the page): `index.js` is the registry, `workspace.js` holds the open volumes, `tools/` the tools, `png.js` draws slices for a model, `server.js` and `main.js` serve them on stdio. See [AGENT.md](AGENT.md) |
 
 ## Fixtures, example data and generated files
 
@@ -67,7 +68,7 @@ node tools/make_screenshot.mjs http://localhost:8000/?demo docs/screenshot.png
 - [h5wasm](https://github.com/usnistgov/h5wasm) (NIST) reads HDF5 in the worker. It is loaded from jsDelivr at the version pinned in `js/worker.js`, which must match `package.json`, where the tests use it.
 - [three.js](https://threejs.org) renders the 3-D view. It is loaded from jsDelivr through the import map in `index.html`.
 
-No other runtime dependencies. The file never leaves the browser; only these two libraries are fetched from the CDN.
+No other runtime dependencies for the page. The agent tools (`agent/`, Node only) also use h5wasm from `package.json` and the [MCP SDK](https://github.com/modelcontextprotocol/typescript-sdk) and [zod](https://zod.dev) from npm. The file never leaves the browser; only these two libraries are fetched from the CDN.
 
 ## Deployment
 
