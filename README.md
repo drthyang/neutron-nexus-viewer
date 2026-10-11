@@ -47,6 +47,7 @@ short-range-order diffuse scattering condenses into superlattice peaks.
 | **Any screen** | Laptops to 4K and 5K monitors (drawn larger at 100% scaling), tablets and phones: views first on narrow screens, touch-sized controls and pinch zoom | [The screen](docs/USER_GUIDE.md#the-screen) |
 | **Rigaku XRD reduction** | Raw CrysAlisPro frames (`*.rod_img`) to an HKL volume in the browser: detector mask, Bragg-peak search, geometry refinement per run, solid-angle and polarization normalization, in any cell setting (a transformation matrix) or on an open dataset's grid, optional background subtraction (measured, static or rotation-resolved, or an isotropic one such as a Kapton mount's estimated from the frames), using all CPU cores with the same result as one; opens for comparison and saves as a Mantid file that `LoadMD` reads | [Reducing frames](docs/USER_GUIDE.md#reducing-rigaku-xrd-frames) · [Method](docs/METHOD.md#rigaku-reduction) |
 | **Files and links** | Mantid `MDHistoWorkspace` (`SaveMD`), any 3-D `NXdata`, and NEBULA3D's processed volumes and 3D-ΔPDFs (drawn at the real-space cell angles); local files or links that open a file, a comparison, symmetry and mask; PNG export with a colorbar | [Supported files](docs/USER_GUIDE.md#supported-files) |
+| **Agent tools** | The analysis as tools for AI agents over MCP (Claude Code, Claude Desktop, any MCP client): open a volume, set symmetry and a mask, look at slices, take line cuts and I(Q), read the intensity at NEXPLAN's Bragg nodes, export for NEBULA3D, with the viewer's own code | [Agent tools](docs/AGENT.md) |
 
 ## Quick start
 
@@ -71,6 +72,7 @@ cd neutron-nexus-viewer
 python3 -m http.server 8000   # open http://localhost:8000
 ```
 
+For AI agents, `npm install && npm run mcp` starts the MCP server ([docs/AGENT.md](docs/AGENT.md)).
 Tests (`npm install && npm test`), the code layout and deployment are covered in
 [docs/DEVELOPMENT.md](docs/DEVELOPMENT.md).
 
@@ -80,6 +82,7 @@ Tests (`npm install && npm test`), the code layout and deployment are covered in
 | --- | --- |
 | [User guide](docs/USER_GUIDE.md) | The interface on each kind of screen, every control, line cuts, comparison, reindexing with a new UB, Rigaku reduction, layouts, export, remote files and supported formats |
 | [Method](docs/METHOD.md) | How slices, line cuts, symmetry averaging, masking, comparison, the 3-D view, I(Q), reindexing, the NEBULA3D export and the Rigaku reduction are computed, and how they are validated |
+| [Agent tools](docs/AGENT.md) | The MCP server and its tools: setup, what each tool does, files and conventions, use with NEXPLAN and NEBULA3D |
 | [Development](docs/DEVELOPMENT.md) | Code layout, tests and fixtures, example data, the screenshot, dependencies and deployment |
 
 ## License

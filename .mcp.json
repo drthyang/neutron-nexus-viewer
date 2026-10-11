@@ -1,0 +1,9 @@
+{
+  "mcpServers": {
+    "nexus-viewer": {
+      "type": "stdio",
+      "command": "node",
+      "args": ["agent/main.js"]
+    }
+  }
+}
