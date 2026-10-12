@@ -6,7 +6,7 @@ import test from 'node:test';
 
 import h5wasm from 'h5wasm/node';
 
-import { exportPlan, nebulaUB, symmetrizeForExport, writeNebulaFile } from '../js/export.js';
+import { exportPlan, nebulaUB, sigmaNote, symmetrizeForExport, writeNebulaFile } from '../js/export.js';
 import { reciprocalMetric } from '../js/nexus.js';
 import { averageSlab, IDENTITY_MAP } from '../js/slab.js';
 import { closeGroup, indexMaps, parseOps, PRESETS } from '../js/symmetry.js';
@@ -88,7 +88,7 @@ test('exported planes equal one-bin symmetrized slices', () => {
   for (const name of ['1', '-1', 'mmm', '6/mmm']) {
     const plan = exportPlan(dims, hexCell);
     const maps = indexMaps(group(name), plan.paddedDims);
-    const { data, valid } = symmetrizeForExport(volume, shape, plan, maps, mask);
+    const { data, valid } = symmetrizeForExport(volume, shape, plan, maps, { mask });
     for (let l = 0; l < 7; l++) {
       const slab = averageSlab(volume, shape, 2, [l], maps, mask);
       for (let k = 0; k < 9; k++) {
@@ -100,6 +100,48 @@ test('exported planes equal one-bin symmetrized slices', () => {
       }
     }
   }
+});
+
+test('σ of each exported voxel is that of its orbit\'s mean, √(Σσ²)/n over its distinct valid voxels', () => {
+  // H padded from -0.25 … 0.45 to ±0.45, so orbits meet the padding and the mirror planes.
+  const dims = [axis('H', 8, 0.1, -0.35), axis('K', 9, 0.1, -0.45), axis('L', 7, 0.2, -0.7)];
+  const shape = [7, 9, 8], volume = randomVolume(7 * 9 * 8, 3);
+  const variance = Float32Array.from(randomVolume(volume.length, 5), (v, i) => (i % 13 === 0 ? NaN : Number.isNaN(v) ? 0.5 : v / 10));
+  const mask = Uint8Array.from(volume, (_, i) => (i % 7 === 0 ? 1 : 0));
+  const plan = exportPlan(dims, hexCell), [P0, P1, P2] = plan.size;
+  for (const name of ['1', '-1', 'mmm', '6/mmm']) {
+    const maps = indexMaps(group(name), plan.paddedDims);
+    const { data, valid, sigma, stats } = symmetrizeForExport(volume, shape, plan, maps, { mask, variance });
+    let defaulted = 0;
+    for (let p2 = 0; p2 < P2; p2++) for (let p1 = 0; p1 < P1; p1++) for (let p0 = 0; p0 < P0; p0++) {
+      // The orbit's distinct valid source voxels, by set.
+      const members = new Set();
+      for (const { M, t } of maps) {
+        const q = [0, 1, 2].map((i) => M[3 * i] * p0 + M[3 * i + 1] * p1 + M[3 * i + 2] * p2 + t[i]);
+        const s = q.map((qi, i) => qi + plan.lo[i]);
+        if (q.some((qi, i) => qi < 0 || qi >= plan.size[i]) || s.some((si, i) => si < 0 || si >= [8, 9, 7][i])) continue;
+        const f = s[0] + 8 * (s[1] + 9 * s[2]);
+        if (!Number.isNaN(volume[f]) && !mask[f]) members.add(f);
+      }
+      const o = p0 * 9 * 7 + p1 * 7 + p2;
+      if (!members.size) {
+        assert.equal(valid[o], 0);
+        assert.equal(sigma[o], 0);
+        continue;
+      }
+      const known = [...members].filter((f) => variance[f] >= 0);
+      const mean = [...members].reduce((a, f) => a + volume[f], 0) / members.size;
+      const expected = known.length ? Math.sqrt(known.reduce((a, f) => a + variance[f], 0)) / known.length : Math.sqrt(Math.abs(mean));
+      if (!known.length) defaulted++;
+      assert.ok(valid[o] === 1 && Math.abs(data[o] - mean) < 1e-4 * Math.max(1, Math.abs(mean)), `${name} value ${p0} ${p1} ${p2}`);
+      assert.ok(Math.abs(sigma[o] - expected) < 1e-5 * Math.max(1, expected), `${name} σ ${p0} ${p1} ${p2}: ${sigma[o]} vs ${expected}`);
+    }
+    assert.equal(stats.sigmaDefaulted, defaulted, name);
+  }
+  // Without uncertainties there is no sigma, and the file says NEBULA3D takes √|data|.
+  const plain = symmetrizeForExport(volume, shape, plan, [IDENTITY_MAP], { mask });
+  assert.equal(plain.sigma, null);
+  assert.match(sigmaNote(plain, undefined), /none written.*sqrt\(\|data\|\)/);
 });
 
 test('symmetry fills the padding from measured equivalents', () => {
@@ -127,7 +169,8 @@ test('the file has NEBULA3D\'s layout', async () => {
     const dims = [axis('H', 5, 0.1, -0.25), axis('K', 5, 0.1, -0.25), axis('L', 3, 0.2, -0.3)];
     const shape = [3, 5, 5], volume = randomVolume(75, 7);
     const plan = exportPlan(dims, { ...hexCell, ub: [0.27, 0.14, 0, 0, 0.24, 0, 0, 0, 0.147] });
-    const result = symmetrizeForExport(volume, shape, plan, [IDENTITY_MAP]);
+    const variance = Float32Array.from(volume, (v) => Math.abs(v) / 4);
+    const result = symmetrizeForExport(volume, shape, plan, [IDENTITY_MAP], { variance });
     const path = join(dir, 'out.nxs');
     writeNebulaFile(h5wasm, path, plan, result, { source_file: 'x.nxs', symmetry: '1' });
     const f = new h5wasm.File(path, 'r');
@@ -141,10 +184,14 @@ test('the file has NEBULA3D\'s layout', async () => {
     assert.equal(entry.attrs.instrument.value, '');
     // (H, K, L) order: data[h][k][l] is the source voxel at storage [l][k][h].
     const data = entry.get('data').value, mask = entry.get('mask').value;
+    // σ as NEBULA3D reads it: /entry/sigma, the data's shape, 0 where invalid.
+    assert.deepEqual(entry.get('sigma').shape, [5, 5, 3]);
+    const sigma = entry.get('sigma').value;
     const v = volume[3 + 5 * (1 + 5 * 2)];
     const o = (3 * 5 + 1) * 3 + 2;
-    if (Number.isNaN(v)) assert.equal(mask[o], 0);
-    else assert.ok(mask[o] === 1 && Math.abs(data[o] - v) < 1e-6);
+    if (Number.isNaN(v)) assert.ok(mask[o] === 0 && sigma[o] === 0);
+    else assert.ok(mask[o] === 1 && Math.abs(data[o] - v) < 1e-6 && Math.abs(sigma[o] - Math.sqrt(Math.abs(v) / 4)) < 1e-6);
+    assert.ok(mask.every((m, i) => m === 1 || sigma[i] === 0));
     f.close();
   } finally {
     rmSync(dir, { recursive: true, force: true });

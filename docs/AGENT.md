@@ -49,7 +49,7 @@ that combine them.
 | `line_cut` | A 1-D profile along any line, averaged over a rod, with σ; `.csv` or the viewer's text format. | Cut mode |
 | `powder_average` | I(\|Q\|) with σ and shell coverage; `.csv` or the viewer's text format. | I(Q) |
 | `read_points` | Values at points, with box statistics; takes NEXPLAN `bragg_positions` files and summarises by class (present, systematic absence, satellite, …). | Hover readout |
-| `export_nebula3d` | The masked, symmetrized volume as a NEBULA3D input file. | Export → Open in NEBULA3D |
+| `export_nebula3d` | The masked, symmetrized volume, with σ, as a NEBULA3D input file. | Export → Open in NEBULA3D |
 | `close_volume` | Frees a volume's memory. | — |
 
 The server also gives `docs/METHOD.md` as the resource `nexus-viewer://docs/method`, and its
@@ -89,8 +89,8 @@ The server also gives `docs/METHOD.md` as the resource `nexus-viewer://docs/meth
 - `read_points` with `points_path` reads NEXPLAN's `bragg_positions` output (JSON or CSV) for the same
   grid and summarises the values by node class: intensity at systematic absences points to λ/2,
   multiple scattering, a lower symmetry or a superlattice.
-- `export_nebula3d` writes the file NEBULA3D's pipeline reads, with the symmetry operations in
-  `/entry@symmetry_ops`.
+- `export_nebula3d` writes the file NEBULA3D's pipeline reads, with σ propagated from the file's
+  uncertainties in `/entry/sigma` and the symmetry operations in `/entry@symmetry_ops`.
 
 ## Using the tools from code
 

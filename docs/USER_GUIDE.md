@@ -205,7 +205,7 @@ The **Export** section at the bottom of the panel hands the processed volume to 
 
 - **Content**: every voxel is the mean of the measured, unmasked voxels among its symmetry equivalents, as in the slices; voxels with none are written as 0 with mask 0, and NEBULA3D backfills them. When comparing, dataset A is exported.
 - **Grid**: axes must be plain H, K and L with uniform bins and a bin centred at 0: NEBULA3D puts Q = 0 at the centre of the middle bin. A grid with a bin edge at 0 (such as −2 to 2 in steps of 0.1) is refused, with the binning to reduce with instead (−2.05 to 2.05). Each axis is padded to be symmetric about 0, and symmetry fills the padding where equivalents were measured.
-- **File**: HDF5 with `/entry/{data, mask, h_axis, k_axis, l_axis, ub_matrix}` in (H, K, L) order, named like `<file>_sym6mmm.nxs`, with the source file, symmetry, mask and UB source as attributes. NEBULA3D's browser build handles up to about 80 M voxels; a 401³ volume (64 M) takes about 10 s to export. See [Method → Export](METHOD.md#export-for-nebula3d).
+- **File**: HDF5 with `/entry/{data, mask, sigma, h_axis, k_axis, l_axis, ub_matrix}` in (H, K, L) order, named like `<file>_sym6mmm.nxs`, with the source file, symmetry, mask, UB source and uncertainties as attributes. `sigma` is each voxel's uncertainty, propagated from the file's; a file without uncertainties gets none, and NEBULA3D then takes √|data|. NEBULA3D's browser build handles up to about 80 M voxels; a 401³ volume (64 M) takes about 10 s to export. See [Method → Export](METHOD.md#export-for-nebula3d).
 
 ## Layouts and export
 

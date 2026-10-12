@@ -468,8 +468,8 @@ const handlers = {
     showExportProgress(label, fraction);
     forwardProgress(label, fraction);
   },
-  'export-file': ({ blob, stats, seconds }) => {
-    const { name, send, attrs } = exportJob;
+  'export-file': ({ blob, stats, sigma, uncertainties, seconds }) => {
+    const { name, send } = exportJob, attrs = { ...exportJob.attrs, uncertainties };
     exportJob = null;
     endJob('export');
     showExport();
@@ -482,7 +482,7 @@ const handlers = {
       return;
     }
     download(blob, name);
-    exportNote('ok', 'saved', `Saved ${shortName(name)} (${mb(blob.size)}, ${pct(stats.valid / stats.total)} of voxels valid) in ${seconds.toFixed(1)} s. `
+    exportNote('ok', 'saved', `Saved ${shortName(name)} (${mb(blob.size)}, ${pct(stats.valid / stats.total)} of voxels valid, ${sigma ? 'σ propagated' : 'no σ in the file'}) in ${seconds.toFixed(1)} s. `
       + 'In NEBULA3D, open it with Load volume…', name);
   },
   'export-error': ({ message }) => {

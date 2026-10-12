@@ -186,6 +186,23 @@ test('export_nebula3d writes the file NEBULA3D reads, with the processing record
   }
   const again = await callTool('export_nebula3d', { volume_id: 'cold', output_path: out }, { workspace: ws });
   assert.match(again.error, /exists/);
+  // The example has no uncertainties: no sigma, and NEBULA3D's √|data| is said.
+  assert.equal(e.sigma, false);
+  assert.match(e.attributes.uncertainties, /none written/);
+  // A Mantid file's errors_squared become /entry/sigma, σ of each orbit's mean.
+  await call(ws, 'open_volume', { path: fixture('mdhisto_small.nxs'), id: 'v' });
+  const withSigma = await call(ws, 'export_nebula3d', { volume_id: 'v', output_path: join(tmp, 'v.nxs') });
+  assert.equal(withSigma.sigma, true);
+  assert.match(withSigma.attributes.uncertainties, /^from errors_squared/);
+  const g = new h5wasm.File(withSigma.written.path, 'r');
+  try {
+    const entry = g.get('entry');
+    assert.deepEqual(entry.get('sigma').shape, entry.get('data').shape);
+    const sigma = entry.get('sigma').value, mask = entry.get('mask').value;
+    assert.ok(sigma.some((x, i) => mask[i] && x > 0) && sigma.every((x, i) => mask[i] || x === 0));
+  } finally {
+    g.close();
+  }
 });
 
 test('every tool has a JSON Schema and is documented in docs/AGENT.md', () => {

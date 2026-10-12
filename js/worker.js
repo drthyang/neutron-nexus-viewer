@@ -4,7 +4,7 @@
 
 import h5wasm from 'https://cdn.jsdelivr.net/npm/h5wasm@0.10.3/dist/esm/hdf5_hl.js';
 import { lineCut } from './cut.js';
-import { symmetrizeForExport, writeNebulaFile } from './export.js';
+import { sigmaNote, symmetrizeForExport, writeNebulaFile } from './export.js';
 import { binVolume, coarseGrid, orbitMean, surfaceNets } from './iso.js';
 import { edgeMask, maskStats, outlierMask } from './mask.js';
 import { describeFile, loadVariance, loadVolume } from './nexus.js';
@@ -285,18 +285,23 @@ async function exportVolume({ id, plan, maps, attrs }) {
   if (!volume) throw new Error('No histogram loaded.');
   const t0 = performance.now();
   let last = 0;
-  const result = symmetrizeForExport(volume, info.shape, plan, maps, mask, (fraction) => {
+  const progress = (label, from, to) => (fraction) => {
     const now = performance.now();
     if (now - last > 100 || fraction === 1) {
       last = now;
-      self.postMessage({ type: 'progress-export', label: 'Symmetrizing', fraction: 0.75 * fraction });
+      self.postMessage({ type: 'progress-export', label, fraction: from + (to - from) * fraction });
     }
-  });
+  };
+  const start = variance === undefined && info.errors ? 0.15 : 0;
+  readVariance(progress('Reading uncertainties', 0, start));
+  const result = symmetrizeForExport(volume, info.shape, plan, maps, { mask, variance, onProgress: progress('Symmetrizing', start, 0.75) });
   self.postMessage({ type: 'progress-export', label: 'Writing HDF5', fraction: 0.75 });
   const { FS } = await h5wasm.ready;
   const path = '/nebula3d-export.nxs';
-  writeNebulaFile(h5wasm, path, plan, result, attrs);
+  const uncertainties = sigmaNote(result, info.errors?.path.split('/').pop(), varianceNote);
+  writeNebulaFile(h5wasm, path, plan, result, { ...attrs, uncertainties });
   const blob = new Blob([FS.readFile(path)], { type: 'application/x-hdf5' });
   FS.unlink(path);
-  self.postMessage({ type: 'export-file', id, blob, stats: result.stats, seconds: (performance.now() - t0) / 1000 });
+  self.postMessage({ type: 'export-file', id, blob, stats: result.stats, sigma: !!result.sigma, uncertainties, seconds: (performance.now() - t0) / 1000 });
 }
+
