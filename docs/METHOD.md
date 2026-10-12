@@ -38,7 +38,7 @@ The cleaner fix is upstream: mask detector-edge pixels (for example with Mantid'
 
 ## 3-D view
 
-The volume is binned by an odd factor chosen so no axis has more than about 64, 100 or 150 blocks. Blocks are aligned to the origin: a block is centered on an origin bin, or has an edge on an origin edge. The same operations therefore map blocks onto blocks. Block sums and counts are pooled over each orbit, and the isosurface of the block means is drawn with surface nets. The default level is the 99.5th percentile of the positive block means. The line cut is drawn as a line, faint where a slice hides it, inside a translucent tube: the rod of voxels it averages.
+The volume is binned by an odd factor chosen so no axis has more than about 64, 100 or 150 blocks. On an axis whose range is symmetric about 0, blocks are aligned to the origin: a block is centred on the bin at 0, or has an edge on a bin edge at 0, so the operations that map the voxels map the blocks onto blocks too. On an axis whose range is not symmetric about 0, blocks start at its first bin; when the operations then do not map the blocks onto blocks (and the volume is binned at all), the 3-D view is drawn unsymmetrized, with a note in the tooltip of its caption. Block sums and counts are pooled over each orbit, and the isosurface of the block means is drawn with surface nets. The default level is the 99.5th percentile of the positive block means. The line cut is drawn as a line, faint where a slice hides it, inside a translucent tube: the rod of voxels it averages.
 
 ## Powder average I(Q)
 

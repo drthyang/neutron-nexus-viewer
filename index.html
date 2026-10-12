@@ -865,7 +865,7 @@ body.dragging.drop-b::after { content: "Drop to compare as dataset " attr(data-d
     <div><h4>Slices</h4><p>Each pixel is the equal-weight mean of the unique finite, unmasked voxels in the slab, pooled with all their symmetry equivalents. No smoothing or interpolation; grey means no measured contribution.</p></div>
     <div><h4>Symmetry</h4><p>Generators are closed into a group, and every operation must map bin centers onto bin centers. A warning appears when the operations change the cell metric by more than 2%. Oblique axes use the reciprocal metric from the UB matrix.</p></div>
     <div><h4>Mask</h4><p>Edge erosion removes measured voxels near unmeasured ones, where detector edges leave spurious values; the outlier cut removes voxels far above the median of their equivalents (k·σ, σ = 1.4826·MAD but at least their counting error). The mask acts before averaging.</p></div>
-    <div><h4>3-D view</h4><p>The volume is binned by an odd factor with blocks aligned to the origin, symmetrized and masked the same way, and drawn as a transparent isosurface with the current slices as planes.</p></div>
+    <div><h4>3-D view</h4><p>The volume is binned by an odd factor, with blocks aligned to the origin on axes symmetric about 0 (otherwise it may be drawn unsymmetrized, with a note), symmetrized and masked the same way, and drawn as a transparent isosurface with the current slices as planes.</p></div>
     <div><h4>I(Q)</h4><p>Each shell's intensity is the mean over the voxels with data in it, so gaps and masks do not lower it. Symmetry orbits count with their multiplicity, voxels are split into sub-cells shared between shells, and σ is propagated from the file's uncertainties.</p></div>
   </div></details></div>
 </div>

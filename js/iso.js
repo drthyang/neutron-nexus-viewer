@@ -1,8 +1,10 @@
 // Coarse volume and isosurface for the 3-D view.
 //
-// The volume is binned by an odd factor with blocks aligned to the origin, so
-// symmetry operations that map the fine grid onto itself also map the coarse
-// grid onto itself. Blocks pool their valid voxels (sum and count), orbits pool
+// The volume is binned by an odd factor with blocks aligned to the origin on
+// axes whose range is symmetric about 0, so symmetry operations that map the
+// fine grid onto itself also map the coarse grid onto itself. Other axes start
+// their blocks at their first bin, and the operations may not map those (the
+// worker then draws the view unsymmetrized, with a note). Blocks pool their valid voxels (sum and count), orbits pool
 // their unique blocks, and the isosurface of the pooled mean is extracted with
 // naive surface nets (one vertex per boundary cell, one quad per crossed edge).
 
