@@ -1,5 +1,6 @@
 // Write docs/screenshot.png: the example (?demo: A and B in split view, 6/mmm, the edge mask)
-// with a line cut along (0.5, 0, L) in the fourth view, at 1440×900 and 1.5× pixel ratio.
+// with a line cut along (0.5, 0, L) in the fourth view, at 1440×900 and 1.5× pixel ratio, with
+// "© 2026 Tsung-Han Yang" in the bottom-left corner.
 // It starts a headless Chrome with a temporary profile and drives it over the DevTools protocol.
 //
 //   python3 -m http.server 8000 &
@@ -59,6 +60,17 @@ try {
     }
   })()`);
   await sleep(4000);
+  // Every demo image carries the copyright in its bottom-left corner, as in the other apps' media. It
+  // takes the place of the panel's own credit line (its text is hidden, its bar kept), which it would overlap.
+  await run(`(() => {
+    document.querySelectorAll('.panel-foot > *').forEach((el) => { el.style.visibility = 'hidden'; });
+    const mark = document.createElement('div');
+    mark.textContent = '© 2026 Tsung-Han Yang';
+    mark.style.cssText = 'position:fixed;left:8px;bottom:8px;z-index:2147483647;padding:2px 8px;'
+      + 'background:rgba(0,0,0,0.72);color:#fff;font:15px/1.4 system-ui,-apple-system,"Segoe UI",sans-serif;pointer-events:none';
+    document.body.append(mark);
+  })()`);
+  await sleep(200);
   const shot = await send('Page.captureScreenshot', { format: 'png' });
   writeFileSync(out, Buffer.from(shot.result.data, 'base64'));
   console.log(`wrote ${out}`);

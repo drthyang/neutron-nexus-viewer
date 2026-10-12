@@ -8,7 +8,7 @@ A browser app for exploring 3-D neutron and X-ray scattering volumes: reciprocal
 line cuts and I(Q) of reduced data, with nothing to install and files that never leave your machine.
 
 <p align="center">
-  <img src="docs/screenshot.png" alt="NeXus Viewer comparing the example crystal at 300 K and 10 K: the HK, HL and KL slices are each split along their diagonal, with 300 K in the lower-left half and 10 K in the upper-right half. A line cut drawn on the HL slice along L through the M point (0.5, 0, L) is plotted in the fourth view: at 300 K a broad, continuous diffuse rod, at 10 K sharp superlattice peaks at even L. The control panel shows the processing pipeline, one line per stage, with 6/mmm symmetry averaging, a mask and the Reindex card, and the header row the click modes, the A / Split / B switch and the color scale." width="100%" />
+  <img src="docs/screenshot.png" alt="NeXus Viewer comparing the example, a synthetic hexagonal crystal, at 300 K and 10 K: the HK, HL and KL slices are each split along their diagonal, with 300 K in the lower-left half and 10 K in the upper-right half. A line cut drawn on the HL slice along L through the M point (0.5, 0, L) is plotted in the fourth view: at 300 K a broad, continuous diffuse rod, at 10 K sharp superlattice peaks at even L. The control panel shows the processing pipeline, one line per stage, with 6/mmm symmetry averaging, a mask and the Reindex card, and the header row the click modes, the A / Split / B switch and the color scale. © 2026 Tsung-Han Yang in the bottom-left corner." width="100%" />
 </p>
 
 ## What it does
@@ -24,7 +24,8 @@ line cuts and I(Q) of reduced data, with nothing to install and files that never
 ## Quick start
 
 Open **[drthyang.github.io/neutron-nexus-viewer](https://drthyang.github.io/neutron-nexus-viewer/)**
-and drop a `.nxs` file on the page, or open [the example](https://drthyang.github.io/neutron-nexus-viewer/?demo).
+and drop a `.nxs` file on the page, or open [the example](https://drthyang.github.io/neutron-nexus-viewer/?demo),
+a synthetic hexagonal crystal at 300 K and 10 K.
 To run it locally, serve the folder (`python3 -m http.server 8000`). A first session, step by step,
 is in [Features](docs/FEATURES.md#a-first-session).
 
