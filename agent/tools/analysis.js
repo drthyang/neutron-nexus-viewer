@@ -89,13 +89,15 @@ export const sliceVolume = defineTool({
     const fixed = axisIndex(dims, args.fixed_axis), dim = dims[fixed];
     const [x, y] = [0, 1, 2].filter((k) => k !== fixed);
     const lo = dim.edges[0], hi = dim.edges[dim.edges.length - 1], w = binWidth(dim);
-    // By default the bin at 0 (on a grid with a bin edge there, the one just above it), else the middle bin.
-    const x0 = lo <= 0 && hi >= 0 ? 0 : (lo + hi) / 2, u0 = voxelCoord(dim, x0);
-    const center = args.center ?? tidy(centreOf(dim, Math.min(dim.edges.length - 2, onEdge(u0) ? Math.ceil(u0) : Math.round(u0))));
+    // By default the bin at 0, else the middle one; where that is a bin edge, the bin just above it.
+    const x0 = lo <= 0 && hi >= 0 ? 0 : (lo + hi) / 2;
+    const mids = Array.from(centers(dim.edges)), gap = mids.map((m) => Math.abs(m - x0)), best = Math.min(...gap);
+    const nearest = mids.flatMap((_, k) => (gap[k] - best < 1e-6 * w ? [k] : []));
+    const center = args.center ?? tidy(mids[nearest[nearest.length - 1]]);
     const thickness = args.thickness ?? w;
     const ids = selectBins(dim.edges, center, thickness);
     let slabNote;
-    if (args.center === undefined && onEdge(u0)) {
+    if (args.center === undefined && nearest.length > 1) {
       slabNote = `${dim.label} = ${tidy(x0)} is a bin edge on this grid, so the default slab is the bin centred at ${center}; give center and thickness to choose another (center ${tidy(x0)} with thickness ${tidy(2 * w)} averages the bins on both sides).`;
     } else if (onEdge(voxelCoord(dim, center)) && ids.length > Math.round(thickness / w)) {
       slabNote = `center ${center} is a bin edge: the slab takes the ${ids.length} bins whose centres lie within thickness/2 of it.`;
@@ -205,7 +207,8 @@ export const lineCutTool = defineTool({
     if (!(sb > sa)) throw new ToolError(`The cut spans less than one voxel along ${dims[dom].label} (${a[dom]} to ${b[dom]}, bins of ${binWidth(dims[dom])}): make it longer.`);
     const along = (s) => a.map((ad, k) => tidy(ad + ((s - a[dom]) / (b[dom] - a[dom])) * (b[k] - ad)));
     [a, b] = [along(sa), along(sb)];
-    const snapped = a.some((x, k) => x !== requested[0][k]) || b.some((x, k) => x !== requested[1][k]);
+    const moved = (p, q) => p.some((x, k) => Math.abs(x - q[k]) > 1e-9 * Math.max(1, Math.abs(q[k])));
+    const snapped = moved(a, requested[0]) || moved(b, requested[1]);
     const { T, lattice } = cartesianBasis(dims, displayCell(d.info.lattice, args.angles));
     const scale = lattice ? 2 * Math.PI : 1;
     const unit = lattice ? 'Å⁻¹' : dims.every((x) => x.units === dims[0].units) ? dims[0].units : '';

@@ -199,6 +199,7 @@ test('line_cut and powder_average give profiles with the processing applied', as
   await call(ws, 'open_volume', { path: fixture('mdhisto_small.nxs'), id: 'v' });
   const cut = await call(ws, 'line_cut', { volume_id: 'v', start: [0, 0, 0.5], end: [0, 0, -0.5], output_path: join(tmp, 'cut.txt') });
   assert.match(cut.note, /swapped/);
+  assert.equal(cut.snapped, undefined, 'ends on voxel centres stay');
   assert.equal(cut.axis, 'L');
   assert.equal(cut.width.unit, 'Å⁻¹');
   assert.ok(cut.points.some((p) => Number.isFinite(p.sigma)), 'σ from errors_squared');
