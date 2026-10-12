@@ -18,7 +18,8 @@ line cuts and I(Q) of reduced data, with nothing to install and files that never
 - **Symmetry averaging and artifact masks**, applied exactly on the bin grid, with a check that the
   operations fit the cell.
 - **Up to four datasets compared** (temperatures, or X-ray next to neutron), with I(Q) and a 3-D view.
-- **Reindexing with a new UB**, and **reduction of raw Rigaku XRD frames** to an HKL volume.
+- **Reindexing with a new UB** (a resampling, which smooths), and **reduction of raw Rigaku XRD
+  frames** to an HKL volume.
 - **Hand-off to [NEBULA3D](https://github.com/drthyang/nebula3d)** for a 3D-ΔPDF.
 
 ## Quick start

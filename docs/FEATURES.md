@@ -8,7 +8,9 @@ What the viewer is for, everything it does with links to the details, and a firs
 
 - **The data as measured, in its true geometry.** Slices are drawn with the
   reciprocal metric from the file's UB matrix, so oblique axes meet at their real
-  angle and equal lengths in r.l.u. look equal. Nothing is smoothed or interpolated.
+  angle and equal lengths in r.l.u. look equal. Slices and cuts are never smoothed or
+  interpolated; only reindexing resamples the volume, which smooths it (peaks about 9% lower
+  on the example).
 - **Processing you can check.** Symmetry averaging maps bins onto bins exactly and
   warns when the operations do not fit the cell. Masks can be previewed voxel by
   voxel and exported. The slice engine is tested against the reference Python

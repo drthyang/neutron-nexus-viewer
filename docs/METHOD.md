@@ -2,7 +2,7 @@
 
 [← README](../README.md) · [Features](FEATURES.md) · [User guide](USER_GUIDE.md) · [Agent tools](AGENT.md) · [Development](DEVELOPMENT.md)
 
-The pipeline is *measured voxels → mask → symmetry average → slices, line cuts, 3-D view and I(Q)*. Masked and non-finite voxels are held as NaN. Voxels are stored as float32, and sums are accumulated in float64. There is no smoothing or interpolation at any stage.
+The pipeline is *measured voxels → mask → symmetry average → slices, line cuts, 3-D view and I(Q)*. Masked and non-finite voxels are held as NaN. Voxels are stored as float32, and sums are accumulated in float64. Slices, line cuts, I(Q), masks and the export use the voxels as measured, with nothing smoothed or interpolated. Two features change the grid: the 3-D view averages blocks of voxels, and reindexing resamples the volume onto a new grid, which smooths it (see [Reindexing](#reindexing-with-a-new-ub)).
 
 ## Slices
 
