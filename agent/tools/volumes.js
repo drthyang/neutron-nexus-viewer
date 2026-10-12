@@ -21,14 +21,17 @@ const binning = (dim) => {
   return `${n(dim.edges[0])},${n(binWidth(dim))},${n(dim.edges[dim.edges.length - 1])}`;
 };
 
-/** The grid as NEXPLAN's bragg_positions, coverage_map and laue_symmetry take it, or why it cannot be given. */
+/**
+ * The grid exactly as NEXPLAN's bragg_positions, coverage_map and laue_symmetry take it (their `grid`
+ * schema is strict: axes, binning and q_convention only), with how to complete it beside it; or why
+ * it cannot be given.
+ */
 function nexplanGrid(dims) {
-  if (!dims.every((d) => d.basis && isHKL(d))) return { unavailable: 'NEXPLAN grids need axes along hkl directions (r.l.u.).' };
-  if (!dims.every(isUniform)) return { unavailable: 'NEXPLAN grids need uniform bins.' };
+  if (!dims.every((d) => d.basis && isHKL(d))) return { nexplan_grid: { unavailable: 'NEXPLAN grids need axes along hkl directions (r.l.u.).' } };
+  if (!dims.every(isUniform)) return { nexplan_grid: { unavailable: 'NEXPLAN grids need uniform bins.' } };
   return {
-    axes: dims.map((d) => d.basis.vec),
-    binning: dims.map(binning),
-    note: 'Add q_convention: "inelastic" when the volume was reduced with Mantid\'s default Q.convention (most SNS MDNorm data), "crystallography" when it was reduced with the crystallographic one (usual for X-ray data).',
+    nexplan_grid: { axes: dims.map((d) => d.basis.vec), binning: dims.map(binning) },
+    nexplan_grid_note: 'Give nexplan_grid to NEXPLAN as it is, adding q_convention: "inelastic" when the volume was reduced with Mantid\'s default Q.convention (most SNS MDNorm data; NEXPLAN\'s default), "crystallography" when it was reduced with the crystallographic one (usual for X-ray data).',
   };
 }
 
@@ -66,7 +69,7 @@ export function describe(d, { full = true } = {}) {
     ...(l?.ub ? { ub: [l.ub.slice(0, 3), l.ub.slice(3, 6), l.ub.slice(6, 9)], ub_convention: 'Mantid: q = UB·h without 2π (NEBULA3D stores 2π·UB)' } : {}),
     uncertainties: info.errors ? `${info.errors.squared ? 'variances' : 'standard deviations'} in ${info.errors.path}` : 'none',
     ...(info.signed ? { signed: 'a ΔPDF: values change sign' } : {}),
-    nexplan_grid: nexplanGrid(info.dims),
+    ...nexplanGrid(info.dims),
     storage: { ...arrayOrder(info), dtype: info.dtype, chunks: info.chunks },
   };
 }
@@ -76,7 +79,7 @@ export const openVolume = defineTool({
   title: 'Open a 3-D volume',
   description:
     'Opens a 3-D histogram from a NeXus/HDF5 file and keeps it in memory for the other tools: a Mantid MDHistoWorkspace (SaveMD, e.g. MDNorm output), any NXdata group with a 3-D signal, or a NEBULA3D volume or 3D-ΔPDF. ' +
-    'Returns its id, axes (labels, ranges, bins, hkl directions), unit cell and UB, value statistics, the slice planes, and the grid in the form NEXPLAN\'s bragg_positions, coverage_map and laue_symmetry take. ' +
+    'Returns its id, axes (labels, ranges, bins, hkl directions), unit cell and UB, value statistics, the slice planes, and the grid as NEXPLAN\'s bragg_positions, coverage_map and laue_symmetry take it (nexplan_grid, to pass as it is with q_convention added as nexplan_grid_note says). ' +
     'Masked and non-finite voxels count as unmeasured. Opening a file under an id in use replaces that volume, with its symmetry and mask (the result says so).',
   input: z.strictObject({
     path: z.string().min(1).describe('The .nxs / .h5 file.'),

@@ -36,8 +36,12 @@ test('open_volume describes a Mantid file and gives the grid NEXPLAN takes', asy
   assert.deepEqual(v.axes.map((a) => a.label), ['H', 'K', 'L']);
   assert.deepEqual(v.planes.map((p) => p.plane), ['HK', 'HL', 'KL']);
   assert.equal(v.cell.source, 'UB');
-  assert.deepEqual(v.nexplan_grid.axes, [[1, 0, 0], [0, 1, 0], [0, 0, 1]]);
-  assert.deepEqual(v.nexplan_grid.binning, ['-0.55,0.1,0.55', '-0.45,0.1,0.45', '-0.875,0.25,0.875']);
+  // Exactly what NEXPLAN's strict grid schema accepts ({ axes, binning, q_convention }), the note beside it.
+  assert.deepEqual(v.nexplan_grid, {
+    axes: [[1, 0, 0], [0, 1, 0], [0, 0, 1]],
+    binning: ['-0.55,0.1,0.55', '-0.45,0.1,0.45', '-0.875,0.25,0.875'],
+  });
+  assert.match(v.nexplan_grid_note, /q_convention/);
   assert.match(v.uncertainties, /^variances/);
   // A second open of the same file gets its own id; describe_volume lists both.
   await call(ws, 'open_volume', { path: fixture('mdhisto_small.nxs') });

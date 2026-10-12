@@ -87,9 +87,9 @@ The server also gives `docs/METHOD.md` as the resource `nexus-viewer://docs/meth
 
 ## With NEXPLAN and NEBULA3D
 
-- `open_volume`'s `nexplan_grid` is the `grid` NEXPLAN's `laue_symmetry`, `bragg_positions` and
-  `coverage_map` take; add `q_convention` (`inelastic` for Mantid's default, `crystallography`
-  otherwise).
+- `open_volume`'s `nexplan_grid` (`{ axes, binning }`) is the `grid` NEXPLAN's `laue_symmetry`,
+  `bragg_positions` and `coverage_map` take, as it is; add `q_convention` (`inelastic` for Mantid's
+  default, `crystallography` otherwise), as `nexplan_grid_note` beside it says.
 - NEXPLAN's `laue_symmetry` gives `nexus_viewer_preset` (for `set_symmetry`'s `laue_class`) or
   `symmetry_ops` (its `operations`).
 - `read_points` with `points_path` reads NEXPLAN's `bragg_positions` output (JSON or CSV) for the same
