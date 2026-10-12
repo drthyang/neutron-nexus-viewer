@@ -7,6 +7,7 @@ import test from 'node:test';
 import h5wasm from 'h5wasm/node';
 
 import { callTool, TOOLS, toolDefinitions, Workspace } from '../agent/index.js';
+import { writeNebulaFile } from '../js/export.js';
 import { describeFile, loadVolume } from '../js/nexus.js';
 
 const fixture = (name) => new URL(`./fixtures/${name}`, import.meta.url).pathname;
@@ -203,6 +204,54 @@ test('export_nebula3d writes the file NEBULA3D reads, with the processing record
   } finally {
     g.close();
   }
+});
+
+/**
+ * A synthetic NEBULA3D volume on a grid with bin edges at the integers: H, K, L from -1 to 1 in 20
+ * bins of 0.1, cubic a = 5 Å, I = 100 + 10h + 3k + l at the voxel centres (a plane, so any average
+ * symmetric about a point equals I there). Its display axes are L, K, H (axis 0 fastest in storage).
+ */
+async function edgeGrid() {
+  await h5wasm.ready;
+  const n = 20, centers = Float64Array.from({ length: n }, (_, i) => -0.95 + 0.1 * i);
+  const data = new Float32Array(n ** 3);
+  for (let h = 0; h < n; h++) for (let k = 0; k < n; k++) for (let l = 0; l < n; l++) data[(h * n + k) * n + l] = 100 + 10 * centers[h] + 3 * centers[k] + centers[l];
+  const path = join(tmp, 'edge_grid.h5'), b = 2 * Math.PI / 5;
+  writeNebulaFile(h5wasm, path, { shape: [n, n, n], centers: [centers, centers, centers], ub: [b, 0, 0, 0, b, 0, 0, 0, b] },
+    { data, valid: new Uint8Array(n ** 3).fill(1), sigma: null });
+  return { path, I: ([l, k, h]) => 100 + 10 * h + 3 * k + l };
+}
+
+test('on a grid with bin edges at the integers, typed coordinates read the voxels centred on them', async () => {
+  const { path, I } = await edgeGrid();
+  const ws = new Workspace();
+  const v = await call(ws, 'open_volume', { path, id: 'e' });
+  assert.deepEqual(v.axes.map((a) => a.label), ['L', 'K', 'H']);
+  // The default slice is one bin, the one above L = 0, not the two beside it averaged.
+  const s = await call(ws, 'slice_volume', { volume_id: 'e', fixed_axis: 'L', image: false });
+  assert.equal(s.slab.bins, 1);
+  assert.ok(Math.abs(s.slab.center - 0.05) < 1e-9);
+  assert.match(s.slab.note, /bin edge/);
+  // A cut between bin edges: its ends move to voxel centres, and each point is labelled with its voxel's H.
+  const cut = await call(ws, 'line_cut', { volume_id: 'e', start: [0.05, 0.05, -1], end: [0.05, 0.05, 1] });
+  assert.deepEqual([cut.from, cut.to], [[0.05, 0.05, -0.95], [0.05, 0.05, 0.95]]);
+  assert.match(cut.snapped, /voxel centres/);
+  assert.equal(cut.points.length, 20);
+  for (const p of cut.points) assert.ok(Math.abs(p.intensity - I(p.at)) < 1e-3, `H = ${p.H}: ${p.intensity} vs ${I(p.at)}`);
+  // An even number of bins per step puts voxel centres on the boundaries between points.
+  assert.match((await call(ws, 'line_cut', { volume_id: 'e', start: [0.05, 0.05, -0.95], end: [0.05, 0.05, 0.95], step: 0.2 })).warning, /even number/);
+  // A node at a corner of 8 voxels reads their mean, with the box centred on it.
+  const r = await call(ws, 'read_points', { volume_id: 'e', points: [[0, 0, 0], [-0.35, 0.25, 0.55], [0, 0, 1]], box: 1 });
+  const [node, centre, side] = r.points;
+  assert.deepEqual(node.voxel, [9.5, 9.5, 9.5]);
+  assert.match(node.note, /bin edge of L, K, H.*8 voxels/);
+  assert.ok(Math.abs(node.value - I([0, 0, 0])) < 1e-3 && Math.abs(node.box_mean - I([0, 0, 0])) < 1e-3, `${node.value}, ${node.box_mean}`);
+  assert.equal(node.box_voxels, 64);
+  assert.deepEqual(centre.voxel, [6, 12, 15]);
+  assert.ok(Math.abs(centre.value - I(centre.at)) < 1e-3 && centre.box_voxels === 27 && !centre.note);
+  // On the outer edge only the voxels inside remain.
+  assert.ok(Math.abs(side.value - I([0, 0, 0.95])) < 1e-3, `${side.value}`);
+  assert.match(r.warning, /2 of 3 points lie on bin edges/);
 });
 
 test('every tool has a JSON Schema and is documented in docs/AGENT.md', () => {

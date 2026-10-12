@@ -65,6 +65,10 @@ The server also gives `docs/METHOD.md` as the resource `nexus-viewer://docs/meth
   says which processing it used. Comparing two volumes needs the same processing set on both.
 - **Coordinates.** Points and slab positions are in the volume's own axes (their labels: H, K, L, or
   e.g. [H,H,0]). Line-cut widths are in Å⁻¹ with 2π when the file has a cell, as in the viewer.
+  Typed positions are placed on voxels: `line_cut` slides its ends along the line to voxel centres
+  of its axis (and says so), the default slab is the bin at 0, and `read_points` flags a point on a
+  bin edge (an integer node on a grid with edges at the integers) and averages the voxels that meet
+  there, with its box centred on the point.
   `angles` chooses nominal (default, as the viewer's switch) or measured cell angles for drawing and
   distances.
 - **Images.** `slice_volume` returns a PNG (unless `image: false`): the slice drawn as the viewer draws
