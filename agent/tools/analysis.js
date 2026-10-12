@@ -253,20 +253,16 @@ export const lineCutTool = defineTool({
       ...(points.length > limit ? { truncated: `${points.length - limit} more points; give output_path for all` } : {}),
     };
     if (args.output_path) {
-      const labels = dims.map((x) => x.label);
-      let text;
-      if (/\.csv$/i.test(args.output_path)) {
-        text = [`${dims[dom].label},${labels.map((l) => `at_${l}`).join(',')},intensity,sigma,voxels`,
-          ...points.map((p) => [p[dims[dom].label], ...p.at, p.intensity, p.sigma, p.voxels].map(num).join(','))].join('\n');
-      } else {
-        text = header(d, [
-          `# Line cut from (${a.map(num).join(', ')}) to (${b.map(num).join(', ')}), points every ${num(step)} in ${dims[dom].label}`,
-          `# Each point averages the voxels whose centres lie in a rod of diameter ${num(width)} ${unit || 'units'} around the line and project within ±${num(step / 2)} ${dims[dom].label} of it`,
-          `# sigma: ${out.uncertainties}; voxels: distinct voxels with data pooled at the point`,
-          `# ${dims[dom].label} ${labels.join(' ')} I sigma voxels`,
-          ...points.map((p) => [p[dims[dom].label], ...p.at, p.intensity, p.sigma, p.voxels].map(num).join(' ')),
-        ]).join('\n');
-      }
+      const labels = dims.map((x) => x.label), csv = /\.csv$/i.test(args.output_path);
+      const row = (p) => [p[dims[dom].label], ...p.at, p.intensity, p.sigma, p.voxels].map(num);
+      const text = header(d, [
+        `# Line cut from (${a.map(num).join(', ')}) to (${b.map(num).join(', ')}), points every ${num(step)} in ${dims[dom].label}`,
+        `# Each point averages the voxels whose centres lie in a rod of diameter ${num(width)} ${unit || 'units'} around the line and project within ±${num(step / 2)} ${dims[dom].label} of it`,
+        `# sigma: ${out.uncertainties}; voxels: distinct voxels with data pooled at the point`,
+        ...(csv
+          ? [`${dims[dom].label},${labels.map((l) => `at_${l}`).join(',')},intensity,sigma,voxels`, ...points.map((p) => row(p).join(','))]
+          : [`# ${dims[dom].label} ${labels.join(' ')} I sigma voxels`, ...points.map((p) => row(p).join(' '))]),
+      ]).join('\n');
       out.written = writeOutput(args.output_path, `${text}\n`, args.overwrite);
     }
     return out;
@@ -325,16 +321,16 @@ export const powderAverageTool = defineTool({
       ...(shells.length - first > limit ? { truncated: `${shells.length - first - limit} more shells; give output_path for all` } : {}),
     };
     if (args.output_path) {
-      const text = /\.csv$/i.test(args.output_path)
-        ? ['q,intensity,sigma,coverage,voxels', ...shells.map((s) => [s.q, s.intensity, s.sigma, s.coverage, s.voxels].map(num).join(','))].join('\n')
-        : header(d, [
-          `# I(Q), the powder average; |Q| in 1/Angstrom with 2*pi from ${out.q_from}`,
-          `# Shells: ${plan.bins ? `Rebin ${plan.bins.join(', ')}` : 'given edges'}; voxels split into ${plan.split}^3 sub-cells; Q is the shell centre`,
-          '# I: intensity integrated over the part of the shell with data / volume of that part; coverage: fraction of the shell with data',
-          `# sigma: ${out.uncertainties}`,
-          '# Q I sigma coverage voxels',
-          ...shells.map((s) => [s.q, s.intensity, s.sigma, s.coverage, s.voxels].map(num).join(' ')),
-        ]).join('\n');
+      const csv = /\.csv$/i.test(args.output_path), row = (s) => [s.q, s.intensity, s.sigma, s.coverage, s.voxels].map(num);
+      const text = header(d, [
+        `# I(Q), the powder average; |Q| in 1/Angstrom with 2*pi from ${out.q_from}`,
+        `# Shells: ${plan.bins ? `Rebin ${plan.bins.join(', ')}` : 'given edges'}; voxels split into ${plan.split}^3 sub-cells; Q is the shell centre`,
+        '# I: intensity integrated over the part of the shell with data / volume of that part; coverage: fraction of the shell with data',
+        `# sigma: ${out.uncertainties}`,
+        ...(csv
+          ? ['q,intensity,sigma,coverage,voxels', ...shells.map((s) => row(s).join(','))]
+          : ['# Q I sigma coverage voxels', ...shells.map((s) => row(s).join(' '))]),
+      ]).join('\n');
       out.written = writeOutput(args.output_path, `${text}\n`, args.overwrite);
     }
     return out;
@@ -482,7 +478,11 @@ export const readPoints = defineTool({
     };
     if (args.output_path) {
       const labels = dims.map((x) => x.label);
-      const lines = ['h,k,l,' + labels.map((l) => `at_${l}`).join(',') + ',i0,i1,i2,class,value,box_max,box_mean,box_median,box_voxels',
+      const lines = [...header(d, [
+        `# Values at ${rows.length} points${args.points_path ? ` from ${resolvePath(args.points_path)}` : ''}, in the volume's axes (${labels.join(', ')})`,
+        `# value: the symmetrized, masked value of the voxel holding the point (on a bin edge, the mean of the voxels that meet there); box_*: over the voxels within ±${box} voxel${box === 1 ? '' : 's'} of it, centred on the point`,
+        '# i0, i1, i2: the point in voxel indices (x.5 on a bin edge); NaN: no data',
+      ]), 'h,k,l,' + labels.map((l) => `at_${l}`).join(',') + ',i0,i1,i2,class,value,box_max,box_mean,box_median,box_voxels',
         ...rows.map((r) => [...(r.hkl ?? ['', '', '']), ...r.at.map(num), ...(r.voxel ?? ['', '', '']), r.class ?? '', ...[r.value, r.box_max, r.box_mean, r.box_median].map(num), r.box_voxels ?? 0].join(','))];
       out.written = writeOutput(args.output_path, `${lines.join('\n')}\n`, args.overwrite);
     }

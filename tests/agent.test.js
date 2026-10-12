@@ -211,6 +211,27 @@ test('line_cut and powder_average give profiles with the processing applied', as
   assert.match(bad.error, /cannot be 0/);
 });
 
+test('every .csv the tools write starts with # lines, then a header row and rows of equal width', async () => {
+  const ws = new Workspace();
+  await call(ws, 'open_volume', { path: fixture('mdhisto_small.nxs'), id: 'v' });
+  await call(ws, 'set_symmetry', { volume_id: 'v', laue_class: '-1' });
+  const written = [
+    await call(ws, 'slice_volume', { volume_id: 'v', fixed_axis: 'L', image: false, output_path: join(tmp, 'csv-slice.csv') }),
+    await call(ws, 'line_cut', { volume_id: 'v', start: [0, 0, -0.5], end: [0, 0, 0.5], output_path: join(tmp, 'csv-cut.csv') }),
+    await call(ws, 'powder_average', { volume_id: 'v', bins: '0.05', output_path: join(tmp, 'csv-iq.csv') }),
+    await call(ws, 'read_points', { volume_id: 'v', points: [[0, 0, 0], [0.1, 0.2, 0.25]], output_path: join(tmp, 'csv-points.csv') }),
+  ];
+  for (const { written: { path } } of written) {
+    const lines = readFileSync(path, 'utf8').trimEnd().split('\n');
+    assert.match(lines[0], /^# Written by NeXus Viewer agent tools/, path);
+    assert.ok(lines.some((l) => /^# Symmetry: -1/.test(l)), path);
+    const rows = lines.filter((l) => !l.startsWith('#'));
+    assert.match(rows[0], /^[A-Za-z_]/, `${path}: header row`);
+    const width = rows[0].split(',').length;
+    assert.ok(rows.length > 1 && rows.every((r) => r.split(',').length === width), path);
+  }
+});
+
 test('export_nebula3d writes the file NEBULA3D reads, with the processing recorded', async () => {
   const ws = new Workspace();
   await call(ws, 'open_volume', { path: demo, id: 'cold' });

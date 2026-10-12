@@ -79,8 +79,9 @@ The server also gives `docs/METHOD.md` as the resource `nexus-viewer://docs/meth
   softening at the median).
 - **Files.** Inputs are read from the local disk. `output_path` writes a file; an existing file is an
   error unless `overwrite: true`. Relative paths start from the directory the client started the
-  server in; `~` is the home directory. Text files start with `#` lines saying what was computed and
-  with which processing.
+  server in; `~` is the home directory. Text and CSV files start with `#` lines saying what was
+  computed and with which processing, then (for CSV) a header row: in pandas,
+  `read_csv(path, comment='#')`.
 - **Results.** JSON, numbers to 7 significant figures, NaN as `null`. Long lists are cut to `limit`
   entries (the file gets all). A failure is an MCP tool error whose text says what to change, with
   the details (open ids, presets) as JSON. Unknown arguments are refused.
