@@ -37,10 +37,10 @@ Then:
 - slice_volume: a 2-D slice (HK, HL, KL, … by the axis held fixed) with statistics and a PNG in true geometry to look at.
 - line_cut: a 1-D profile along any line, averaged over a rod, with σ.
 - powder_average: I(|Q|) with coverage and σ.
-- read_points: values at points, or at the Bragg nodes of a NEXPLAN bragg_positions file (e.g. forbidden nodes, satellites) for this grid; open_volume's nexplan_grid is the grid to give NEXPLAN.
+- read_points: values at points, or at the Bragg nodes of a NEXPLAN bragg_positions file (e.g. forbidden nodes, satellites) for this grid; open_volume's nexplan_grid is the grid to give NEXPLAN as it is, adding q_convention as its nexplan_grid_note says.
 - export_nebula3d: the processed volume as a NEBULA3D input file for the 3D-ΔPDF.
 
-Conventions: coordinates are the volume's own axes (labels such as H, K, L or [H,H,0]); |Q| in Å⁻¹ with 2π; the UB as the file stores it (Mantid: without 2π); arrays in the file's storage order (display axis 0 fastest). Files written need overwrite: true to replace an existing file. Several volumes can be open at once (e.g. temperatures): set the same processing on each before comparing.
+Conventions: coordinates are the volume's own axes (labels such as H, K, L or [H,H,0]); |Q| in Å⁻¹ with 2π; the UB in Mantid's convention, without 2π (a Mantid file's as stored; for a NEBULA3D file, which stores 2π·UB, its ub_matrix divided by 2π); arrays (masks) in the volume's display order, axis 0 fastest, which is the file's own order unless the volume was opened with align_to (then describe_volume's storage gives the file's order too). Files written need overwrite: true to replace an existing file. Several volumes can be open at once (e.g. temperatures): set the same processing on each before comparing.
 
 Limits: nothing is interpolated or smoothed; values are the file's (no background subtraction or absolute scaling). Masked and non-finite voxels are unmeasured. Symmetry averaging needs uniform bins that the operations map onto themselves. Check anything you publish in the viewer itself.`;
 

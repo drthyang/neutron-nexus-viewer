@@ -49,7 +49,7 @@ that combine them.
 | `line_cut` | A 1-D profile along any line, averaged over a rod, with σ; `.csv` or the viewer's text format. | Cut mode |
 | `powder_average` | I(\|Q\|) with σ and shell coverage; `.csv` or the viewer's text format. | I(Q) |
 | `read_points` | Values at points, with box statistics; takes NEXPLAN `bragg_positions` files and summarises by class (present, systematic absence, satellite, …). | Hover readout |
-| `export_nebula3d` | The masked, symmetrized volume as a NEBULA3D input file. | Export → Open in NEBULA3D |
+| `export_nebula3d` | The masked, symmetrized volume, with σ, as a NEBULA3D input file. | Export → Open in NEBULA3D |
 | `close_volume` | Frees a volume's memory. | — |
 
 The server also gives `docs/METHOD.md` as the resource `nexus-viewer://docs/method`, and its
@@ -58,13 +58,19 @@ The server also gives `docs/METHOD.md` as the resource `nexus-viewer://docs/meth
 ## How the tools work
 
 - **A session.** `open_volume` keeps the volume in memory and returns its id (from the file name, or
-  `id`); the other tools take `volume_id`. Several volumes can be open, e.g. two temperatures;
-  `align_to` shows a file's axes in another volume's order.
+  `id`; an `id` in use is replaced, and the result says so); the other tools take `volume_id`.
+  Several volumes can be open, e.g. two temperatures; `align_to` shows a file's axes in another
+  volume's order. Only `describe_volume` is marked read-only: the others change the session (or
+  write files), even `set_symmetry`; `open_volume` and `close_volume` are marked destructive.
 - **Processing.** `set_symmetry` and `build_mask` stay set on the volume and apply to every later
   slice, cut, I(Q), point readout and export, as the viewer's Processing panel does. Each result
   says which processing it used. Comparing two volumes needs the same processing set on both.
 - **Coordinates.** Points and slab positions are in the volume's own axes (their labels: H, K, L, or
   e.g. [H,H,0]). Line-cut widths are in Å⁻¹ with 2π when the file has a cell, as in the viewer.
+  Typed positions are placed on voxels: `line_cut` slides its ends along the line to voxel centres
+  of its axis (and says so), the default slab is the bin at 0, and `read_points` flags a point on a
+  bin edge (an integer node on a grid with edges at the integers) and averages the voxels that meet
+  there, with its box centred on the point.
   `angles` chooses nominal (default, as the viewer's switch) or measured cell angles for drawing and
   distances.
 - **Images.** `slice_volume` returns a PNG (unless `image: false`): the slice drawn as the viewer draws
@@ -73,24 +79,25 @@ The server also gives `docs/METHOD.md` as the resource `nexus-viewer://docs/meth
   softening at the median).
 - **Files.** Inputs are read from the local disk. `output_path` writes a file; an existing file is an
   error unless `overwrite: true`. Relative paths start from the directory the client started the
-  server in; `~` is the home directory. Text files start with `#` lines saying what was computed and
-  with which processing.
+  server in; `~` is the home directory. Text and CSV files start with `#` lines saying what was
+  computed and with which processing, then (for CSV) a header row: in pandas,
+  `read_csv(path, comment='#')`.
 - **Results.** JSON, numbers to 7 significant figures, NaN as `null`. Long lists are cut to `limit`
   entries (the file gets all). A failure is an MCP tool error whose text says what to change, with
   the details (open ids, presets) as JSON. Unknown arguments are refused.
 
 ## With NEXPLAN and NEBULA3D
 
-- `open_volume`'s `nexplan_grid` is the `grid` NEXPLAN's `laue_symmetry`, `bragg_positions` and
-  `coverage_map` take; add `q_convention` (`inelastic` for Mantid's default, `crystallography`
-  otherwise).
+- `open_volume`'s `nexplan_grid` (`{ axes, binning }`) is the `grid` NEXPLAN's `laue_symmetry`,
+  `bragg_positions` and `coverage_map` take, as it is; add `q_convention` (`inelastic` for Mantid's
+  default, `crystallography` otherwise), as `nexplan_grid_note` beside it says.
 - NEXPLAN's `laue_symmetry` gives `nexus_viewer_preset` (for `set_symmetry`'s `laue_class`) or
   `symmetry_ops` (its `operations`).
 - `read_points` with `points_path` reads NEXPLAN's `bragg_positions` output (JSON or CSV) for the same
   grid and summarises the values by node class: intensity at systematic absences points to λ/2,
   multiple scattering, a lower symmetry or a superlattice.
-- `export_nebula3d` writes the file NEBULA3D's pipeline reads, with the symmetry operations in
-  `/entry@symmetry_ops`.
+- `export_nebula3d` writes the file NEBULA3D's pipeline reads, with σ propagated from the file's
+  uncertainties in `/entry/sigma` and the symmetry operations in `/entry@symmetry_ops`.
 
 ## Using the tools from code
 
@@ -110,6 +117,6 @@ here).
 
 The tools have the viewer's limits: values are the file's, without background subtraction or
 absolute scaling; nothing is interpolated; symmetry averaging needs uniform bins that the operations
-map onto themselves; I(Q) needs a cell (or Q axes); the export needs plain H, K, L axes. The Rigaku
+map onto themselves; I(Q) needs a cell (or Q axes); the export needs plain H, K, L axes with a bin centred at 0. The Rigaku
 reduction, reindexing and the 3-D view are in the page only for now. An agent can still misread a
 result, so check what you publish in the viewer.

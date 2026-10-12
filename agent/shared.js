@@ -40,6 +40,22 @@ export function spaceOf(dims) {
   return 'other axes';
 }
 
+/**
+ * How a volume's arrays (its masks) are laid out: C order of its shape, the display order with axis 0
+ * fastest. That is the file's own order unless the volume was opened aligned to another's axes
+ * (align_to), when the file's order and the numpy transpose back to it are given too.
+ */
+export function arrayOrder(info) {
+  const display = [2, 1, 0].map((d) => info.dims[d].label);
+  const byStorage = [0, 1, 2].sort((i, j) => info.keep[i] - info.keep[j]);
+  const file = byStorage.map((j) => display[j]);
+  const out = { order: `C order of shape: the volume's display order, axis 0 (${info.dims[0].label}) fastest, i.e. (${display.join(', ')}) from slowest to fastest` };
+  if (file.some((label, i) => label !== display[i])) {
+    out.file_order = `The file itself stores (${file.join(', ')}) from slowest to fastest: this volume was opened aligned to another's axes (align_to). numpy.transpose(array, (${byStorage.join(', ')})) puts an array in the file's order.`;
+  }
+  return out;
+}
+
 /** Name of the plane normal to display axis `fixed`, from the other two labels: "HK", or "[H,H,0]–L". */
 export function planeName(dims, fixed) {
   const [x, y] = [0, 1, 2].filter((d) => d !== fixed).map((d) => dims[d].label);

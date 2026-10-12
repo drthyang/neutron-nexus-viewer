@@ -3,7 +3,7 @@ import test from 'node:test';
 
 import { EDGE, edgeMask, maskStats, OUTLIER, outlierMask } from '../js/mask.js';
 import { averageSlab } from '../js/slab.js';
-import { closeGroup, indexMaps, parseOps } from '../js/symmetry.js';
+import { closeGroup, indexMaps, parseOps, PRESETS } from '../js/symmetry.js';
 
 function randomVolume(shape, seed, holes = 0.1) {
   let s = seed;
@@ -54,4 +54,46 @@ test('outlierMask rejects a spike that disagrees with its equivalents', () => {
   assert.ok(Math.max(...kept.values.filter(Number.isFinite)) < 20);
   assert.equal(removed.values.filter(Number.isFinite).length > 0, true);
   assert.ok(removed.values.filter(Number.isFinite).every((v) => v === 1000));
+});
+
+// Poisson counts with mean `lambda` (Knuth's method, seeded).
+function poisson(length, lambda, seed) {
+  let s = seed;
+  const rand = () => ((s = (s * 16807) % 2147483647) / 2147483647);
+  const limit = Math.exp(-lambda);
+  return Float32Array.from({ length }, () => {
+    let k = 0;
+    for (let p = rand(); p > limit; p *= rand()) k++;
+    return k;
+  });
+}
+
+test('outlierMask leaves counting noise alone where most of an orbit is equal (MAD = 0)', () => {
+  // A 21³ grid centred on 0, as m-3m and mmm need.
+  const axis = (name) => ({
+    label: name, basis: { vec: [...'HKL'].map((c) => (c === name ? 1 : 0)) },
+    edges: Array.from({ length: 22 }, (_, i) => (i - 10.5) * 0.1),
+  });
+  const shape = [21, 21, 21], dims = [axis('H'), axis('K'), axis('L')];
+  const group = (name) => indexMaps(closeGroup(parseOps(PRESETS.find(([n]) => n === name)[1])), dims);
+  const removed = (mask) => mask.filter((m) => m & OUTLIER).length / mask.length;
+  // Normalized data: counts / W, with the variances Mantid writes (counts / W²).
+  const W = 73.1;
+  const normalized = (counts) => [Float32Array.from(counts, (c) => c / W), Float32Array.from(counts, (c) => c / W / W)];
+  for (const [lambda, name] of [[0.3, 'm-3m'], [1, 'mmm'], [10, 'mmm']]) {
+    const counts = poisson(21 ** 3, lambda, 4242), maps = group(name);
+    // Raw counts without uncertainties: the counts are their own variances.
+    assert.ok(removed(outlierMask(counts, shape, maps, 5)) < 1e-3, `counts, λ = ${lambda}, ${name}`);
+    const [values, variance] = normalized(counts);
+    assert.ok(removed(outlierMask(values, shape, maps, 5, undefined, { variance })) < 1e-3, `normalized, λ = ${lambda}, ${name}`);
+  }
+  // A bright voxel among empty ones is still caught, by its own σ.
+  const counts = poisson(21 ** 3, 0.3, 99), spike = (14 * 21 + 3) * 21 + 17;
+  counts[spike] = 1000;
+  const [values, variance] = normalized(counts);
+  for (const mask of [outlierMask(counts, shape, group('m-3m'), 5), outlierMask(values, shape, group('m-3m'), 5, undefined, { variance })]) {
+    assert.deepEqual([...mask.keys()].filter((i) => mask[i]), [spike]);
+  }
+  // Without uncertainties and not counts, an orbit whose MAD is 0 has no scale to judge by.
+  assert.equal(outlierMask(values, shape, group('m-3m'), 5).filter((m) => m).length, 0);
 });

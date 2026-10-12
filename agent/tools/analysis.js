@@ -18,6 +18,13 @@ const anglesField = z.enum(['nominal', 'measured']).optional()
   .describe('Cell angles for distances and drawing: nominal (default, as the viewer: direct-cell angles within 1° of 60/90/120° snapped) or measured.');
 const removedOnly = z.boolean().optional().describe('Average only the voxels the mask removed (to inspect what it takes out).');
 
+// Voxel positions: u = (x − e0)/w − 0.5 is a coordinate's place in voxel indices, an integer at a
+// voxel centre and a half-integer on a bin edge.
+const voxelCoord = (dim, x) => (x - dim.edges[0]) / binWidth(dim) - 0.5;
+const centreOf = (dim, j) => dim.edges[0] + (j + 0.5) * binWidth(dim);
+const onEdge = (u) => Math.abs(u - Math.floor(u) - 0.5) < 1e-6;
+const tidy = (x) => Number(x.toPrecision(12));
+
 /** The cell for drawing and distances, as the viewer's "Nominal cell angles" switch. */
 const displayCell = (lattice, angles) => lattice && (angles === 'measured' ? lattice : nominalCell(lattice));
 
@@ -60,7 +67,7 @@ export const sliceVolume = defineTool({
   input: z.strictObject({
     volume_id: volumeId,
     fixed_axis: z.union([z.string(), z.number().int()]).describe('The axis held fixed, by label (e.g. "L" for the HK plane) or index 0-2.'),
-    center: z.number().optional().describe('Slab centre along fixed_axis (default 0 when in range, else the middle).'),
+    center: z.number().optional().describe('Slab centre along fixed_axis (default the bin at 0 when in range, the one just above 0 when 0 is a bin edge, else the middle bin).'),
     thickness: z.number().positive().optional().describe('Slab thickness along fixed_axis (default one bin).'),
     removed_only: removedOnly,
     image: z.boolean().optional().describe('Return the PNG (default true).'),
@@ -81,10 +88,20 @@ export const sliceVolume = defineTool({
     const d = workspace.get(args.volume_id), { dims, shape, lattice, signed } = d.info;
     const fixed = axisIndex(dims, args.fixed_axis), dim = dims[fixed];
     const [x, y] = [0, 1, 2].filter((k) => k !== fixed);
-    const lo = dim.edges[0], hi = dim.edges[dim.edges.length - 1];
-    const center = args.center ?? (lo <= 0 && hi >= 0 ? 0 : (lo + hi) / 2);
-    const thickness = args.thickness ?? binWidth(dim);
+    const lo = dim.edges[0], hi = dim.edges[dim.edges.length - 1], w = binWidth(dim);
+    // By default the bin at 0, else the middle one; where that is a bin edge, the bin just above it.
+    const x0 = lo <= 0 && hi >= 0 ? 0 : (lo + hi) / 2;
+    const mids = Array.from(centers(dim.edges)), gap = mids.map((m) => Math.abs(m - x0)), best = Math.min(...gap);
+    const nearest = mids.flatMap((_, k) => (gap[k] - best < 1e-6 * w ? [k] : []));
+    const center = args.center ?? tidy(mids[nearest[nearest.length - 1]]);
+    const thickness = args.thickness ?? w;
     const ids = selectBins(dim.edges, center, thickness);
+    let slabNote;
+    if (args.center === undefined && nearest.length > 1) {
+      slabNote = `${dim.label} = ${tidy(x0)} is a bin edge on this grid, so the default slab is the bin centred at ${center}; give center and thickness to choose another (center ${tidy(x0)} with thickness ${tidy(2 * w)} averages the bins on both sides).`;
+    } else if (onEdge(voxelCoord(dim, center)) && ids.length > Math.round(thickness / w)) {
+      slabNote = `center ${center} is a bin edge: the slab takes the ${ids.length} bins whose centres lie within thickness/2 of it.`;
+    }
     if (!ids.length) throw new ToolError(`No bins of ${dim.label} lie within ${thickness / 2} of ${center} (range ${lo} to ${hi}): increase the thickness or move the center.`);
     const [mask, removed] = maskArgs(d, args.removed_only);
     const r = averageSlab(d.volume, shape, fixed, ids, d.symmetry.maps, mask, removed);
@@ -105,7 +122,7 @@ export const sliceVolume = defineTool({
     const out = {
       volume_id: d.id,
       plane: planeName(dims, fixed),
-      slab: { axis: dim.label, center, thickness, bins: ids.length, range: [dim.edges[ids[0]], dim.edges[ids[ids.length - 1] + 1]] },
+      slab: { axis: dim.label, center, thickness, bins: ids.length, range: [dim.edges[ids[0]], dim.edges[ids[ids.length - 1] + 1]], ...(slabNote ? { note: slabNote } : {}) },
       x_axis: axis(x),
       y_axis: axis(y),
       ...(geometry.lattice ? { angle_between_axes_deg: angle } : {}),
@@ -159,7 +176,7 @@ export const lineCutTool = defineTool({
   title: 'Line cut through a volume',
   description:
     'The 1-D profile of an open volume along a straight line between two points in any direction in 3-D (e.g. (H, H, H) or along L through (0.5, 0, L)), as the viewer\'s Cut mode computes it: binned along the axis the line changes most along, each point the equal-weight mean of the distinct measured, unmasked voxels (with their symmetry orbits) whose centres lie within a rod of diameter `width` around the line and project within step/2 of the point. ' +
-    'σ is propagated from the file\'s uncertainties (independent voxels). Points are given in the volume\'s axis coordinates (as its axes are labelled, e.g. [H, K, L]). output_path writes .csv (one row per point) or .txt (the viewer\'s commented text format).',
+    'σ is propagated from the file\'s uncertainties (independent voxels). Points are given in the volume\'s axis coordinates (as its axes are labelled, e.g. [H, K, L]); the ends are moved along the line to voxel centres of the dominant axis, so every point is a voxel centre (the result says when). output_path writes .csv (one row per point) or .txt (the viewer\'s commented text format).',
   input: z.strictObject({
     volume_id: volumeId,
     start: vec3.describe('One end, in the volume\'s axis coordinates (axis 0, 1, 2).'),
@@ -180,12 +197,28 @@ export const lineCutTool = defineTool({
     if (!(Math.abs(b[dom] - a[dom]) > 0)) throw new ToolError('The cut has no length: start and end are the same point.');
     const reversed = b[dom] < a[dom];
     if (reversed) [a, b] = [b, a];
+    // Slide the ends along the line to voxel centres of the dominant axis (inward from a bin edge),
+    // as the viewer snaps drawn ends: points then sit on voxel centres, and no voxel centre lies on
+    // the boundary between two points, where it would go to the upper one, half a step from its label.
+    const requested = [a, b];
+    const ua = voxelCoord(dims[dom], a[dom]), ub = voxelCoord(dims[dom], b[dom]);
+    const sa = centreOf(dims[dom], onEdge(ua) ? Math.ceil(ua) : Math.round(ua));
+    const sb = centreOf(dims[dom], onEdge(ub) ? Math.floor(ub) : Math.round(ub));
+    if (!(sb > sa)) throw new ToolError(`The cut spans less than one voxel along ${dims[dom].label} (${a[dom]} to ${b[dom]}, bins of ${binWidth(dims[dom])}): make it longer.`);
+    const along = (s) => a.map((ad, k) => tidy(ad + ((s - a[dom]) / (b[dom] - a[dom])) * (b[k] - ad)));
+    [a, b] = [along(sa), along(sb)];
+    const moved = (p, q) => p.some((x, k) => Math.abs(x - q[k]) > 1e-9 * Math.max(1, Math.abs(q[k])));
+    const snapped = moved(a, requested[0]) || moved(b, requested[1]);
     const { T, lattice } = cartesianBasis(dims, displayCell(d.info.lattice, args.angles));
     const scale = lattice ? 2 * Math.PI : 1;
     const unit = lattice ? 'Å⁻¹' : dims.every((x) => x.units === dims[0].units) ? dims[0].units : '';
     const voxel = Math.max(...dims.map((x, i) => binWidth(x) * Math.hypot(T[i], T[3 + i], T[6 + i])));
     const width = args.width ?? sig(3 * voxel * scale, 2);
     const step = args.step ?? binWidth(dims[dom]);
+    const half = step / binWidth(dims[dom]) / 2;
+    const stepWarning = Math.abs(half - Math.round(half)) < 1e-6 && half >= 0.5
+      ? `step is an even number of ${dims[dom].label} bins, so voxel centres fall on the boundaries between points and each goes to the upper one, half a bin from its label: use an odd number of bins (${tidy(step - binWidth(dims[dom]))} or ${tidy(step + binWidth(dims[dom]))}).`
+      : null;
     let edges;
     try {
       edges = cutEdges(a, b, dom, step);
@@ -209,6 +242,8 @@ export const lineCutTool = defineTool({
       from: a,
       to: b,
       ...(reversed ? { note: 'start and end were swapped: a cut runs toward larger values of its axis.' } : {}),
+      ...(snapped ? { snapped: `the ends were moved along the line to voxel centres of ${dims[dom].label} (asked: (${requested[0].join(', ')}) to (${requested[1].join(', ')})), so each point is a voxel centre` } : {}),
+      ...(stepWarning ? { warning: stepWarning } : {}),
       axis: dims[dom].label,
       step,
       width: { diameter: width, unit: unit || 'axis units' },
@@ -221,20 +256,16 @@ export const lineCutTool = defineTool({
       ...(points.length > limit ? { truncated: `${points.length - limit} more points; give output_path for all` } : {}),
     };
     if (args.output_path) {
-      const labels = dims.map((x) => x.label);
-      let text;
-      if (/\.csv$/i.test(args.output_path)) {
-        text = [`${dims[dom].label},${labels.map((l) => `at_${l}`).join(',')},intensity,sigma,voxels`,
-          ...points.map((p) => [p[dims[dom].label], ...p.at, p.intensity, p.sigma, p.voxels].map(num).join(','))].join('\n');
-      } else {
-        text = header(d, [
-          `# Line cut from (${a.map(num).join(', ')}) to (${b.map(num).join(', ')}), points every ${num(step)} in ${dims[dom].label}`,
-          `# Each point averages the voxels whose centres lie in a rod of diameter ${num(width)} ${unit || 'units'} around the line and project within ±${num(step / 2)} ${dims[dom].label} of it`,
-          `# sigma: ${out.uncertainties}; voxels: distinct voxels with data pooled at the point`,
-          `# ${dims[dom].label} ${labels.join(' ')} I sigma voxels`,
-          ...points.map((p) => [p[dims[dom].label], ...p.at, p.intensity, p.sigma, p.voxels].map(num).join(' ')),
-        ]).join('\n');
-      }
+      const labels = dims.map((x) => x.label), csv = /\.csv$/i.test(args.output_path);
+      const row = (p) => [p[dims[dom].label], ...p.at, p.intensity, p.sigma, p.voxels].map(num);
+      const text = header(d, [
+        `# Line cut from (${a.map(num).join(', ')}) to (${b.map(num).join(', ')}), points every ${num(step)} in ${dims[dom].label}`,
+        `# Each point averages the voxels whose centres lie in a rod of diameter ${num(width)} ${unit || 'units'} around the line and project within ±${num(step / 2)} ${dims[dom].label} of it`,
+        `# sigma: ${out.uncertainties}; voxels: distinct voxels with data pooled at the point`,
+        ...(csv
+          ? [`${dims[dom].label},${labels.map((l) => `at_${l}`).join(',')},intensity,sigma,voxels`, ...points.map((p) => row(p).join(','))]
+          : [`# ${dims[dom].label} ${labels.join(' ')} I sigma voxels`, ...points.map((p) => row(p).join(' '))]),
+      ]).join('\n');
       out.written = writeOutput(args.output_path, `${text}\n`, args.overwrite);
     }
     return out;
@@ -293,16 +324,16 @@ export const powderAverageTool = defineTool({
       ...(shells.length - first > limit ? { truncated: `${shells.length - first - limit} more shells; give output_path for all` } : {}),
     };
     if (args.output_path) {
-      const text = /\.csv$/i.test(args.output_path)
-        ? ['q,intensity,sigma,coverage,voxels', ...shells.map((s) => [s.q, s.intensity, s.sigma, s.coverage, s.voxels].map(num).join(','))].join('\n')
-        : header(d, [
-          `# I(Q), the powder average; |Q| in 1/Angstrom with 2*pi from ${out.q_from}`,
-          `# Shells: ${plan.bins ? `Rebin ${plan.bins.join(', ')}` : 'given edges'}; voxels split into ${plan.split}^3 sub-cells; Q is the shell centre`,
-          '# I: intensity integrated over the part of the shell with data / volume of that part; coverage: fraction of the shell with data',
-          `# sigma: ${out.uncertainties}`,
-          '# Q I sigma coverage voxels',
-          ...shells.map((s) => [s.q, s.intensity, s.sigma, s.coverage, s.voxels].map(num).join(' ')),
-        ]).join('\n');
+      const csv = /\.csv$/i.test(args.output_path), row = (s) => [s.q, s.intensity, s.sigma, s.coverage, s.voxels].map(num);
+      const text = header(d, [
+        `# I(Q), the powder average; |Q| in 1/Angstrom with 2*pi from ${out.q_from}`,
+        `# Shells: ${plan.bins ? `Rebin ${plan.bins.join(', ')}` : 'given edges'}; voxels split into ${plan.split}^3 sub-cells; Q is the shell centre`,
+        '# I: intensity integrated over the part of the shell with data / volume of that part; coverage: fraction of the shell with data',
+        `# sigma: ${out.uncertainties}`,
+        ...(csv
+          ? ['q,intensity,sigma,coverage,voxels', ...shells.map((s) => row(s).join(','))]
+          : ['# Q I sigma coverage voxels', ...shells.map((s) => row(s).join(' '))]),
+      ]).join('\n');
       out.written = writeOutput(args.output_path, `${text}\n`, args.overwrite);
     }
     return out;
@@ -347,6 +378,7 @@ export const readPoints = defineTool({
   title: 'Values at points of a volume',
   description:
     'The processed value at given points of an open volume (the viewer\'s hover readout on a one-bin slice: the equal-weight mean of the distinct measured, unmasked voxels in the symmetry orbit of the voxel containing the point), with the maximum, mean and median over a box of ±box voxels around it. ' +
+      'A point on a bin edge (e.g. an integer node on a grid with edges at integers) takes the mean of the voxels that meet there, with the box centred on it (2·box + 2 voxels along that axis), and is flagged: such grids have no voxel centred on the node. ' +
     'Points are in the volume\'s axis coordinates, or come from a NEXPLAN bragg_positions file (points_path, JSON or CSV, computed for this volume\'s grid), whose hkl and class (present, systematic absence, satellite, …) are kept and summarised: e.g. to see whether forbidden nodes hold intensity. NaN means no data.',
   input: z.strictObject({
     volume_id: volumeId,
@@ -363,7 +395,6 @@ export const readPoints = defineTool({
     const d = workspace.get(args.volume_id), { dims, shape } = d.info;
     const nodes = args.points ? args.points.map((at) => ({ at })) : readNodes(args.points_path, dims);
     const n = [shape[2], shape[1], shape[0]], strides = [1, n[0], n[0] * n[1]];
-    const e0 = dims.map((x) => x.edges[0]), w = dims.map(binWidth);
     const mask = d.mask?.bits ?? null, maps = d.symmetry.maps, volume = d.volume;
     const members = new Set();
     // The symmetrized, masked value of the voxel at bin indices p (NaN without data).
@@ -381,29 +412,42 @@ export const readPoints = defineTool({
       return count ? sum / count : NaN;
     };
     const box = args.box ?? 1;
+    // The voxels along axis i whose centres lie within `reach` voxels of coordinate u (voxel units):
+    // the voxel containing the point for reach ½, both voxels beside a bin edge.
+    const span = (u, i, reach) => [Math.max(0, Math.ceil(u - reach - 1e-6)), Math.min(n[i] - 1, Math.floor(u + reach + 1e-6))];
+    const valuesIn = (ranges) => {
+      const values = [];
+      for (let a = ranges[0][0]; a <= ranges[0][1]; a++) for (let b = ranges[1][0]; b <= ranges[1][1]; b++) for (let c = ranges[2][0]; c <= ranges[2][1]; c++) {
+        const v = orbitMean([a, b, c]);
+        if (v === v) values.push(v);
+      }
+      return values;
+    };
+    let edgePoints = 0;
     const rows = nodes.map((node) => {
-      const p = node.at.map((x, i) => Math.floor((x - e0[i]) / w[i]));
-      const inside = p.every((pi, i) => pi >= 0 && pi < n[i]);
+      const u = node.at.map((x, i) => voxelCoord(dims[i], x));
+      const inside = u.every((ui, i) => ui >= -0.5 - 1e-6 && ui <= n[i] - 0.5 + 1e-6);
       const row = { ...(node.hkl ? { hkl: node.hkl } : {}), at: node.at, ...(node.class ? { class: node.class } : {}) };
       if (!inside) return { ...row, voxel: null, value: NaN, note: 'outside the volume' };
-      const values = [];
-      for (let a = -box; a <= box; a++) for (let b = -box; b <= box; b++) for (let c = -box; c <= box; c++) {
-        const q = [p[0] + a, p[1] + b, p[2] + c];
-        if (q.every((qi, i) => qi >= 0 && qi < n[i])) {
-          const v = orbitMean(q);
-          if (v === v) values.push(v);
-        }
-      }
+      const edges = u.map(onEdge);
+      const at = u.map((ui, i) => span(ui, i, 0.5));
+      const here = valuesIn(at), values = valuesIn(u.map((ui, i) => span(ui, i, box + 0.5)));
       values.sort((x, y) => x - y);
-      return {
+      const out = {
         ...row,
-        voxel: p,
-        value: orbitMean(p),
+        voxel: u.map((ui, i) => (edges[i] ? Math.round(2 * ui) / 2 : Math.round(ui))),
+        value: here.length ? here.reduce((s, v) => s + v, 0) / here.length : NaN,
         box_max: values.length ? values[values.length - 1] : NaN,
         box_mean: values.length ? values.reduce((s, v) => s + v, 0) / values.length : NaN,
         box_median: values.length ? values[Math.floor(values.length / 2)] : NaN,
         box_voxels: values.length,
       };
+      if (edges.some(Boolean)) {
+        edgePoints++;
+        const voxels = at.reduce((m, [lo, hi]) => m * (hi - lo + 1), 1);
+        out.note = `on a bin edge of ${dims.filter((_, i) => edges[i]).map((x) => x.label).join(', ')}: the value is the mean of the ${voxels} voxels that meet there, and the box is centred on the point`;
+      }
+      return out;
     });
     const median = (xs) => {
       const s = xs.filter((x) => x === x).sort((x, y) => x - y);
@@ -429,6 +473,7 @@ export const readPoints = defineTool({
     const out = {
       volume_id: d.id,
       box: `±${box} voxels`,
+      ...(edgePoints ? { warning: `${edgePoints} of ${rows.length} points lie on bin edges, where no voxel is centred: their values average the voxels that meet there (see each point's note). A grid with voxel centres on these points (edges moved by half a bin) reads them directly.` } : {}),
       processing: d.processing(),
       summary,
       points: rows.slice(0, limit),
@@ -436,7 +481,11 @@ export const readPoints = defineTool({
     };
     if (args.output_path) {
       const labels = dims.map((x) => x.label);
-      const lines = ['h,k,l,' + labels.map((l) => `at_${l}`).join(',') + ',i0,i1,i2,class,value,box_max,box_mean,box_median,box_voxels',
+      const lines = [...header(d, [
+        `# Values at ${rows.length} points${args.points_path ? ` from ${resolvePath(args.points_path)}` : ''}, in the volume's axes (${labels.join(', ')})`,
+        `# value: the symmetrized, masked value of the voxel holding the point (on a bin edge, the mean of the voxels that meet there); box_*: over the voxels within ±${box} voxel${box === 1 ? '' : 's'} of it, centred on the point`,
+        '# i0, i1, i2: the point in voxel indices (x.5 on a bin edge); NaN: no data',
+      ]), 'h,k,l,' + labels.map((l) => `at_${l}`).join(',') + ',i0,i1,i2,class,value,box_max,box_mean,box_median,box_voxels',
         ...rows.map((r) => [...(r.hkl ?? ['', '', '']), ...r.at.map(num), ...(r.voxel ?? ['', '', '']), r.class ?? '', ...[r.value, r.box_max, r.box_mean, r.box_median].map(num), r.box_voxels ?? 0].join(','))];
       out.written = writeOutput(args.output_path, `${lines.join('\n')}\n`, args.overwrite);
     }

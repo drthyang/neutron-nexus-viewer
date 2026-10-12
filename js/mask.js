@@ -7,7 +7,9 @@
 //   EDGE     measured voxels within `radius` voxels (box distance) of an
 //            unmeasured voxel, i.e. an erosion of the coverage;
 //   OUTLIER  voxels that exceed the median of their symmetry-equivalent voxels
-//            by more than k robust standard deviations (1.4826 * MAD).
+//            by more than k standard deviations: the robust spread 1.4826 * MAD,
+//            but at least the orbit's counting error, so that counting noise in
+//            low-count data (where MAD is often 0) is not taken for outliers.
 //
 // The mask is a Uint8Array in storage order with these bits; volume values are
 // never modified, so masks can be changed or cleared at any time.
@@ -44,13 +46,22 @@ export function edgeMask(volume, shape, radius, mask = new Uint8Array(volume.len
 }
 
 /**
- * Flag voxels above median + k * 1.4826 * MAD of their orbit's valid voxels
+ * Flag voxels more than k σ above the median of their orbit's valid voxels
  * (those not NaN and not already masked). Orbits with fewer than `minMembers`
  * valid voxels are left alone. `maps` are fine-grid index maps, identity first.
+ *
+ * σ is the larger of the robust spread 1.4826·MAD and the orbit's typical
+ * counting error √median(σᵥ²), with σᵥ² from `variance` (per voxel, storage
+ * order, NaN unknown) or, without it, the counts themselves when every member
+ * is a non-negative integer (Poisson). When that is 0 too (more than half the
+ * members equal, as zero-count voxels are), a voxel is tested against its own
+ * σᵥ instead, so one bright voxel among empty ones is still caught; without
+ * any error estimate such an orbit is skipped. Without the floor, σ = 0 flagged
+ * every voxel above the median: a quarter of a pure Poisson volume at 0.3 counts.
  */
-export function outlierMask(volume, shape, maps, k, mask = new Uint8Array(volume.length), minMembers = 3, onProgress = () => {}) {
+export function outlierMask(volume, shape, maps, k, mask = new Uint8Array(volume.length), { minMembers = 3, variance = null, onProgress = () => {} } = {}) {
   const n0 = shape[2], n1 = shape[1], n2 = shape[0], s1 = n0, s2 = n0 * n1;
-  const G = maps.length, flats = new Int32Array(G), values = new Float64Array(G), scratch = new Float64Array(G);
+  const G = maps.length, flats = new Int32Array(G), values = new Float64Array(G), errors = new Float64Array(G), scratch = new Float64Array(G);
   const usable = (f) => volume[f] === volume[f] && !mask[f];
   const flagged = [];
   for (let i2 = 0, p = 0; i2 < n2; i2++) {
@@ -71,11 +82,27 @@ export function outlierMask(volume, shape, maps, k, mask = new Uint8Array(volume
           else if (!flats.subarray(0, m).includes(f)) flats[m++] = f;
         }
         if (!rep || m < minMembers) continue;
-        for (let j = 0; j < m; j++) scratch[j] = values[j] = volume[flats[j]];
+        let counts = !variance;
+        for (let j = 0; j < m; j++) {
+          const v = volume[flats[j]];
+          scratch[j] = values[j] = v;
+          if (counts && !(v >= 0 && Number.isInteger(v))) counts = false;
+        }
         const median = medianOf(scratch.subarray(0, m));
         for (let j = 0; j < m; j++) scratch[j] = Math.abs(values[j] - median);
-        const sigma = 1.4826 * medianOf(scratch.subarray(0, m));
-        for (let j = 0; j < m; j++) if (values[j] - median > k * sigma && values[j] > median) flagged.push(flats[j]);
+        let sigma = 1.4826 * medianOf(scratch.subarray(0, m));
+        // Counting errors: σᵥ² from the file, or the count itself; NaN when unknown.
+        let known = 0;
+        for (let j = 0; j < m; j++) {
+          const v2 = variance ? variance[flats[j]] : counts ? values[j] : NaN;
+          errors[j] = v2 >= 0 ? Math.sqrt(v2) : NaN;
+          if (v2 >= 0) scratch[known++] = v2;
+        }
+        if (known) sigma = Math.max(sigma, Math.sqrt(medianOf(scratch.subarray(0, known))));
+        for (let j = 0; j < m; j++) {
+          const s = sigma > 0 ? sigma : errors[j];
+          if (s > 0 && values[j] - median > k * s) flagged.push(flats[j]);
+        }
       }
     }
     if (i2 % 16 === 0) onProgress((i2 + 1) / n2);

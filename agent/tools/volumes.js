@@ -4,7 +4,7 @@
 import { z } from 'zod';
 
 import { isHKL } from '../../js/nexus.js';
-import { binWidth, isUniform, planeName, spaceOf, valueStats, volumeId } from '../shared.js';
+import { arrayOrder, binWidth, isUniform, planeName, spaceOf, valueStats, volumeId } from '../shared.js';
 import { defineTool } from '../tool.js';
 
 function formatOf(info) {
@@ -21,14 +21,17 @@ const binning = (dim) => {
   return `${n(dim.edges[0])},${n(binWidth(dim))},${n(dim.edges[dim.edges.length - 1])}`;
 };
 
-/** The grid as NEXPLAN's bragg_positions, coverage_map and laue_symmetry take it, or why it cannot be given. */
+/**
+ * The grid exactly as NEXPLAN's bragg_positions, coverage_map and laue_symmetry take it (their `grid`
+ * schema is strict: axes, binning and q_convention only), with how to complete it beside it; or why
+ * it cannot be given.
+ */
 function nexplanGrid(dims) {
-  if (!dims.every((d) => d.basis && isHKL(d))) return { unavailable: 'NEXPLAN grids need axes along hkl directions (r.l.u.).' };
-  if (!dims.every(isUniform)) return { unavailable: 'NEXPLAN grids need uniform bins.' };
+  if (!dims.every((d) => d.basis && isHKL(d))) return { nexplan_grid: { unavailable: 'NEXPLAN grids need axes along hkl directions (r.l.u.).' } };
+  if (!dims.every(isUniform)) return { nexplan_grid: { unavailable: 'NEXPLAN grids need uniform bins.' } };
   return {
-    axes: dims.map((d) => d.basis.vec),
-    binning: dims.map(binning),
-    note: 'Add q_convention: "inelastic" when the volume was reduced with Mantid\'s default Q.convention (most SNS MDNorm data), "crystallography" when it was reduced with the crystallographic one (usual for X-ray data).',
+    nexplan_grid: { axes: dims.map((d) => d.basis.vec), binning: dims.map(binning) },
+    nexplan_grid_note: 'Give nexplan_grid to NEXPLAN as it is, adding q_convention: "inelastic" when the volume was reduced with Mantid\'s default Q.convention (most SNS MDNorm data; NEXPLAN\'s default), "crystallography" when it was reduced with the crystallographic one (usual for X-ray data).',
   };
 }
 
@@ -63,11 +66,14 @@ export function describe(d, { full = true } = {}) {
     voxels: info.voxels,
     values: valueStats(d.volume),
     cell: l ? { a: l.a, b: l.b, c: l.c, alpha: l.alpha, beta: l.beta, gamma: l.gamma, source: l.source } : null,
-    ...(l?.ub ? { ub: [l.ub.slice(0, 3), l.ub.slice(3, 6), l.ub.slice(6, 9)], ub_convention: 'Mantid: q = UB·h without 2π (NEBULA3D stores 2π·UB)' } : {}),
+    ...(l?.ub ? {
+      ub: [l.ub.slice(0, 3), l.ub.slice(3, 6), l.ub.slice(6, 9)],
+      ub_convention: `Mantid's: q = UB·h without 2π${/^NEBULA3D/.test(formatOf(info)) ? '; this file stores 2π·UB as ub_matrix, so this is ub_matrix / 2π' : ''}`,
+    } : {}),
     uncertainties: info.errors ? `${info.errors.squared ? 'variances' : 'standard deviations'} in ${info.errors.path}` : 'none',
     ...(info.signed ? { signed: 'a ΔPDF: values change sign' } : {}),
-    nexplan_grid: nexplanGrid(info.dims),
-    storage: { order: 'C order of shape; display axis 0 is the fastest storage axis (Mantid D0), as the viewer and Mantid store it', dtype: info.dtype, chunks: info.chunks },
+    ...nexplanGrid(info.dims),
+    storage: { ...arrayOrder(info), dtype: info.dtype, chunks: info.chunks },
   };
 }
 
@@ -76,17 +82,24 @@ export const openVolume = defineTool({
   title: 'Open a 3-D volume',
   description:
     'Opens a 3-D histogram from a NeXus/HDF5 file and keeps it in memory for the other tools: a Mantid MDHistoWorkspace (SaveMD, e.g. MDNorm output), any NXdata group with a 3-D signal, or a NEBULA3D volume or 3D-ΔPDF. ' +
-    'Returns its id, axes (labels, ranges, bins, hkl directions), unit cell and UB, value statistics, the slice planes, and the grid in the form NEXPLAN\'s bragg_positions, coverage_map and laue_symmetry take. ' +
-    'Masked and non-finite voxels count as unmeasured. Opening another file under an id in use replaces it.',
+    'Returns its id, axes (labels, ranges, bins, hkl directions), unit cell and UB, value statistics, the slice planes, and the grid as NEXPLAN\'s bragg_positions, coverage_map and laue_symmetry take it (nexplan_grid, to pass as it is with q_convention added as nexplan_grid_note says). ' +
+    'Masked and non-finite voxels count as unmeasured. Opening a file under an id in use replaces that volume, with its symmetry and mask (the result says so).',
   input: z.strictObject({
     path: z.string().min(1).describe('The .nxs / .h5 file.'),
     id: z.string().regex(/^[\w.-]{1,64}$/).optional().describe('Id for the volume (default: from the file name).'),
     align_to: z.string().optional().describe('Id of an open volume whose axis order to use, when this file has the same axes in another order (for comparing).'),
   }),
-  annotations: { readOnlyHint: true, openWorldHint: false },
+  // It writes no file, but adds a volume to the session, and replaces one under an id in use.
+  annotations: { readOnlyHint: false, destructiveHint: true, openWorldHint: false },
   async run(args, { workspace }) {
+    const previous = args.id !== undefined && workspace.list().find((v) => v.id === args.id);
+    const replaced = previous && { volume_id: previous.id, file: previous.path, processing: previous.processing() };
     const d = await workspace.open(args.path, { id: args.id, alignTo: args.align_to });
-    return { ...describe(d), loaded_in_s: d.seconds };
+    return {
+      ...describe(d),
+      ...(replaced ? { replaced: { ...replaced, note: `'${d.id}' was already open: that volume (${replaced.file}) and its processing were replaced. Give another id to keep both.` } } : {}),
+      loaded_in_s: d.seconds,
+    };
   },
 });
 
@@ -106,9 +119,9 @@ export const describeVolume = defineTool({
 export const closeVolume = defineTool({
   name: 'close_volume',
   title: 'Close a volume',
-  description: 'Frees an open volume\'s memory. Its id can then be reused.',
+  description: 'Frees an open volume\'s memory, with its symmetry and mask. Its id can then be reused.',
   input: z.strictObject({ volume_id: volumeId }),
-  annotations: { readOnlyHint: true, openWorldHint: false },
+  annotations: { readOnlyHint: false, destructiveHint: true, openWorldHint: false },
   run(args, { workspace }) {
     workspace.close(args.volume_id);
     return { closed: args.volume_id, open: workspace.list().map((d) => d.id) };

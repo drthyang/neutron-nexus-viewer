@@ -7,6 +7,7 @@ import test from 'node:test';
 import h5wasm from 'h5wasm/node';
 
 import { callTool, TOOLS, toolDefinitions, Workspace } from '../agent/index.js';
+import { writeNebulaFile } from '../js/export.js';
 import { describeFile, loadVolume } from '../js/nexus.js';
 
 const fixture = (name) => new URL(`./fixtures/${name}`, import.meta.url).pathname;
@@ -35,8 +36,12 @@ test('open_volume describes a Mantid file and gives the grid NEXPLAN takes', asy
   assert.deepEqual(v.axes.map((a) => a.label), ['H', 'K', 'L']);
   assert.deepEqual(v.planes.map((p) => p.plane), ['HK', 'HL', 'KL']);
   assert.equal(v.cell.source, 'UB');
-  assert.deepEqual(v.nexplan_grid.axes, [[1, 0, 0], [0, 1, 0], [0, 0, 1]]);
-  assert.deepEqual(v.nexplan_grid.binning, ['-0.55,0.1,0.55', '-0.45,0.1,0.45', '-0.875,0.25,0.875']);
+  // Exactly what NEXPLAN's strict grid schema accepts ({ axes, binning, q_convention }), the note beside it.
+  assert.deepEqual(v.nexplan_grid, {
+    axes: [[1, 0, 0], [0, 1, 0], [0, 0, 1]],
+    binning: ['-0.55,0.1,0.55', '-0.45,0.1,0.45', '-0.875,0.25,0.875'],
+  });
+  assert.match(v.nexplan_grid_note, /q_convention/);
   assert.match(v.uncertainties, /^variances/);
   // A second open of the same file gets its own id; describe_volume lists both.
   await call(ws, 'open_volume', { path: fixture('mdhisto_small.nxs') });
@@ -46,7 +51,18 @@ test('open_volume describes a Mantid file and gives the grid NEXPLAN takes', asy
 
 test('open_volume reads NEBULA3D and NXdata files, and refuses others', async () => {
   const ws = new Workspace();
-  assert.equal((await call(ws, 'open_volume', { path: fixture('nebula3d_small.h5') })).format, 'NEBULA3D volume');
+  const nebula = await call(ws, 'open_volume', { path: fixture('nebula3d_small.h5') });
+  assert.equal(nebula.format, 'NEBULA3D volume');
+  // NEBULA3D stores 2π·UB; the UB returned is Mantid's, without 2π, and says so.
+  assert.match(nebula.ub_convention, /ub_matrix \/ 2π/);
+  await h5wasm.ready;
+  const stored = new h5wasm.File(fixture('nebula3d_small.h5'), 'r');
+  try {
+    const ub = stored.get('entry/ub_matrix').value;
+    nebula.ub.flat().forEach((x, i) => assert.ok(Math.abs(2 * Math.PI * x - ub[i]) < 1e-9 * Math.abs(ub[i]) + 1e-12, `UB ${i}`));
+  } finally {
+    stored.close();
+  }
   const dpdf = await call(ws, 'open_volume', { path: fixture('nebula3d_dpdf_small.h5') });
   assert.equal(dpdf.format, 'NEBULA3D 3D-ΔPDF');
   assert.match(dpdf.nexplan_grid.unavailable, /hkl/);
@@ -54,6 +70,35 @@ test('open_volume reads NEBULA3D and NXdata files, and refuses others', async ()
   const bad = await callTool('open_volume', { path: fixture('expected.json') }, { workspace: ws });
   assert.equal(bad.ok, false);
   assert.match(bad.error, /not an HDF5/);
+});
+
+test('arrays of a volume opened with align_to are in its display order, and the file\'s order is given', async () => {
+  const ws = new Workspace();
+  await call(ws, 'open_volume', { path: fixture('mdhisto_small.nxs'), id: 'm' });
+  const own = await call(ws, 'open_volume', { path: fixture('nebula3d_small.h5'), id: 'n' });
+  const aligned = await call(ws, 'open_volume', { path: fixture('nebula3d_small.h5'), id: 'a', align_to: 'm' });
+  assert.deepEqual(own.axes.map((x) => x.label), ['L', 'K', 'H']);
+  assert.deepEqual(aligned.axes.map((x) => x.label), ['H', 'K', 'L']);
+  assert.match(own.storage.order, /\(H, K, L\) from slowest to fastest/);
+  assert.equal(own.storage.file_order, undefined);
+  assert.match(aligned.storage.order, /axis 0 \(H\) fastest.*\(L, K, H\)/);
+  assert.match(aligned.storage.file_order, /stores \(H, K, L\).*numpy\.transpose\(array, \(2, 1, 0\)\)/);
+  // The masks of the two agree once the aligned one is transposed as it says.
+  const masks = [];
+  for (const id of ['n', 'a']) {
+    const m = await call(ws, 'build_mask', { volume_id: id, edge_radius: 1, output_path: join(tmp, `align-${id}.npy`) });
+    const bytes = readFileSync(m.written.path);
+    masks.push({ bits: bytes.subarray(10 + bytes.readUInt16LE(8)), array: m.array });
+  }
+  assert.ok(masks[1].array.file_order && !masks[0].array.file_order);
+  const [n2, n1, n0] = masks[1].array.shape; // the aligned array (L, K, H) has shape [n2, n1, n0]
+  let flagged = 0;
+  for (let l = 0; l < n2; l++) for (let k = 0; k < n1; k++) for (let h = 0; h < n0; h++) {
+    const fromAligned = masks[1].bits[(l * n1 + k) * n0 + h], fromOwn = masks[0].bits[(h * n1 + k) * n2 + l];
+    assert.equal(fromAligned, fromOwn);
+    flagged += fromOwn > 0;
+  }
+  assert.ok(flagged > 0);
 });
 
 test('slice_volume gives the slices the Python reference gives', async () => {
@@ -154,6 +199,7 @@ test('line_cut and powder_average give profiles with the processing applied', as
   await call(ws, 'open_volume', { path: fixture('mdhisto_small.nxs'), id: 'v' });
   const cut = await call(ws, 'line_cut', { volume_id: 'v', start: [0, 0, 0.5], end: [0, 0, -0.5], output_path: join(tmp, 'cut.txt') });
   assert.match(cut.note, /swapped/);
+  assert.equal(cut.snapped, undefined, 'ends on voxel centres stay');
   assert.equal(cut.axis, 'L');
   assert.equal(cut.width.unit, 'Å⁻¹');
   assert.ok(cut.points.some((p) => Number.isFinite(p.sigma)), 'σ from errors_squared');
@@ -164,6 +210,27 @@ test('line_cut and powder_average give profiles with the processing applied', as
   assert.ok(iq.shells.length > 3);
   const bad = await callTool('powder_average', { volume_id: 'v', bins: '0' }, { workspace: ws });
   assert.match(bad.error, /cannot be 0/);
+});
+
+test('every .csv the tools write starts with # lines, then a header row and rows of equal width', async () => {
+  const ws = new Workspace();
+  await call(ws, 'open_volume', { path: fixture('mdhisto_small.nxs'), id: 'v' });
+  await call(ws, 'set_symmetry', { volume_id: 'v', laue_class: '-1' });
+  const written = [
+    await call(ws, 'slice_volume', { volume_id: 'v', fixed_axis: 'L', image: false, output_path: join(tmp, 'csv-slice.csv') }),
+    await call(ws, 'line_cut', { volume_id: 'v', start: [0, 0, -0.5], end: [0, 0, 0.5], output_path: join(tmp, 'csv-cut.csv') }),
+    await call(ws, 'powder_average', { volume_id: 'v', bins: '0.05', output_path: join(tmp, 'csv-iq.csv') }),
+    await call(ws, 'read_points', { volume_id: 'v', points: [[0, 0, 0], [0.1, 0.2, 0.25]], output_path: join(tmp, 'csv-points.csv') }),
+  ];
+  for (const { written: { path } } of written) {
+    const lines = readFileSync(path, 'utf8').trimEnd().split('\n');
+    assert.match(lines[0], /^# Written by NeXus Viewer agent tools/, path);
+    assert.ok(lines.some((l) => /^# Symmetry: -1/.test(l)), path);
+    const rows = lines.filter((l) => !l.startsWith('#'));
+    assert.match(rows[0], /^[A-Za-z_]/, `${path}: header row`);
+    const width = rows[0].split(',').length;
+    assert.ok(rows.length > 1 && rows.every((r) => r.split(',').length === width), path);
+  }
 });
 
 test('export_nebula3d writes the file NEBULA3D reads, with the processing recorded', async () => {
@@ -186,6 +253,90 @@ test('export_nebula3d writes the file NEBULA3D reads, with the processing record
   }
   const again = await callTool('export_nebula3d', { volume_id: 'cold', output_path: out }, { workspace: ws });
   assert.match(again.error, /exists/);
+  // The example has no uncertainties: no sigma, and NEBULA3D's √|data| is said.
+  assert.equal(e.sigma, false);
+  assert.match(e.attributes.uncertainties, /none written/);
+  // A Mantid file's errors_squared become /entry/sigma, σ of each orbit's mean.
+  await call(ws, 'open_volume', { path: fixture('mdhisto_small.nxs'), id: 'v' });
+  const withSigma = await call(ws, 'export_nebula3d', { volume_id: 'v', output_path: join(tmp, 'v.nxs') });
+  assert.equal(withSigma.sigma, true);
+  assert.match(withSigma.attributes.uncertainties, /^from errors_squared/);
+  const g = new h5wasm.File(withSigma.written.path, 'r');
+  try {
+    const entry = g.get('entry');
+    assert.deepEqual(entry.get('sigma').shape, entry.get('data').shape);
+    const sigma = entry.get('sigma').value, mask = entry.get('mask').value;
+    assert.ok(sigma.some((x, i) => mask[i] && x > 0) && sigma.every((x, i) => mask[i] || x === 0));
+  } finally {
+    g.close();
+  }
+});
+
+/**
+ * A synthetic NEBULA3D volume on a grid with bin edges at the integers: H, K, L from -1 to 1 in 20
+ * bins of 0.1, cubic a = 5 Å, I = 100 + 10h + 3k + l at the voxel centres (a plane, so any average
+ * symmetric about a point equals I there). Its display axes are L, K, H (axis 0 fastest in storage).
+ */
+async function edgeGrid() {
+  await h5wasm.ready;
+  const n = 20, centers = Float64Array.from({ length: n }, (_, i) => -0.95 + 0.1 * i);
+  const data = new Float32Array(n ** 3);
+  for (let h = 0; h < n; h++) for (let k = 0; k < n; k++) for (let l = 0; l < n; l++) data[(h * n + k) * n + l] = 100 + 10 * centers[h] + 3 * centers[k] + centers[l];
+  const path = join(tmp, 'edge_grid.h5'), b = 2 * Math.PI / 5;
+  writeNebulaFile(h5wasm, path, { shape: [n, n, n], centers: [centers, centers, centers], ub: [b, 0, 0, 0, b, 0, 0, 0, b] },
+    { data, valid: new Uint8Array(n ** 3).fill(1), sigma: null });
+  return { path, I: ([l, k, h]) => 100 + 10 * h + 3 * k + l };
+}
+
+test('on a grid with bin edges at the integers, typed coordinates read the voxels centred on them', async () => {
+  const { path, I } = await edgeGrid();
+  const ws = new Workspace();
+  const v = await call(ws, 'open_volume', { path, id: 'e' });
+  assert.deepEqual(v.axes.map((a) => a.label), ['L', 'K', 'H']);
+  // The default slice is one bin, the one above L = 0, not the two beside it averaged.
+  const s = await call(ws, 'slice_volume', { volume_id: 'e', fixed_axis: 'L', image: false });
+  assert.equal(s.slab.bins, 1);
+  assert.ok(Math.abs(s.slab.center - 0.05) < 1e-9);
+  assert.match(s.slab.note, /bin edge/);
+  // A cut between bin edges: its ends move to voxel centres, and each point is labelled with its voxel's H.
+  const cut = await call(ws, 'line_cut', { volume_id: 'e', start: [0.05, 0.05, -1], end: [0.05, 0.05, 1] });
+  assert.deepEqual([cut.from, cut.to], [[0.05, 0.05, -0.95], [0.05, 0.05, 0.95]]);
+  assert.match(cut.snapped, /voxel centres/);
+  assert.equal(cut.points.length, 20);
+  for (const p of cut.points) assert.ok(Math.abs(p.intensity - I(p.at)) < 1e-3, `H = ${p.H}: ${p.intensity} vs ${I(p.at)}`);
+  // An even number of bins per step puts voxel centres on the boundaries between points.
+  assert.match((await call(ws, 'line_cut', { volume_id: 'e', start: [0.05, 0.05, -0.95], end: [0.05, 0.05, 0.95], step: 0.2 })).warning, /even number/);
+  // A node at a corner of 8 voxels reads their mean, with the box centred on it.
+  const r = await call(ws, 'read_points', { volume_id: 'e', points: [[0, 0, 0], [-0.35, 0.25, 0.55], [0, 0, 1]], box: 1 });
+  const [node, centre, side] = r.points;
+  assert.deepEqual(node.voxel, [9.5, 9.5, 9.5]);
+  assert.match(node.note, /bin edge of L, K, H.*8 voxels/);
+  assert.ok(Math.abs(node.value - I([0, 0, 0])) < 1e-3 && Math.abs(node.box_mean - I([0, 0, 0])) < 1e-3, `${node.value}, ${node.box_mean}`);
+  assert.equal(node.box_voxels, 64);
+  assert.deepEqual(centre.voxel, [6, 12, 15]);
+  assert.ok(Math.abs(centre.value - I(centre.at)) < 1e-3 && centre.box_voxels === 27 && !centre.note);
+  // On the outer edge only the voxels inside remain.
+  assert.ok(Math.abs(side.value - I([0, 0, 0.95])) < 1e-3, `${side.value}`);
+  assert.match(r.warning, /2 of 3 points lie on bin edges/);
+});
+
+test('annotations: only describe_volume leaves the session unchanged; replacing a volume is said', async () => {
+  // MCP's readOnlyHint means the tool does not modify its environment: the open volumes and
+  // their processing are part of it, even where no file is written.
+  const readOnly = TOOLS.filter((t) => t.annotations.readOnlyHint).map((t) => t.name);
+  assert.deepEqual(readOnly, ['describe_volume']);
+  const hint = (name) => TOOLS.find((t) => t.name === name).annotations;
+  assert.equal(hint('close_volume').destructiveHint, true);
+  assert.equal(hint('open_volume').destructiveHint, true);
+  assert.equal(hint('set_symmetry').destructiveHint, false);
+  const ws = new Workspace();
+  const first = await call(ws, 'open_volume', { path: fixture('mdhisto_small.nxs'), id: 'x' });
+  assert.equal(first.replaced, undefined);
+  await call(ws, 'set_symmetry', { volume_id: 'x', laue_class: '-1' });
+  const second = await call(ws, 'open_volume', { path: fixture('nxdata_small.h5'), id: 'x' });
+  assert.equal(second.replaced.file, first.file);
+  assert.match(second.replaced.processing.symmetry, /^-1/);
+  assert.match(second.replaced.note, /replaced/);
 });
 
 test('every tool has a JSON Schema and is documented in docs/AGENT.md', () => {
