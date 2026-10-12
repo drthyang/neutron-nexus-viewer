@@ -1,6 +1,6 @@
 # Method
 
-[← README](../README.md) · [User guide](USER_GUIDE.md) · [Development](DEVELOPMENT.md)
+[← README](../README.md) · [Features](FEATURES.md) · [User guide](USER_GUIDE.md) · [Agent tools](AGENT.md) · [Development](DEVELOPMENT.md)
 
 The pipeline is *measured voxels → mask → symmetry average → slices, line cuts, 3-D view and I(Q)*. Masked and non-finite voxels are held as NaN. Voxels are stored as float32, and sums are accumulated in float64. There is no smoothing or interpolation at any stage.
 
