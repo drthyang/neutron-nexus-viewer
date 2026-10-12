@@ -57,6 +57,35 @@ test('open_volume reads NEBULA3D and NXdata files, and refuses others', async ()
   assert.match(bad.error, /not an HDF5/);
 });
 
+test('arrays of a volume opened with align_to are in its display order, and the file\'s order is given', async () => {
+  const ws = new Workspace();
+  await call(ws, 'open_volume', { path: fixture('mdhisto_small.nxs'), id: 'm' });
+  const own = await call(ws, 'open_volume', { path: fixture('nebula3d_small.h5'), id: 'n' });
+  const aligned = await call(ws, 'open_volume', { path: fixture('nebula3d_small.h5'), id: 'a', align_to: 'm' });
+  assert.deepEqual(own.axes.map((x) => x.label), ['L', 'K', 'H']);
+  assert.deepEqual(aligned.axes.map((x) => x.label), ['H', 'K', 'L']);
+  assert.match(own.storage.order, /\(H, K, L\) from slowest to fastest/);
+  assert.equal(own.storage.file_order, undefined);
+  assert.match(aligned.storage.order, /axis 0 \(H\) fastest.*\(L, K, H\)/);
+  assert.match(aligned.storage.file_order, /stores \(H, K, L\).*numpy\.transpose\(array, \(2, 1, 0\)\)/);
+  // The masks of the two agree once the aligned one is transposed as it says.
+  const masks = [];
+  for (const id of ['n', 'a']) {
+    const m = await call(ws, 'build_mask', { volume_id: id, edge_radius: 1, output_path: join(tmp, `align-${id}.npy`) });
+    const bytes = readFileSync(m.written.path);
+    masks.push({ bits: bytes.subarray(10 + bytes.readUInt16LE(8)), array: m.array });
+  }
+  assert.ok(masks[1].array.file_order && !masks[0].array.file_order);
+  const [n2, n1, n0] = masks[1].array.shape; // the aligned array (L, K, H) has shape [n2, n1, n0]
+  let flagged = 0;
+  for (let l = 0; l < n2; l++) for (let k = 0; k < n1; k++) for (let h = 0; h < n0; h++) {
+    const fromAligned = masks[1].bits[(l * n1 + k) * n0 + h], fromOwn = masks[0].bits[(h * n1 + k) * n2 + l];
+    assert.equal(fromAligned, fromOwn);
+    flagged += fromOwn > 0;
+  }
+  assert.ok(flagged > 0);
+});
+
 test('slice_volume gives the slices the Python reference gives', async () => {
   const ws = new Workspace();
   await call(ws, 'open_volume', { path: fixture('mdhisto_small.nxs'), id: 'v' });

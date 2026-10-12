@@ -6,7 +6,7 @@ import { z } from 'zod';
 import { edgeMask, maskStats, outlierMask } from '../../js/mask.js';
 import { PRESETS } from '../../js/symmetry.js';
 import { npyBytes, writeOutput } from '../files.js';
-import { outputPath, overwrite, volumeId } from '../shared.js';
+import { arrayOrder, outputPath, overwrite, volumeId } from '../shared.js';
 import { defineTool, ToolError } from '../tool.js';
 import { maskSummary } from '../workspace.js';
 
@@ -44,7 +44,7 @@ export const buildMask = defineTool({
   description:
     'Builds the viewer\'s artifact mask on the unsymmetrized volume, before averaging: removes measured voxels within edge_radius voxels of unmeasured ones (the coverage edges, where detector edges and weak normalization leave bright rims), and voxels more than outlier_k σ above the median of their symmetry equivalents (needs a group of at least 3 operations from set_symmetry). ' +
       'σ is the robust spread 1.4826·MAD, but at least the orbit\'s typical counting error from the file\'s uncertainties (or √counts for integer counts without them), so counting noise in low-count data, where MAD is often 0, is not cut. ' +
-    'The volume\'s values are never changed; the mask applies to every later slice, cut, I(Q), point readout and export. Both 0 clears it. Writes the mask as .npy (uint8 in storage order, 1 = coverage edge, 2 = outlier) with output_path.',
+    'The volume\'s values are never changed; the mask applies to every later slice, cut, I(Q), point readout and export. Both 0 clears it. Writes the mask as .npy (uint8, 1 = coverage edge, 2 = outlier) with output_path, in the volume\'s display order (axis 0 fastest; the file\'s own order unless opened with align_to, and the result says how to transpose it then).',
   input: z.strictObject({
     volume_id: volumeId,
     edge_radius: z.number().int().min(0).max(20).optional().describe('Erosion radius in voxels (default 0: none; 1 or 2 is typical).'),
@@ -86,7 +86,7 @@ export const buildMask = defineTool({
     };
     if (args.output_path) {
       out.written = writeOutput(args.output_path, npyBytes(bits, d.info.shape), args.overwrite);
-      out.array = { dtype: 'uint8', shape: d.info.shape, order: 'storage (Mantid) order, as the volume; 1 = coverage edge, 2 = symmetry outlier' };
+      out.array = { dtype: 'uint8', shape: d.info.shape, ...arrayOrder(d.info), values: '1 = coverage edge, 2 = symmetry outlier' };
     }
     return out;
   },

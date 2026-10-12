@@ -4,7 +4,7 @@
 import { z } from 'zod';
 
 import { isHKL } from '../../js/nexus.js';
-import { binWidth, isUniform, planeName, spaceOf, valueStats, volumeId } from '../shared.js';
+import { arrayOrder, binWidth, isUniform, planeName, spaceOf, valueStats, volumeId } from '../shared.js';
 import { defineTool } from '../tool.js';
 
 function formatOf(info) {
@@ -67,7 +67,7 @@ export function describe(d, { full = true } = {}) {
     uncertainties: info.errors ? `${info.errors.squared ? 'variances' : 'standard deviations'} in ${info.errors.path}` : 'none',
     ...(info.signed ? { signed: 'a ΔPDF: values change sign' } : {}),
     nexplan_grid: nexplanGrid(info.dims),
-    storage: { order: 'C order of shape; display axis 0 is the fastest storage axis (Mantid D0), as the viewer and Mantid store it', dtype: info.dtype, chunks: info.chunks },
+    storage: { ...arrayOrder(info), dtype: info.dtype, chunks: info.chunks },
   };
 }
 
