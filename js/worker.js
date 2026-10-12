@@ -137,8 +137,9 @@ function slice({ id, fixed, center, thickness, maps, symmetry, removed }) {
 }
 
 // User mask on the unsymmetrized volume: coverage-edge erosion by `radius`
-// voxels, then rejection of voxels more than k robust sigmas above the median
-// of their symmetry equivalents (`maps`, fine grid). Zero disables either.
+// voxels, then rejection of voxels more than k sigmas above the median of their
+// symmetry equivalents (`maps`, fine grid), with the file's uncertainties as a
+// floor on sigma (see mask.js). Zero disables either.
 function buildMask({ id, radius, k, maps, symmetry }) {
   if (!volume) throw new Error('No histogram loaded.');
   const t0 = performance.now();
@@ -148,8 +149,11 @@ function buildMask({ id, radius, k, maps, symmetry }) {
     next = edgeMask(volume, info.shape, radius);
     if (k > 0) {
       if (maps.length < 3) throw new Error('Outlier rejection needs a symmetry group with at least 3 operations.');
-      outlierMask(volume, info.shape, maps, k, next, 3,
-        (fraction) => self.postMessage({ type: 'progress-mask', label: `Comparing ${symmetry} equivalents`, fraction }));
+      readVariance((fraction) => self.postMessage({ type: 'progress-mask', label: 'Reading uncertainties', fraction }));
+      outlierMask(volume, info.shape, maps, k, next, {
+        variance,
+        onProgress: (fraction) => self.postMessage({ type: 'progress-mask', label: `Comparing ${symmetry} equivalents`, fraction }),
+      });
     }
   }
   mask = next;

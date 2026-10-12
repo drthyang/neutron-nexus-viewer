@@ -92,7 +92,7 @@ The status line reports how much the operations change the cell metric. A warnin
 The mask removes voxels from the measured data before symmetry averaging:
 
 - **Edge erosion**: removes measured voxels within *r* voxels of unmeasured ones. Detector edges leave spurious values there.
-- **Outlier cut k·σ**: removes voxels more than *k* robust standard deviations above the median of their symmetry equivalents. It needs a Laue class; 0 disables it.
+- **Outlier cut k·σ**: removes voxels more than *k* standard deviations above the median of their symmetry equivalents: the robust spread of the equivalents, but at least their counting error from the file's uncertainties, so counting noise in low-count data is not cut. It needs a Laue class; 0 disables it.
 
 *Apply mask* builds it (a few seconds for a 401³ volume), and *Clear* removes it. *Show removed voxels* averages only what the mask took out, so you can check that it hits artifacts. *Download* saves the mask as a gzipped NumPy `.npy` in the signal's storage order (1 = edge, 2 = outlier): `signal[mask > 0] = np.nan` applies it in Python. See [Method → Mask](METHOD.md#masking-detector-edge-artifacts).
 
