@@ -77,16 +77,23 @@ export const openVolume = defineTool({
   description:
     'Opens a 3-D histogram from a NeXus/HDF5 file and keeps it in memory for the other tools: a Mantid MDHistoWorkspace (SaveMD, e.g. MDNorm output), any NXdata group with a 3-D signal, or a NEBULA3D volume or 3D-ΔPDF. ' +
     'Returns its id, axes (labels, ranges, bins, hkl directions), unit cell and UB, value statistics, the slice planes, and the grid in the form NEXPLAN\'s bragg_positions, coverage_map and laue_symmetry take. ' +
-    'Masked and non-finite voxels count as unmeasured. Opening another file under an id in use replaces it.',
+    'Masked and non-finite voxels count as unmeasured. Opening a file under an id in use replaces that volume, with its symmetry and mask (the result says so).',
   input: z.strictObject({
     path: z.string().min(1).describe('The .nxs / .h5 file.'),
     id: z.string().regex(/^[\w.-]{1,64}$/).optional().describe('Id for the volume (default: from the file name).'),
     align_to: z.string().optional().describe('Id of an open volume whose axis order to use, when this file has the same axes in another order (for comparing).'),
   }),
-  annotations: { readOnlyHint: true, openWorldHint: false },
+  // It writes no file, but adds a volume to the session, and replaces one under an id in use.
+  annotations: { readOnlyHint: false, destructiveHint: true, openWorldHint: false },
   async run(args, { workspace }) {
+    const previous = args.id !== undefined && workspace.list().find((v) => v.id === args.id);
+    const replaced = previous && { volume_id: previous.id, file: previous.path, processing: previous.processing() };
     const d = await workspace.open(args.path, { id: args.id, alignTo: args.align_to });
-    return { ...describe(d), loaded_in_s: d.seconds };
+    return {
+      ...describe(d),
+      ...(replaced ? { replaced: { ...replaced, note: `'${d.id}' was already open: that volume (${replaced.file}) and its processing were replaced. Give another id to keep both.` } } : {}),
+      loaded_in_s: d.seconds,
+    };
   },
 });
 
@@ -106,9 +113,9 @@ export const describeVolume = defineTool({
 export const closeVolume = defineTool({
   name: 'close_volume',
   title: 'Close a volume',
-  description: 'Frees an open volume\'s memory. Its id can then be reused.',
+  description: 'Frees an open volume\'s memory, with its symmetry and mask. Its id can then be reused.',
   input: z.strictObject({ volume_id: volumeId }),
-  annotations: { readOnlyHint: true, openWorldHint: false },
+  annotations: { readOnlyHint: false, destructiveHint: true, openWorldHint: false },
   run(args, { workspace }) {
     workspace.close(args.volume_id);
     return { closed: args.volume_id, open: workspace.list().map((d) => d.id) };

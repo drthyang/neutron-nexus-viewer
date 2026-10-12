@@ -58,8 +58,10 @@ The server also gives `docs/METHOD.md` as the resource `nexus-viewer://docs/meth
 ## How the tools work
 
 - **A session.** `open_volume` keeps the volume in memory and returns its id (from the file name, or
-  `id`); the other tools take `volume_id`. Several volumes can be open, e.g. two temperatures;
-  `align_to` shows a file's axes in another volume's order.
+  `id`; an `id` in use is replaced, and the result says so); the other tools take `volume_id`.
+  Several volumes can be open, e.g. two temperatures; `align_to` shows a file's axes in another
+  volume's order. Only `describe_volume` is marked read-only: the others change the session (or
+  write files), even `set_symmetry`; `open_volume` and `close_volume` are marked destructive.
 - **Processing.** `set_symmetry` and `build_mask` stay set on the volume and apply to every later
   slice, cut, I(Q), point readout and export, as the viewer's Processing panel does. Each result
   says which processing it used. Comparing two volumes needs the same processing set on both.

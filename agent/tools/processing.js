@@ -24,7 +24,8 @@ export const setSymmetry = defineTool({
     laue_class: z.string().optional().describe(`A preset: ${PRESET_NAMES.join(', ')}.`),
     operations: z.string().optional().describe('Operations on hkl, separated by ";" (e.g. "k,-h+k,l; -h,-k,-l"); "none" for no averaging.'),
   }),
-  annotations: { readOnlyHint: true, idempotentHint: true, openWorldHint: false },
+  // It writes no file, but changes the volume's processing for every later result.
+  annotations: { readOnlyHint: false, destructiveHint: false, idempotentHint: true, openWorldHint: false },
   run(args, { workspace }) {
     if ((args.laue_class === undefined) === (args.operations === undefined)) throw new ToolError('Give laue_class or operations.', { presets: PRESET_NAMES });
     const d = workspace.get(args.volume_id);

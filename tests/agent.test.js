@@ -283,6 +283,25 @@ test('on a grid with bin edges at the integers, typed coordinates read the voxel
   assert.match(r.warning, /2 of 3 points lie on bin edges/);
 });
 
+test('annotations: only describe_volume leaves the session unchanged; replacing a volume is said', async () => {
+  // MCP's readOnlyHint means the tool does not modify its environment: the open volumes and
+  // their processing are part of it, even where no file is written.
+  const readOnly = TOOLS.filter((t) => t.annotations.readOnlyHint).map((t) => t.name);
+  assert.deepEqual(readOnly, ['describe_volume']);
+  const hint = (name) => TOOLS.find((t) => t.name === name).annotations;
+  assert.equal(hint('close_volume').destructiveHint, true);
+  assert.equal(hint('open_volume').destructiveHint, true);
+  assert.equal(hint('set_symmetry').destructiveHint, false);
+  const ws = new Workspace();
+  const first = await call(ws, 'open_volume', { path: fixture('mdhisto_small.nxs'), id: 'x' });
+  assert.equal(first.replaced, undefined);
+  await call(ws, 'set_symmetry', { volume_id: 'x', laue_class: '-1' });
+  const second = await call(ws, 'open_volume', { path: fixture('nxdata_small.h5'), id: 'x' });
+  assert.equal(second.replaced.file, first.file);
+  assert.match(second.replaced.processing.symmetry, /^-1/);
+  assert.match(second.replaced.note, /replaced/);
+});
+
 test('every tool has a JSON Schema and is documented in docs/AGENT.md', () => {
   const docs = readFileSync(new URL('../docs/AGENT.md', import.meta.url), 'utf8');
   const defs = toolDefinitions();
