@@ -66,7 +66,10 @@ export function describe(d, { full = true } = {}) {
     voxels: info.voxels,
     values: valueStats(d.volume),
     cell: l ? { a: l.a, b: l.b, c: l.c, alpha: l.alpha, beta: l.beta, gamma: l.gamma, source: l.source } : null,
-    ...(l?.ub ? { ub: [l.ub.slice(0, 3), l.ub.slice(3, 6), l.ub.slice(6, 9)], ub_convention: 'Mantid: q = UB·h without 2π (NEBULA3D stores 2π·UB)' } : {}),
+    ...(l?.ub ? {
+      ub: [l.ub.slice(0, 3), l.ub.slice(3, 6), l.ub.slice(6, 9)],
+      ub_convention: `Mantid's: q = UB·h without 2π${/^NEBULA3D/.test(formatOf(info)) ? '; this file stores 2π·UB as ub_matrix, so this is ub_matrix / 2π' : ''}`,
+    } : {}),
     uncertainties: info.errors ? `${info.errors.squared ? 'variances' : 'standard deviations'} in ${info.errors.path}` : 'none',
     ...(info.signed ? { signed: 'a ΔPDF: values change sign' } : {}),
     ...nexplanGrid(info.dims),

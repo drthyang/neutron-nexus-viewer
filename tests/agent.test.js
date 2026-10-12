@@ -51,7 +51,18 @@ test('open_volume describes a Mantid file and gives the grid NEXPLAN takes', asy
 
 test('open_volume reads NEBULA3D and NXdata files, and refuses others', async () => {
   const ws = new Workspace();
-  assert.equal((await call(ws, 'open_volume', { path: fixture('nebula3d_small.h5') })).format, 'NEBULA3D volume');
+  const nebula = await call(ws, 'open_volume', { path: fixture('nebula3d_small.h5') });
+  assert.equal(nebula.format, 'NEBULA3D volume');
+  // NEBULA3D stores 2π·UB; the UB returned is Mantid's, without 2π, and says so.
+  assert.match(nebula.ub_convention, /ub_matrix \/ 2π/);
+  await h5wasm.ready;
+  const stored = new h5wasm.File(fixture('nebula3d_small.h5'), 'r');
+  try {
+    const ub = stored.get('entry/ub_matrix').value;
+    nebula.ub.flat().forEach((x, i) => assert.ok(Math.abs(2 * Math.PI * x - ub[i]) < 1e-9 * Math.abs(ub[i]) + 1e-12, `UB ${i}`));
+  } finally {
+    stored.close();
+  }
   const dpdf = await call(ws, 'open_volume', { path: fixture('nebula3d_dpdf_small.h5') });
   assert.equal(dpdf.format, 'NEBULA3D 3D-ΔPDF');
   assert.match(dpdf.nexplan_grid.unavailable, /hkl/);
