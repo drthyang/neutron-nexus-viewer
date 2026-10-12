@@ -110,6 +110,6 @@ here).
 
 The tools have the viewer's limits: values are the file's, without background subtraction or
 absolute scaling; nothing is interpolated; symmetry averaging needs uniform bins that the operations
-map onto themselves; I(Q) needs a cell (or Q axes); the export needs plain H, K, L axes. The Rigaku
+map onto themselves; I(Q) needs a cell (or Q axes); the export needs plain H, K, L axes with a bin centred at 0. The Rigaku
 reduction, reindexing and the 3-D view are in the page only for now. An agent can still misread a
 result, so check what you publish in the viewer.

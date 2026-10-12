@@ -17,8 +17,8 @@ export const exportNebula3d = defineTool({
   name: 'export_nebula3d',
   title: 'Export a volume for NEBULA3D',
   description:
-    'Writes an open volume, masked and symmetrized as set (set_symmetry, build_mask), as a NEBULA3D input file: /entry/{data, mask (1 = valid), h_axis, k_axis, l_axis, ub_matrix (with 2π)}, in (H, K, L) C order, on a grid padded to be symmetric about 0 (NEBULA3D puts Q = 0 at the centre). ' +
-    'Every voxel of the padded grid gets the mean of the measured, unmasked voxels among its symmetry equivalents, so symmetry also fills the padding; voxels with none are written as 0 with mask 0 for NEBULA3D to backfill. The symmetry operations and mask are recorded as attributes on /entry. Needs plain H, K, L axes with uniform bins, a bin centre or edge at 0, and a unit cell.',
+    'Writes an open volume, masked and symmetrized as set (set_symmetry, build_mask), as a NEBULA3D input file: /entry/{data, mask (1 = valid), h_axis, k_axis, l_axis, ub_matrix (with 2π)}, in (H, K, L) C order, on a grid padded to be symmetric about 0 (NEBULA3D takes the centre of the middle bin as Q = 0). ' +
+    'Every voxel of the padded grid gets the mean of the measured, unmasked voxels among its symmetry equivalents, so symmetry also fills the padding; voxels with none are written as 0 with mask 0 for NEBULA3D to backfill. The symmetry operations and mask are recorded as attributes on /entry. Needs plain H, K, L axes with uniform bins, a bin centred at 0 on each, and a unit cell; a grid with a bin edge at 0 is refused with the binning to reduce with instead (rebinning here would smooth the data).',
   input: z.strictObject({
     volume_id: volumeId,
     output_path: outputPath.describe('The .nxs / .h5 file to write.'),

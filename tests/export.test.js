@@ -34,13 +34,27 @@ test('plan: symmetric grids are kept, others padded about 0', () => {
   const odd = exportPlan([axis('H', 6, 0.1, -0.15), dims[1], dims[2]], hexCell);
   assert.deepEqual([odd.size[0], odd.lo[0]], [9, -3]);
   assert.ok(odd.centers[0].every((c, i) => Math.abs(c - (i - 4) * 0.1) < 1e-12));
-  // Bin edge at 0: even grid split at 0.
-  const even = exportPlan([axis('H', 6, 0.1, -0.2), dims[1], dims[2]], hexCell);
-  assert.deepEqual([even.size[0], even.lo[0]], [8, -2]);
-  assert.ok(Math.abs(even.centers[0][4] - 0.05) < 1e-12 && Math.abs(even.centers[0][3] + 0.05) < 1e-12);
   // Display order K, L, H is reordered to H, K, L.
   const permuted = exportPlan([dims[1], dims[2], dims[0]], hexCell);
   assert.deepEqual(permuted.order, [2, 0, 1]);
+});
+
+test('plan: NEBULA3D\'s origin, the centre of bin n//2, is Q = 0 on every axis', () => {
+  // NEBULA3D's FFT takes index n//2 of each axis as Q = 0 (ifftshift).
+  const K = axis('K', 7, 0.1, -0.35), L = axis('L', 5, 0.2, -0.5);
+  for (const [n, start] of [[7, -0.35], [6, -0.15], [9, -0.25], [4, -0.05], [11, -0.85]]) {
+    const plan = exportPlan([axis('H', n, 0.1, start), K, L], hexCell);
+    plan.centers.forEach((c, a) => {
+      assert.equal(c.length % 2, 1, `axis ${a} of H from ${start}: odd`);
+      assert.ok(Math.abs(c[c.length >> 1]) < 1e-12, `axis ${a} of H from ${start}: centre ${c[c.length >> 1]}`);
+    });
+  }
+  // A bin edge at 0 (an even grid split there) would put +w/2 at n//2: refused, with the binning that works.
+  // The reviewer's case: H from -2 to 2 in 40 bins of 0.1.
+  for (const [n, start] of [[6, -0.2], [40, -2], [5, 0]]) {
+    assert.throws(() => exportPlan([axis('H', n, 0.1, start), K, L], hexCell), /H has no bin centred at 0.*bin edge lies at 0/);
+  }
+  assert.throws(() => exportPlan([axis('H', 40, 0.1, -2), K, L], hexCell), /-2\.05 to 2\.05 in 41 bins of 0\.1 \(Mantid binning "-2\.05,0\.1,2\.05"\)/);
 });
 
 test('plan: data that cannot be exported is refused', () => {
@@ -50,7 +64,7 @@ test('plan: data that cannot be exported is refused', () => {
   assert.throws(() => exportPlan([projected, dims[1], dims[2]], hexCell), /plain H, K and L/);
   const uneven = { ...dims[0], edges: Float64Array.of(-0.35, -0.25, -0.1, 0.05, 0.15, 0.25, 0.35, 0.45) };
   assert.throws(() => exportPlan([uneven, dims[1], dims[2]], hexCell), /non-uniform/);
-  assert.throws(() => exportPlan([axis('H', 6, 0.1, -0.23), dims[1], dims[2]], hexCell), /neither/);
+  assert.throws(() => exportPlan([axis('H', 6, 0.1, -0.23), dims[1], dims[2]], hexCell), /no bin centred at 0.*±0\.05, ±0\.15/);
   assert.throws(() => exportPlan([axis('H', 4, 0.1, 1.05), dims[1], dims[2]], hexCell), /too far/);
 });
 

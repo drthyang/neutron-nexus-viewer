@@ -4,8 +4,9 @@
 // NEBULA3D reads an HDF5 group /entry with `data` in (H, K, L) C order (H slowest),
 // `mask` (1 = valid), `h_axis`, `k_axis`, `l_axis` at bin centres and `ub_matrix`
 // with the 2π factor (|Q| = |UB·hkl|). It does not symmetrize, and its ΔPDF puts
-// Q = 0 at index n//2 of every axis, so the grid is padded to be symmetric about
-// 0. Every voxel of the padded grid gets the equal-weight mean of the measured,
+// Q = 0 at the centre of bin n//2 of every axis, so each axis needs a bin centred
+// at 0 (grids split at a bin edge are refused) and is padded to be symmetric about
+// it, to an odd size. Every voxel of the padded grid gets the equal-weight mean of the measured,
 // unmasked voxels among its symmetry equivalents, so symmetry also fills the
 // padding; voxels with none are written as 0 with mask 0, which NEBULA3D backfills.
 //
@@ -20,8 +21,9 @@ const near = (x, tol = 1e-3) => Math.abs(x - Math.round(x)) < tol;
 /**
  * The exported grid: which display dimension holds H, K and L, and how each is
  * padded to be symmetric about 0. Throws an Error that says why the data cannot
- * be exported (no unit cell, projected or non-HKL axes, non-uniform bins, or a
- * grid with neither a bin centre nor a bin edge at 0).
+ * be exported (no unit cell, projected or non-HKL axes, non-uniform bins, or no
+ * bin centred at 0: NEBULA3D takes the centre of bin n//2 as Q = 0, so a grid
+ * split at a bin edge would shift its origin by half a bin).
  */
 export function exportPlan(dims, lattice) {
   if (!lattice) throw new Error('Export needs the unit cell (a UB matrix or unit_cell_* in the file): NEBULA3D computes |Q| from it.');
@@ -36,20 +38,21 @@ export function exportPlan(dims, lattice) {
     for (let k = 0; k < n; k++) {
       if (Math.abs(e[k + 1] - e[k] - w) > 1e-4 * w) throw new Error(`Axis ${dim.label} has non-uniform bins; export needs uniform bins.`);
     }
-    const centre = -e[0] / w - 0.5, edge = -e[0] / w;
-    if (near(centre)) {
-      // A bin centred at 0: an odd grid with that bin in the middle.
-      const i0 = Math.round(centre), half = Math.max(i0, n - 1 - i0);
-      lo[d] = i0 - half;
-      size[d] = 2 * half + 1;
-    } else if (near(edge)) {
-      // A bin edge at 0: an even grid split there.
-      const j0 = Math.round(edge), half = Math.max(j0, n - j0);
-      lo[d] = j0 - half;
-      size[d] = 2 * half;
-    } else {
-      throw new Error(`Axis ${dim.label} has neither a bin centre nor a bin edge at 0; NEBULA3D needs a grid symmetric about Q = 0.`);
+    const centre = -e[0] / w - 0.5;
+    if (!near(centre)) {
+      // NEBULA3D's ΔPDF (an FFT) puts Q = 0 at the centre of bin n//2. On a grid split at a
+      // bin edge, that bin is centred at +w/2, which would shift its origin by half a bin and
+      // multiply the ΔPDF by cos(π w x). Refuse rather than resample, which would smooth.
+      const at = (x) => Number(x.toFixed(6));
+      const fix = near(-e[0] / w)
+        ? `A bin edge lies at 0: rebin with the edges moved by half a bin, e.g. ${at(e[0] - w / 2)} to ${at(e[n] + w / 2)} in ${n + 1} bins of ${at(w)} (Mantid binning "${at(e[0] - w / 2)},${at(w)},${at(e[n] + w / 2)}").`
+        : `Rebin with edges at ±${at(w / 2)}, ±${at(1.5 * w)}, … so that a bin is centred at 0.`;
+      throw new Error(`Axis ${dim.label} has no bin centred at 0, and NEBULA3D puts Q = 0 at the centre of a bin. ${fix}`);
     }
+    // A bin centred at 0: an odd grid with that bin in the middle.
+    const i0 = Math.round(centre), half = Math.max(i0, n - 1 - i0);
+    lo[d] = i0 - half;
+    size[d] = 2 * half + 1;
     if (size[d] > 3 * n) throw new Error(`Axis ${dim.label} (${e[0].toFixed(2)} to ${e[n].toFixed(2)}) is too far from symmetric about 0 to pad.`);
     source[d] = n;
     paddedDims[d] = { ...dim, edges: Float64Array.from({ length: size[d] + 1 }, (_, k) => e[0] + (lo[d] + k) * w) };
