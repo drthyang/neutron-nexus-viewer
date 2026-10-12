@@ -1,6 +1,6 @@
 # User guide
 
-[← README](../README.md) · [Method](METHOD.md) · [Development](DEVELOPMENT.md)
+[← README](../README.md) · [Features](FEATURES.md) · [Method](METHOD.md) · [Agent tools](AGENT.md) · [Development](DEVELOPMENT.md)
 
 ## Opening data
 

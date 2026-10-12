@@ -1,5 +1,7 @@
 # Agent tools and the MCP server
 
+[← README](../README.md) · [Features](FEATURES.md) · [User guide](USER_GUIDE.md) · [Method](METHOD.md) · [Development](DEVELOPMENT.md)
+
 The viewer's analysis is also available as tools for AI agents. The tools are in `agent/`, and
 `agent/main.js` serves them as a [Model Context Protocol](https://modelcontextprotocol.io) server on
 stdio, so Claude Code, Claude Desktop or any other MCP client can use them. An agent can open a
@@ -30,6 +32,10 @@ claude mcp add --scope user nexus-viewer -- node /path/to/neutron-nexus-viewer/a
 ```
 
 There is no build step: the server runs the files as they are, so it always matches the code.
+
+**With the other apps.** The [scattering-agent-tools](https://github.com/drthyang/scattering-agent-tools)
+plugin starts this server from this checkout, next to NEXPLAN's and MATERIA's, and adds the skills
+that combine them.
 
 ## Tools
 

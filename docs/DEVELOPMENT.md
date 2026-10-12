@@ -1,6 +1,6 @@
 # Development
 
-[← README](../README.md) · [User guide](USER_GUIDE.md) · [Method](METHOD.md)
+[← README](../README.md) · [Features](FEATURES.md) · [User guide](USER_GUIDE.md) · [Method](METHOD.md) · [Agent tools](AGENT.md)
 
 ## Run and test
 
