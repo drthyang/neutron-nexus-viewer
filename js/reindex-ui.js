@@ -146,6 +146,7 @@ export function setupReindex(hooks) {
 
   // ---- run ----------------------------------------------------------------------------
   const stem = () => hooks.name().replace(/\.[^.]+$/, '');
+  const fileName = () => `${stem()}_reindexed.nxs`;
   $('ri-run').onclick = () => {
     const grid = currentGrid();
     if (!grid || grid instanceof Error) return;
@@ -158,7 +159,7 @@ export function setupReindex(hooks) {
     hooks.post({
       type: 'reindex', id: ++job, T: ub.T, nsub: grid.nsub, ub: ub.ub, cell: [c.a, c.b, c.c, c.alpha, c.beta, c.gamma],
       grid: { min: grid.min, steps: grid.steps, shape: grid.shape, voxels: grid.voxels, edges: grid.edges },
-      title: `${stem()}: reindexed with ${ub.name} in the NeXus Viewer`,
+      title: `${stem()}: reindexed with ${ub.name} in the NeXus Viewer`, fileName: fileName(),
       logs: {
         reindex_source: hooks.name(),
         reindex_ub_file: ub.name,
@@ -170,7 +171,7 @@ export function setupReindex(hooks) {
   };
 
   function showResult(msg) {
-    const file = new File([msg.blob], `${stem()}_reindexed.nxs`, { type: 'application/x-hdf5' });
+    const file = new File([msg.blob], fileName(), { type: 'application/x-hdf5' });
     result = { file };
     const grid = currentGrid();
     $('ri-report').innerHTML = [

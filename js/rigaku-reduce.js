@@ -721,95 +721,133 @@ export function polarizationModel(mono) {
 
 // ---- Mantid MDHistoWorkspace (SaveMD version 2) ------------------------------------------
 
+/** The HDF5 inside h5wasm 0.10.3 (the version its error messages give; tests/rigaku.test.js keeps it in step). */
+export const H5WASM_HDF5_VERSION = '2.0.0';
+
+// Verbatim from a SaveMD file (CORELLI, Mantid 6), as NEBULA3D writes them: Sample.loadNexus
+// parses the shape, and the parameter-map description is Mantid's own boilerplate.
+const SHAPE_XML = '<type name="userShape">   <goniometer a11="1.000000" a12="0.000000" a13="0.000000" a21="0.000000" '
+  + 'a22="1.000000" a23="0.000000" a31="0.000000" a32="0.000000" a33="1.000000"/></type>';
+const PARAMETER_MAP_DESCRIPTION = 'A string representation of the parameter map. The format is either: '
+  + '|detID:id-value;param-type;param-name;param-value| for a detector or  '
+  + '|comp-name;param-type;param-name;param-value| for other components.';
+
+const isAscii = (text) => /^[\x00-\x7f]*$/.test(text);
+
+/** The local time as Mantid's file_time gives it: 2026-06-05T14:06:47-06:00. */
+function fileTime(date) {
+  const offset = -date.getTimezoneOffset(), two = (x) => String(Math.floor(Math.abs(x))).padStart(2, '0');
+  const local = new Date(date.getTime() + offset * 60000).toISOString().slice(0, 19);
+  return `${local}${offset < 0 ? '-' : '+'}${two(offset / 60)}:${two(offset % 60)}`;
+}
+
 /**
  * Write an MDHistoWorkspace as SaveMD v2 lays it out (checked against a file written by
  * Mantid 6.16 and reloaded with LoadMD): /MDHistoWorkspace/{data/{signal, errors_squared,
  * mask, num_events, D0, D1, D2}, experiment0/{instrument, logs, sample/oriented_lattice}}.
  * `signal`, `errors2`, `events` are Float64Arrays in (L, K, H) order (H fastest).
+ * `fileName` is the name the file is saved under (its root file_name attribute).
+ *
+ * The HDF5 types are Mantid's, since its loader is strict about them: the oldest file
+ * format (superblock 0, as Mantid's files have), text attributes as variable-length ASCII
+ * and text datasets as fixed-length null-terminated ASCII of shape (1,). Text outside ASCII
+ * (a file name in a log, say) is labelled UTF-8 instead, so that every reader decodes it;
+ * Mantid itself writes none. The volumes are gzip-compressed without SaveMD's byte shuffle,
+ * which h5wasm cannot add, and `title` is the viewer's own: SaveMD writes none.
  */
-export function writeMantidMD(h5wasm, path, { shape, edges, signal, errors2, events, ub, cell, logs = {}, title = '' }) {
-  const f = new h5wasm.File(path, 'w');
+export function writeMantidMD(h5wasm, path, { shape, edges, signal, errors2, events, ub, cell, logs = {}, title = '', fileName = path.split('/').pop() }) {
+  const f = new h5wasm.File(path, 'w', { libver: ['earliest', 'latest'] });
+  // h5wasm's dtype 'A' is ASCII (null-terminated), 'S' UTF-8; without a length, variable-length.
+  const text = (obj, name, value) => obj.create_attribute(name, String(value), null, isAscii(String(value)) ? 'A' : 'S');
   const str = (g, name, value) => {
     const v = String(value) || ' ';
-    g.create_dataset({ name, data: [v], shape: [1], dtype: `A${new TextEncoder().encode(v).length}` });
+    g.create_dataset({ name, data: [v], shape: [1], dtype: `${isAscii(v) ? 'A' : 'S'}${new TextEncoder().encode(v).length}` });
   };
+  const now = new Date();
   try {
-    f.create_attribute('NX_class', 'NXroot');
+    text(f, 'NX_class', 'NXroot');
+    text(f, 'NeXus_version', '4.4.3');
+    text(f, 'HDF5_Version', H5WASM_HDF5_VERSION);
+    text(f, 'file_name', fileName);
+    text(f, 'file_time', fileTime(now));
     const root = f.create_group('MDHistoWorkspace');
-    root.create_attribute('NX_class', 'NXentry');
-    root.create_attribute('QConvention', 'Crystallography');
+    text(root, 'NX_class', 'NXentry');
+    text(root, 'QConvention', 'Crystallography');
     root.create_attribute('SaveMDVersion', 2, null, '<i4');
     root.create_dataset({ name: 'coordinate_system', data: Uint32Array.of(3) });
     root.create_dataset({ name: 'visual_normalization', data: Uint32Array.of(0) });
     if (title) str(root, 'title', title);
     const data = root.create_group('data');
-    data.create_attribute('NX_class', 'NXdata');
+    text(data, 'NX_class', 'NXdata');
     ['[H,0,0]', '[0,K,0]', '[0,0,L]'].forEach((long, i) => {
       const d = data.create_dataset({ name: `D${i}`, data: Float64Array.from(edges[i]) });
-      d.create_attribute('frame', 'HKL');
-      d.create_attribute('long_name', long);
-      d.create_attribute('units', 'r.l.u.');
+      text(d, 'frame', 'HKL');
+      text(d, 'long_name', long);
+      text(d, 'units', 'r.l.u.');
     });
     const chunks = [1, shape[1], shape[2]];
     const big = (name, arr) => data.create_dataset({ name, data: arr, shape, chunks, compression: 'gzip', compression_opts: 4 });
     const sig = big('signal', signal);
-    sig.create_attribute('axes', 'D2:D1:D0');
+    text(sig, 'axes', 'D2:D1:D0');
     sig.create_attribute('signal', 1, null, '<i4');
     big('errors_squared', errors2);
     big('mask', new Int8Array(signal.length));
     big('num_events', events);
     const exp = root.create_group('experiment0');
-    exp.create_attribute('NX_class', 'NXgroup');
+    text(exp, 'NX_class', 'NXgroup');
     exp.create_attribute('version', 1, null, '<i4');
     const inst = exp.create_group('instrument');
-    inst.create_attribute('NX_class', 'NXinstrument');
+    text(inst, 'NX_class', 'NXinstrument');
     inst.create_attribute('version', 1, null, '<i4');
     str(inst, 'name', ' ');
     const pmap = inst.create_group('instrument_parameter_map');
-    pmap.create_attribute('NX_class', 'NXnote');
+    text(pmap, 'NX_class', 'NXnote');
     pmap.create_attribute('version', 1, null, '<i4');
-    for (const [k, v] of [['author', ' '], ['data', ' '], ['date', new Date().toISOString()], ['description', 'A string representation of the parameter map.'], ['type', 'text/plain']]) str(pmap, k, v);
+    // The date as Mantid writes it: UTC to the nanosecond, without a zone.
+    const date = now.toISOString().slice(0, -1) + '000000';
+    for (const [k, v] of [['author', ' '], ['data', ' '], ['date', date], ['description', PARAMETER_MAP_DESCRIPTION], ['type', 'text/plain']]) str(pmap, k, v);
     const xml = inst.create_group('instrument_xml');
-    xml.create_attribute('NX_class', 'NXnote');
+    text(xml, 'NX_class', 'NXnote');
     for (const [k, v] of [['data', ' '], ['description', 'XML contents of the instrument IDF file.'], ['type', 'text/xml']]) str(xml, k, v);
     const lg = exp.create_group('logs');
-    lg.create_attribute('NX_class', 'NXgroup');
+    text(lg, 'NX_class', 'NXgroup');
     lg.create_attribute('version', 1, null, '<i4');
     const log = (name, value, units = ' ') => {
       const g = lg.create_group(name);
-      g.create_attribute('NX_class', 'NXlog');
+      text(g, 'NX_class', 'NXlog');
       const d = typeof value === 'string' ? (str(g, 'value', value), g.get('value'))
         : g.create_dataset({ name: 'value', data: Float64Array.from([].concat(value)) });
-      d.create_attribute('units', units);
+      text(d, 'units', units);
     };
     log('W_MATRIX', [1, 0, 0, 0, 1, 0, 0, 0, 1]);
     const gon = lg.create_group('goniometer');
-    gon.create_attribute('NX_class', 'NXpositioner');
+    text(gon, 'NX_class', 'NXpositioner');
     gon.create_attribute('version', 1, null, '<i4');
     gon.create_dataset({ name: 'num_axes', data: Int32Array.of(0) });
     gon.create_dataset({ name: 'rotation_matrix', data: Float64Array.of(1, 0, 0, 0, 1, 0, 0, 0, 1) });
+    log('mdhisto_was_modified', '1');
     for (const [name, v] of Object.entries(logs)) {
       if (v && typeof v === 'object' && 'value' in v) log(name, v.value, v.units ?? ' ');
       else log(name, typeof v === 'number' ? v : String(v));
     }
     const sample = exp.create_group('sample');
-    sample.create_attribute('NX_class', 'NXsample');
-    sample.create_attribute('name', ' ');
+    text(sample, 'NX_class', 'NXsample');
+    text(sample, 'name', ' ');
     sample.create_attribute('name_empty', 1, null, '<i4');
-    sample.create_attribute('shape_xml', '<type name="userShape">  </type>');
+    text(sample, 'shape_xml', SHAPE_XML);
     sample.create_attribute('version', 1, null, '<i4');
     for (const k of ['geom_height', 'geom_thickness', 'geom_width']) sample.create_dataset({ name: k, data: Float64Array.of(0) });
     sample.create_dataset({ name: 'geom_id', data: Int32Array.of(0) });
     sample.create_dataset({ name: 'num_oriented_lattice', data: Int32Array.of(1) });
     sample.create_dataset({ name: 'num_other_samples', data: Int32Array.of(0) });
     const mat = sample.create_group('material');
-    mat.create_attribute('NX_class', 'NXdata');
-    mat.create_attribute('formulaStyle', 'empty');
-    mat.create_attribute('name', ' ');
+    text(mat, 'NX_class', 'NXdata');
+    text(mat, 'formulaStyle', 'empty');
+    text(mat, 'name', ' ');
     mat.create_attribute('version', 2, null, '<i4');
     for (const [k, v] of [['number_density', 0], ['packing_fraction', 1], ['pressure', 0], ['temperature', 0]]) mat.create_dataset({ name: k, data: Float64Array.of(v) });
     const ol = sample.create_group('oriented_lattice');
-    ol.create_attribute('NX_class', 'NXcrystal');
+    text(ol, 'NX_class', 'NXcrystal');
     ol.create_dataset({ name: 'cross_term', data: Int32Array.of(0) });
     ol.create_dataset({ name: 'maximum_order', data: Int32Array.of(0) });
     for (const k of ['modulated_hkl_error', 'modulated_orientation_matrix']) ol.create_dataset({ name: k, data: new Float64Array(9), shape: [3, 3] });
