@@ -96,8 +96,9 @@ The server also gives `docs/METHOD.md` as the resource `nexus-viewer://docs/meth
 - `read_points` with `points_path` reads NEXPLAN's `bragg_positions` output (JSON or CSV) for the same
   grid and summarises the values by node class: intensity at systematic absences points to λ/2,
   multiple scattering, a lower symmetry or a superlattice.
-- `export_nebula3d` writes the file NEBULA3D's pipeline reads, with σ propagated from the file's
-  uncertainties in `/entry/sigma` and the symmetry operations in `/entry@symmetry_ops`.
+- `export_nebula3d` writes the file NEBULA3D's pipeline reads, a Mantid `MDHistoWorkspace` Mantid opens
+  too, with σ² propagated from the file's uncertainties in `errors_squared` and the symmetry operations
+  in `/MDHistoWorkspace/nebula3d@symmetry_ops`.
 
 ## Using the tools from code
 

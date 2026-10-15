@@ -4,10 +4,10 @@
 // (/MDHistoWorkspace/data/{signal,mask,D0,D1,D2}). Any NXdata group with a
 // 3-D signal and bin-edge or bin-center axes also works. Size-1 dimensions
 // are dropped, so a 4-D workspace with one integrated axis is accepted.
-// Files without NXdata written by NEBULA3D (https://github.com/drthyang/nebula3d)
-// open too: its reciprocal-space volumes (/entry/{data, sigma, mask, h_axis,
-// k_axis, l_axis, ub_matrix}) and its real-space 3D-ΔPDFs (/{data, x_axis,
-// y_axis, z_axis} with the cell in lat_* attributes).
+// NEBULA3D (https://github.com/drthyang/nebula3d) and this viewer's export write the
+// Mantid layout; their older files, without NXdata, open too: reciprocal-space volumes
+// (/entry/{data, sigma, mask, h_axis, k_axis, l_axis, ub_matrix}) and real-space
+// 3D-ΔPDFs (/{data, x_axis, y_axis, z_axis} with the cell in lat_* attributes).
 //
 // The volume is held in the order of info.shape, the storage axes listed in
 // info.keep, and display dimension d lives on storage axis keep[2 - d]. For
@@ -84,7 +84,11 @@ export function describeFile(file, { order = null } = {}) {
   }
   const best = found.sort((a, b) => b.voxels - a.voxels)[0];
   const entry = best.group.split('/').slice(0, -1).join('/') || '/';
-  const info = withCell(best, findLattice(file, entry));
+  // A file NEBULA3D (or this viewer's export) wrote without σ holds √|I| as errors_squared,
+  // and says so in its nebula3d group: estimates, not uncertainties that came with the data.
+  const extra = file.get(join(entry, 'nebula3d'));
+  const estimated = isGroup(extra) && str(attr(extra, 'sigma')) === 'sqrt_intensity';
+  const info = withCell(estimated ? { ...best, errors: null } : best, findLattice(file, entry));
   return order ? alignDims(info, order) : info;
 }
 
@@ -259,7 +263,8 @@ function cellFromAttrs(group) {
   return { a, b, c, alpha, beta, gamma, source: 'lat_* attributes' };
 }
 
-function centersToEdges(c) {
+/** N + 1 bin edges around N centres: the midpoints, and the outer edges half a step out (±0.5 around a single bin). */
+export function centersToEdges(c) {
   const n = c.length;
   if (n === 1) return [c[0] - 0.5, c[0] + 0.5];
   const e = [c[0] - (c[1] - c[0]) / 2];

@@ -245,28 +245,31 @@ test('export_nebula3d writes the file NEBULA3D reads, with the processing record
   const f = new h5wasm.File(out, 'r');
   try {
     const info = describeFile(f);
-    assert.equal(info.signal, '/entry/data');
-    assert.equal(f.get('entry').attrs.symmetry.value, '6/mmm');
+    assert.equal(info.signal, '/MDHistoWorkspace/data/signal');
+    assert.equal(f.get('MDHistoWorkspace/nebula3d').attrs.symmetry.value, '6/mmm');
+    assert.equal(f.attrs.file_name.value, 'cold_sym.nxs');
     assert.ok(loadVolume(f, info).stats.valid > 0);
   } finally {
     f.close();
   }
   const again = await callTool('export_nebula3d', { volume_id: 'cold', output_path: out }, { workspace: ws });
   assert.match(again.error, /exists/);
-  // The example has no uncertainties: no sigma, and NEBULA3D's √|data| is said.
+  // The example has no uncertainties: σ is NEBULA3D's √|data|, and the file says so.
   assert.equal(e.sigma, false);
-  assert.match(e.attributes.uncertainties, /none written/);
-  // A Mantid file's errors_squared become /entry/sigma, σ of each orbit's mean.
+  assert.match(e.attributes.uncertainties, /none in the source file/);
+  // A Mantid file's errors_squared become those of the export: σ² of each orbit's mean.
   await call(ws, 'open_volume', { path: fixture('mdhisto_small.nxs'), id: 'v' });
   const withSigma = await call(ws, 'export_nebula3d', { volume_id: 'v', output_path: join(tmp, 'v.nxs') });
   assert.equal(withSigma.sigma, true);
   assert.match(withSigma.attributes.uncertainties, /^from errors_squared/);
   const g = new h5wasm.File(withSigma.written.path, 'r');
   try {
-    const entry = g.get('entry');
-    assert.deepEqual(entry.get('sigma').shape, entry.get('data').shape);
-    const sigma = entry.get('sigma').value, mask = entry.get('mask').value;
-    assert.ok(sigma.some((x, i) => mask[i] && x > 0) && sigma.every((x, i) => mask[i] || x === 0));
+    const d = g.get('MDHistoWorkspace/data');
+    assert.deepEqual(d.get('errors_squared').shape, d.get('signal').shape);
+    assert.equal(g.get('MDHistoWorkspace/nebula3d').attrs.sigma.value, 'measured');
+    // Mantid's mask: 1 = masked.
+    const err2 = d.get('errors_squared').value, mask = d.get('mask').value;
+    assert.ok(err2.some((x, i) => !mask[i] && x > 0) && err2.every((x, i) => !mask[i] || x === 0));
   } finally {
     g.close();
   }

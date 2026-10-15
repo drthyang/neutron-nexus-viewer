@@ -1967,7 +1967,7 @@ function runExport(send = false) {
   exportState('busy', 'working…');
   setJob('export', 'Export', 'Symmetrizing', 0);
   showExportProgress('Symmetrizing', 0);
-  worker.postMessage({ type: 'export', id: ++requestId, plan: { order, lo, size, shape, centers, ub }, maps, attrs });
+  worker.postMessage({ type: 'export', id: ++requestId, plan: { order, lo, size, shape, centers, ub }, maps, attrs, fileName: exportJob.name });
   return true;
 }
 

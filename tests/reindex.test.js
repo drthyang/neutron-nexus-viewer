@@ -11,7 +11,7 @@ import {
   reindexProblem, reindexVolume,
 } from '../js/reindex.js';
 import { inv3, mul, rot } from '../js/rigaku-geometry.js';
-import { writeMantidMD } from '../js/rigaku-reduce.js';
+import { writeMantidMD } from '../js/savemd.js';
 
 const fixture = (name) => new URL(`./fixtures/${name}`, import.meta.url).pathname;
 await h5wasm.ready;

@@ -12,10 +12,10 @@ import {
 } from '../js/rigaku-geometry.js';
 import {
   PeakSearch, accumulateFrame, applyFrame, applyRecords, detectorMask, finishVolume, flushBackground, frameRecords, gridEdges,
-  H5WASM_HDF5_VERSION, makeAccumulators, makeBackgroundTracker, makeGrid, polarizationModel, reduceRigaku, ringLevels, trackBackground,
-  writeMantidMD,
+  makeAccumulators, makeBackgroundTracker, makeGrid, polarizationModel, reduceRigaku, ringLevels, trackBackground,
 } from '../js/rigaku-reduce.js';
 import { WorkerPool } from '../js/rigaku-pool.js';
+import { H5WASM_HDF5_VERSION, writeMantidMD } from '../js/savemd.js';
 import { nodeWorker } from './node-worker.js';
 import { backgroundFrames, backgroundScan, encodeTY6, rng, simulateExperiment, writeFrame } from './rigaku-synth.js';
 
@@ -367,6 +367,11 @@ test('Mantid MDHistoWorkspace writer: Mantid\'s tree, root attributes and HDF5 t
     walk(f.get('MDHistoWorkspace'), '');
     const ours = ['title', 'experiment0/logs/note/', 'experiment0/logs/note/value', 'experiment0/logs/source/', 'experiment0/logs/source/value'];
     assert.deepEqual(tree.sort(), [...SAVEMD_TREE, ...ours].sort());
+    // The volumes as LoadMD accepts them and nothing else: float64, and an int8 mask.
+    for (const [name, type, size] of [['signal', 1, 8], ['errors_squared', 1, 8], ['num_events', 1, 8], ['mask', 0, 1]]) {
+      const m = f.get(`MDHistoWorkspace/data/${name}`).metadata;
+      assert.ok(m.type === type && m.size === size && (type === 1 || m.signed), `${name}: ${JSON.stringify(m)}`);
+    }
 
     // Attributes: scalar variable-length null-terminated ASCII; datasets: (1,) fixed-length
     // null-terminated ASCII, or UTF-8 for the title and log outside ASCII.
