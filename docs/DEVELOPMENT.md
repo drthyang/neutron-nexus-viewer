@@ -32,12 +32,13 @@ CI runs the same tests on every push (`.github/workflows/test.yml`).
 | `js/mask.js` | Coverage-edge erosion and symmetry-outlier masks |
 | `js/iso.js` | Origin-aligned coarse binning, orbit means and surface nets |
 | `js/powder.js` | I(Q): the \|Q\| metric, shells, and the normalized spherical average with split voxels and propagated uncertainties |
-| `js/export.js` | NEBULA3D export: grid plan and padding, full-volume symmetrization, HDF5 writer |
+| `js/export.js` | NEBULA3D export: grid plan and padding, full-volume symmetrization, and the file as NEBULA3D writes its own (through `savemd.js`) |
+| `js/savemd.js` | The Mantid `MDHistoWorkspace` writer (`SaveMD` version 2, with Mantid's HDF5 types), for the Rigaku reduction, the reindexing and the NEBULA3D export |
 | `js/reindex.js` | Reindexing with another UB: ISAW UB files, the transformation between the indexings, the new grid, and the resampling with propagated σ (pure functions) |
-| `js/reindex-ui.js` | The *Reindex with a new UB* dialog; the work runs in dataset A's worker, and the file is written by the Rigaku reduction's Mantid writer |
+| `js/reindex-ui.js` | The *Reindex with a new UB* dialog; the work runs in dataset A's worker, and the file is written by `savemd.js` |
 | `js/rigaku-format.js` | Rigaku Oxford Diffraction frames: header, TY6 decoding with the header-statistics check, and the CrysAlisPro text files (.par, crystal.ini, datacoll.ini) |
 | `js/rigaku-geometry.js` | Kappa-goniometer and detector geometry, Ewald prediction, cells, and the Levenberg-Marquardt fit |
-| `js/rigaku-reduce.js` | The reduction: detector mask, 3-D peak search, geometry refinement, gridding, and the Mantid `SaveMD`-layout writer |
+| `js/rigaku-reduce.js` | The reduction: detector mask, 3-D peak search, geometry refinement and gridding |
 | `js/rigaku-worker.js` | Module worker that reduces an experiment folder and returns the .nxs file |
 | `js/rigaku-map-worker.js` | Module worker for the per-frame work of the reduction (sums, peak search, gridding), started by `rigaku-worker.js` |
 | `js/rigaku-pool.js` | The pool that drives those workers and returns their replies in task order |

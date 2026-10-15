@@ -7,7 +7,7 @@ import test from 'node:test';
 import h5wasm from 'h5wasm/node';
 
 import { exportPlan, nebulaUB, sigmaNote, symmetrizeForExport, writeNebulaFile } from '../js/export.js';
-import { reciprocalMetric } from '../js/nexus.js';
+import { describeFile, loadVolume, reciprocalMetric } from '../js/nexus.js';
 import { averageSlab, IDENTITY_MAP } from '../js/slab.js';
 import { closeGroup, indexMaps, parseOps, PRESETS } from '../js/symmetry.js';
 
@@ -138,10 +138,10 @@ test('σ of each exported voxel is that of its orbit\'s mean, √(Σσ²)/n over
     }
     assert.equal(stats.sigmaDefaulted, defaulted, name);
   }
-  // Without uncertainties there is no sigma, and the file says NEBULA3D takes √|data|.
+  // Without uncertainties there is no sigma, and the file says it holds NEBULA3D's √|data|.
   const plain = symmetrizeForExport(volume, shape, plan, [IDENTITY_MAP], { mask });
   assert.equal(plain.sigma, null);
-  assert.match(sigmaNote(plain, undefined), /none written.*sqrt\(\|data\|\)/);
+  assert.match(sigmaNote(plain, undefined), /none in the source file.*sqrt\(\|data\|\).*sqrt_intensity/);
 });
 
 test('symmetry fills the padding from measured equivalents', () => {
@@ -162,37 +162,60 @@ test('symmetry fills the padding from measured equivalents', () => {
   assert.equal(inv.stats.valid, 81);
 });
 
-test('the file has NEBULA3D\'s layout', async () => {
+test('the file is a Mantid MDHistoWorkspace as NEBULA3D writes one', async () => {
   await h5wasm.ready;
   const dir = mkdtempSync(join(tmpdir(), 'nxv-export-'));
   try {
     const dims = [axis('H', 5, 0.1, -0.25), axis('K', 5, 0.1, -0.25), axis('L', 3, 0.2, -0.3)];
-    const shape = [3, 5, 5], volume = randomVolume(75, 7);
-    const plan = exportPlan(dims, { ...hexCell, ub: [0.27, 0.14, 0, 0, 0.24, 0, 0, 0, 0.147] });
+    const shape = [3, 5, 5], volume = randomVolume(75, 7), ub = [0.27, 0.14, 0, 0, 0.24, 0, 0, 0, 0.147];
+    const plan = exportPlan(dims, { ...hexCell, ub });
     const variance = Float32Array.from(volume, (v) => Math.abs(v) / 4);
     const result = symmetrizeForExport(volume, shape, plan, [IDENTITY_MAP], { variance });
     const path = join(dir, 'out.nxs');
-    writeNebulaFile(h5wasm, path, plan, result, { source_file: 'x.nxs', symmetry: '1' });
+    writeNebulaFile(h5wasm, path, plan, result, { source_file: 'x.nxs', symmetry: '1', symmetry_ops: 'h,k,l' }, 'x_sym1.nxs');
     const f = new h5wasm.File(path, 'r');
-    const entry = f.get('entry');
-    assert.deepEqual(entry.get('data').shape, [5, 5, 3]);
-    assert.deepEqual(entry.get('mask').shape, [5, 5, 3]);
-    assert.deepEqual(Array.from(entry.get('h_axis').value, (x) => +x.toFixed(6)), [-0.2, -0.1, 0, 0.1, 0.2]);
-    assert.deepEqual(entry.get('l_axis').value.length, 3);
-    assert.ok(Math.abs(entry.get('ub_matrix').value[0] - 2 * Math.PI * 0.27) < 1e-12);
-    assert.equal(entry.attrs.symmetry.value, '1');
-    assert.equal(entry.attrs.instrument.value, '');
-    // (H, K, L) order: data[h][k][l] is the source voxel at storage [l][k][h].
-    const data = entry.get('data').value, mask = entry.get('mask').value;
-    // σ as NEBULA3D reads it: /entry/sigma, the data's shape, 0 where invalid.
-    assert.deepEqual(entry.get('sigma').shape, [5, 5, 3]);
-    const sigma = entry.get('sigma').value;
-    const v = volume[3 + 5 * (1 + 5 * 2)];
-    const o = (3 * 5 + 1) * 3 + 2;
-    if (Number.isNaN(v)) assert.ok(mask[o] === 0 && sigma[o] === 0);
-    else assert.ok(mask[o] === 1 && Math.abs(data[o] - v) < 1e-6 && Math.abs(sigma[o] - Math.sqrt(Math.abs(v) / 4)) < 1e-6);
-    assert.ok(mask.every((m, i) => m === 1 || sigma[i] === 0));
+    const root = f.get('MDHistoWorkspace'), d = root.get('data');
+    for (const name of ['signal', 'errors_squared', 'mask', 'num_events']) assert.deepEqual(d.get(name).shape, [5, 5, 3], name);
+    // Stored in (H, K, L) order: D2 = H, D1 = K, D0 = L, nothing transposed.
+    assert.deepEqual(['D0', 'D1', 'D2'].map((k) => d.get(k).attrs.long_name.value), ['[0,0,L]', '[0,K,0]', '[H,0,0]']);
+    assert.deepEqual(Array.from(d.get('D2').value, (x) => +x.toFixed(6)), [-0.25, -0.15, -0.05, 0.05, 0.15, 0.25]);
+    assert.deepEqual(Array.from(root.get('experiment0/logs/W_MATRIX/value').value), [0, 0, 1, 0, 1, 0, 1, 0, 0]);
+    // The UB without 2π where Mantid keeps it, exactly with 2π where NEBULA3D does.
+    root.get('experiment0/sample/oriented_lattice/orientation_matrix').value.forEach((x, i) => assert.ok(Math.abs(x - ub[i]) < 1e-15));
+    const extra = root.get('nebula3d');
+    assert.deepEqual(Array.from(extra.get('ub_matrix').value), Array.from(plan.ub));
+    assert.deepEqual([0, 1, 2].map((i) => Array.from(extra.get(`D${i}_centers`).value)), [2, 1, 0].map((a) => Array.from(plan.centers[a])));
+    assert.equal(extra.attrs.format_version.value, 1);
+    assert.deepEqual(['content', 'dtype', 'sigma', 'instrument', 'source_file', 'symmetry', 'symmetry_ops'].map((k) => extra.attrs[k].value),
+      ['hkl_volume', 'float32', 'measured', '', 'x.nxs', '1', 'h,k,l']);
+    assert.equal(f.attrs.file_name.value, 'x_sym1.nxs');
+    // Exactly the export's arrays: the signal, σ², mask = 1 - valid and num_events = valid.
+    const signal = d.get('signal').value, err2 = d.get('errors_squared').value, mask = d.get('mask').value, events = d.get('num_events').value;
+    signal.forEach((x, i) => assert.equal(x, result.data[i]));
+    err2.forEach((x, i) => assert.equal(x, result.sigma[i] * result.sigma[i]));
+    mask.forEach((m, i) => assert.equal(m, 1 - result.valid[i]));
+    events.forEach((n, i) => assert.equal(n, result.valid[i]));
+    // (H, K, L) order: signal[h][k][l] is the source voxel at storage [l][k][h].
+    const v = volume[3 + 5 * (1 + 5 * 2)], o = (3 * 5 + 1) * 3 + 2;
+    if (Number.isNaN(v)) assert.ok(mask[o] === 1 && err2[o] === 0);
+    else assert.ok(mask[o] === 0 && Math.abs(signal[o] - v) < 1e-6 && Math.abs(err2[o] - Math.abs(v) / 4) < 1e-6);
+    // The viewer reads it back: masked voxels NaN, σ² its uncertainties.
+    const info = describeFile(f);
+    assert.deepEqual(info.dims.map((x) => x.label), ['L', 'K', 'H']);
+    assert.equal(info.errors?.path, '/MDHistoWorkspace/data/errors_squared');
+    const back = loadVolume(f, info).volume;
+    back.forEach((x, i) => assert.ok(result.valid[i] ? x === result.data[i] : Number.isNaN(x)));
     f.close();
+
+    // Without σ: √|data| as NEBULA3D takes it, marked as estimated, which the viewer does not take for uncertainties.
+    const plain = symmetrizeForExport(volume, shape, plan, [IDENTITY_MAP]);
+    writeNebulaFile(h5wasm, join(dir, 'plain.nxs'), plan, plain);
+    const g = new h5wasm.File(join(dir, 'plain.nxs'), 'r');
+    assert.equal(g.get('MDHistoWorkspace/nebula3d').attrs.sigma.value, 'sqrt_intensity');
+    g.get('MDHistoWorkspace/data/errors_squared').value.forEach((x, i) => assert.equal(x, Math.abs(plain.data[i])));
+    assert.equal(g.attrs.file_name.value, 'plain.nxs');
+    assert.equal(describeFile(g).errors, null);
+    g.close();
   } finally {
     rmSync(dir, { recursive: true, force: true });
   }

@@ -14,7 +14,8 @@ import h5wasm from 'https://cdn.jsdelivr.net/npm/h5wasm@0.10.3/dist/esm/hdf5_hl.
 import * as fmt from './rigaku-format.js';
 import { cellFromUB } from './rigaku-geometry.js';
 import { WorkerPool } from './rigaku-pool.js';
-import { finishVolume, gridEdges, matchBackgroundRun, reduceRigaku, writeMantidMD } from './rigaku-reduce.js';
+import { finishVolume, gridEdges, matchBackgroundRun, reduceRigaku } from './rigaku-reduce.js';
+import { writeMantidMD } from './savemd.js';
 
 let exp = null, meta = null, bkg = null;
 

@@ -10,6 +10,7 @@ import { edgeMask, maskStats, outlierMask } from './mask.js';
 import { describeFile, loadVariance, loadVolume } from './nexus.js';
 import { powderAverage } from './powder.js';
 import { measuredBox, reindexGeometry, reindexVolume } from './reindex.js';
+import { writeMantidMD } from './savemd.js';
 import { averageSlab, selectBins } from './slab.js';
 import { indexMaps } from './symmetry.js';
 
@@ -265,7 +266,7 @@ async function reindex({ id, T, grid, nsub, ub, cell, title, logs, fileName }) {
   const { M, axes } = reindexGeometry(info.dims, T);
   const out = reindexVolume(volume, variance, info.shape, axes, M, grid, nsub, progress('Resampling', start, 0.8));
   self.postMessage({ type: 'progress-reindex', id, label: 'Writing HDF5', fraction: 0.8 });
-  const [{ FS }, { writeMantidMD }] = await Promise.all([h5wasm.ready, import('./rigaku-reduce.js')]);
+  const { FS } = await h5wasm.ready;
   const file = '/reindexed.nxs';
   writeMantidMD(h5wasm, file, {
     shape: [grid.shape[2], grid.shape[1], grid.shape[0]], edges: grid.edges, signal: out.signal, errors2: out.errors2, events: out.events,
@@ -281,7 +282,7 @@ async function reindex({ id, T, grid, nsub, ub, cell, title, logs, fileName }) {
 
 // The symmetrized, masked volume as a NEBULA3D input file (see export.js):
 // `plan` from exportPlan() on the page, `maps` on its padded grid.
-async function exportVolume({ id, plan, maps, attrs }) {
+async function exportVolume({ id, plan, maps, attrs, fileName }) {
   if (!volume) throw new Error('No histogram loaded.');
   const t0 = performance.now();
   let last = 0;
@@ -299,7 +300,7 @@ async function exportVolume({ id, plan, maps, attrs }) {
   const { FS } = await h5wasm.ready;
   const path = '/nebula3d-export.nxs';
   const uncertainties = sigmaNote(result, info.errors?.path.split('/').pop(), varianceNote);
-  writeNebulaFile(h5wasm, path, plan, result, { ...attrs, uncertainties });
+  writeNebulaFile(h5wasm, path, plan, result, { ...attrs, uncertainties }, fileName);
   const blob = new Blob([FS.readFile(path)], { type: 'application/x-hdf5' });
   FS.unlink(path);
   self.postMessage({ type: 'export-file', id, blob, stats: result.stats, sigma: !!result.sigma, uncertainties, seconds: (performance.now() - t0) / 1000 });

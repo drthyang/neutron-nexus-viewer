@@ -1,10 +1,13 @@
 // Export of the processed volume as an input file for NEBULA3D's 3D-ΔPDF pipeline
 // (https://github.com/drthyang/nebula3d).
 //
-// NEBULA3D reads an HDF5 group /entry with `data` in (H, K, L) C order (H slowest),
-// `mask` (1 = valid), `sigma` (standard deviations, same shape; √|data| when
-// absent), `h_axis`, `k_axis`, `l_axis` at bin centres and `ub_matrix`
-// with the 2π factor (|Q| = |UB·hkl|). It does not symmetrize, and its ΔPDF puts
+// The file is a Mantid MDHistoWorkspace as NEBULA3D writes its own (see savemd.js), so
+// Mantid and other NeXus readers open it too: the data in (H, K, L) C order (D2 = H,
+// D1 = K, D0 = L), σ² as errors_squared (√|data| when the source has no uncertainties,
+// as NEBULA3D takes it), the mask, and NEBULA3D's `nebula3d` group with the exact bin
+// centres and UB (with 2π) and the export's provenance as attributes: the source file,
+// the symmetry operations NEBULA3D applies again, the mask. NEBULA3D still reads the
+// /entry layout earlier exports have. It does not symmetrize, and its ΔPDF puts
 // Q = 0 at the centre of bin n//2 of every axis, so each axis needs a bin centred
 // at 0 (grids split at a bin edge are refused) and is padded to an odd size,
 // symmetric about it. Every voxel of the padded grid gets the equal-weight mean
@@ -16,7 +19,8 @@
 // dimension d lives on storage axis 2 - d, and symmetry maps are integer affine
 // maps i' = M i + t on display-dimension bin indices (from indexMaps()).
 
-import { reciprocalMetric } from './nexus.js';
+import { centersToEdges, reciprocalMetric } from './nexus.js';
+import { writeMantidMD } from './savemd.js';
 
 const near = (x, tol = 1e-3) => Math.abs(x - Math.round(x)) < tol;
 
@@ -170,34 +174,39 @@ export function symmetrizeForExport(volume, shape, plan, maps, { mask = null, va
 }
 
 /**
- * What an export's /entry/sigma holds, for its `uncertainties` attribute:
- * `source` names the file's uncertainties (e.g. errors_squared), `why` says why
- * there are none.
+ * What an export's σ is, for its `uncertainties` attribute: `source` names the file's
+ * uncertainties (e.g. errors_squared), `why` says why there are none.
  */
 export function sigmaNote({ sigma, stats }, source, why = '') {
-  if (!sigma) return `none written (${why || 'the file has none'}): NEBULA3D takes sqrt(|data|)`;
+  if (!sigma) return `none in the source file (${why || 'it has none'}): written as sqrt(|data|), the sigma NEBULA3D takes without one, and marked so (sigma = sqrt_intensity)`;
   const defaulted = stats.sigmaDefaulted ? `; ${stats.sigmaDefaulted} voxels without a known sigma take sqrt(|data|)` : '';
   return `from ${source}: sigma of each orbit's mean, sqrt(sum of sigma^2) / n over its measured voxels${defaulted}`;
 }
 
 /**
- * Write a NEBULA3D input file at `path` with h5wasm: /entry/{data, mask,
- * sigma (when result.sigma is set), h_axis, k_axis, l_axis, ub_matrix},
- * gzip-compressed, with provenance `attrs` (strings) on /entry. Without sigma,
- * NEBULA3D takes √|data|.
+ * Write the NEBULA3D input file at `path` with h5wasm, as NEBULA3D writes a volume (its
+ * save_mantid_nxs): a Mantid MDHistoWorkspace in (H, K, L) C order, so D2 = H, D1 = K and
+ * D0 = L and nothing is transposed; errors_squared σ² (|data| without σ), mask 1 and
+ * num_events 0 where invalid; the oriented lattice from the UB; and the `nebula3d` group
+ * with the exact centres and UB, the in-memory dtype, whether σ was measured, and the
+ * provenance `attrs` (strings). `fileName` is the name it is saved under.
  */
-export function writeNebulaFile(h5wasm, path, plan, result, attrs = {}) {
-  const f = new h5wasm.File(path, 'w');
-  try {
-    const entry = f.create_group('entry');
-    const shape = plan.shape, chunks = [1, shape[1], shape[2]];
-    entry.create_dataset({ name: 'data', data: result.data, shape, chunks, compression: 'gzip', compression_opts: 1 });
-    entry.create_dataset({ name: 'mask', data: result.valid, shape, chunks, compression: 'gzip', compression_opts: 1 });
-    if (result.sigma) entry.create_dataset({ name: 'sigma', data: result.sigma, shape, chunks, compression: 'gzip', compression_opts: 1 });
-    ['h_axis', 'k_axis', 'l_axis'].forEach((name, a) => entry.create_dataset({ name, data: plan.centers[a] }));
-    entry.create_dataset({ name: 'ub_matrix', data: Float64Array.from(plan.ub), shape: [3, 3] });
-    for (const [key, value] of Object.entries({ instrument: '', ...attrs })) entry.create_attribute(key, String(value));
-  } finally {
-    f.close();
-  }
+export function writeNebulaFile(h5wasm, path, plan, result, attrs = {}, fileName = undefined) {
+  const { data, valid, sigma } = result, [, nK, nL] = plan.shape, plane = nK * nL;
+  const slab = (arr, i, j) => arr.subarray(i * plane, j * plane);
+  // D0, D1, D2 are L, K, H: their exact centres and the edges around them.
+  const centers = [2, 1, 0].map((a) => plan.centers[a]), edges = centers.map(centersToEdges);
+  writeMantidMD(h5wasm, path, {
+    shape: plan.shape, edges, labels: ['[0,0,L]', '[0,K,0]', '[H,0,0]'], fileName, gzip: 1,
+    signal: (i, j) => slab(data, i, j),
+    errors2: (i, j) => (sigma ? Float64Array.from(slab(sigma, i, j), (s) => s * s) : Float64Array.from(slab(data, i, j), Math.abs)),
+    events: (i, j) => Float64Array.from(slab(valid, i, j)),
+    mask: (i, j) => Int8Array.from(slab(valid, i, j), (v) => 1 - v),
+    ub: plan.ub.map((x) => x / (2 * Math.PI)),
+    nebula3d: {
+      attrs: { instrument: '', ...attrs, content: 'hkl_volume', dtype: 'float32', sigma: sigma ? 'measured' : 'sqrt_intensity' },
+      centers,
+      ub: plan.ub,
+    },
+  });
 }
