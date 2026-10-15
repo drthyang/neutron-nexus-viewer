@@ -174,7 +174,7 @@ The report gives the level against 2θ, each bin's level relative to it, and the
 
   The file stores the transformed cell and UB, and T in a log.
 - *Extent:* the default range is everything the detector reaches.
-- *File:* the result is written in the layout of Mantid's `SaveMD` (version 2): `signal`, `errors_squared`, `num_events` (pixel-frames) and `mask` in (L, K, H) order with `axes = D2:D1:D0`, HKL dimensions, and the oriented lattice and UB under `experiment0`. The reduction report is stored as a log.
+- *File:* the result is written in the layout of Mantid's `SaveMD` (version 2): `signal`, `errors_squared`, `num_events` (pixel-frames) and `mask` in (L, K, H) order with `axes = D2:D1:D0`, HKL dimensions, and the oriented lattice and UB under `experiment0`. The reduction report is stored as a log. Every group, dataset and attribute has the HDF5 type of a file `SaveMD` wrote (the oldest file format, ASCII text), except that text outside ASCII, such as a file name in a log, is labelled UTF-8 so that every reader decodes it; only the byte shuffle before gzip is missing, which h5wasm cannot add.
 - *Unmeasured voxels:* NaN signal and errors, with `num_events` = 0. Measured zeros stay 0.
 
 **Validation**, on two XtaLAB mini II / HyPix-3000 data sets (7,342 frames):

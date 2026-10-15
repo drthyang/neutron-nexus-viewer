@@ -1,4 +1,5 @@
 import assert from 'node:assert/strict';
+import { readFileSync } from 'node:fs';
 import test from 'node:test';
 
 import h5wasm from 'h5wasm/node';
@@ -11,7 +12,8 @@ import {
 } from '../js/rigaku-geometry.js';
 import {
   PeakSearch, accumulateFrame, applyFrame, applyRecords, detectorMask, finishVolume, flushBackground, frameRecords, gridEdges,
-  makeAccumulators, makeBackgroundTracker, makeGrid, polarizationModel, reduceRigaku, ringLevels, trackBackground, writeMantidMD,
+  H5WASM_HDF5_VERSION, makeAccumulators, makeBackgroundTracker, makeGrid, polarizationModel, reduceRigaku, ringLevels, trackBackground,
+  writeMantidMD,
 } from '../js/rigaku-reduce.js';
 import { WorkerPool } from '../js/rigaku-pool.js';
 import { nodeWorker } from './node-worker.js';
@@ -315,6 +317,85 @@ test('Mantid MDHistoWorkspace writer: the viewer reads dims, NaN coverage, uncer
     assert.equal(f.get('MDHistoWorkspace/experiment0/logs/note/value').value[0], 'test');
   } finally {
     f.close();
+  }
+});
+
+// Every group (trailing '/') and dataset under /MDHistoWorkspace of a file Mantid's SaveMD wrote (CORELLI, HDF5 1.14.6).
+const SAVEMD_TREE = [
+  'coordinate_system', 'visual_normalization', 'data/',
+  ...['D0', 'D1', 'D2', 'errors_squared', 'mask', 'num_events', 'signal'].map((k) => `data/${k}`),
+  'experiment0/', 'experiment0/instrument/', 'experiment0/instrument/name', 'experiment0/instrument/instrument_parameter_map/',
+  ...['author', 'data', 'date', 'description', 'type'].map((k) => `experiment0/instrument/instrument_parameter_map/${k}`),
+  'experiment0/instrument/instrument_xml/', ...['data', 'description', 'type'].map((k) => `experiment0/instrument/instrument_xml/${k}`),
+  'experiment0/logs/', 'experiment0/logs/W_MATRIX/', 'experiment0/logs/W_MATRIX/value', 'experiment0/logs/goniometer/',
+  'experiment0/logs/goniometer/num_axes', 'experiment0/logs/goniometer/rotation_matrix',
+  'experiment0/logs/mdhisto_was_modified/', 'experiment0/logs/mdhisto_was_modified/value',
+  'experiment0/sample/',
+  ...['geom_height', 'geom_id', 'geom_thickness', 'geom_width', 'num_oriented_lattice', 'num_other_samples'].map((k) => `experiment0/sample/${k}`),
+  'experiment0/sample/material/', ...['number_density', 'packing_fraction', 'pressure', 'temperature'].map((k) => `experiment0/sample/material/${k}`),
+  'experiment0/sample/oriented_lattice/',
+  ...['cross_term', 'maximum_order', 'modulated_hkl_error', 'modulated_orientation_matrix', 'orientation_matrix',
+    ...['a', 'b', 'c', 'alpha', 'beta', 'gamma'].flatMap((k) => [`unit_cell_${k}`, `unit_cell_${k}_error`])]
+    .map((k) => `experiment0/sample/oriented_lattice/${k}`),
+];
+
+test('Mantid MDHistoWorkspace writer: Mantid\'s tree, root attributes and HDF5 types; UTF-8 only for text outside ASCII', () => {
+  const grid = makeGrid([-1, -1, -1], [1, 1, 1], 1), n = 27;
+  const path = '/tmp/rigaku-writer-types-test.nxs', source = 'Fe₃Ge₂_Å.rodhypix';
+  writeMantidMD(h5wasm, path, {
+    shape: [3, 3, 3], edges: gridEdges(grid), signal: new Float64Array(n).fill(1), errors2: new Float64Array(n), events: new Float64Array(n).fill(1),
+    ub: bMatrix(8, 8, 10, 90, 90, 120), cell: [8, 8, 10, 90, 90, 120], logs: { note: 'test', source }, title: 'Fe₃Ge₂: types test', fileName: 'out.nxs',
+  });
+  assert.equal(readFileSync(path)[8], 0, 'superblock version 0, as in Mantid\'s files');
+  const f = new h5wasm.File(path, 'r');
+  try {
+    const at = (name) => f.attrs[name].value;
+    assert.deepEqual(['NX_class', 'NeXus_version', 'HDF5_Version', 'file_name'].map(at), ['NXroot', '4.4.3', H5WASM_HDF5_VERSION, 'out.nxs']);
+    assert.match(at('file_time'), /^\d{4}-\d\d-\d\dT\d\d:\d\d:\d\d[+-]\d\d:\d\d$/);
+
+    const tree = [], strings = [];
+    const walk = (node, prefix) => {
+      for (const [name, a] of Object.entries(node.attrs)) if (a.metadata.type === 3) strings.push([`${prefix}@${name}`, a.metadata, a.value]);
+      if (node.type !== 'Group') return;
+      for (const key of node.keys()) {
+        const child = node.get(key), p = prefix ? `${prefix}/${key}` : key;
+        tree.push(child.type === 'Group' ? `${p}/` : p);
+        if (child.type === 'Dataset' && child.metadata.type === 3) strings.push([p, child.metadata, child.value[0]]);
+        walk(child, p);
+      }
+    };
+    walk(f.get('MDHistoWorkspace'), '');
+    const ours = ['title', 'experiment0/logs/note/', 'experiment0/logs/note/value', 'experiment0/logs/source/', 'experiment0/logs/source/value'];
+    assert.deepEqual(tree.sort(), [...SAVEMD_TREE, ...ours].sort());
+
+    // Attributes: scalar variable-length null-terminated ASCII; datasets: (1,) fixed-length
+    // null-terminated ASCII, or UTF-8 for the title and log outside ASCII.
+    for (const [p, m, value] of strings) {
+      const ascii = /^[\x00-\x7f]*$/.test(value);
+      if (p.includes('@')) assert.ok(m.vlen && m.shape.length === 0 && m.cset === 0 && m.strpad === 0, p);
+      else assert.ok(!m.vlen && String(m.shape) === '1' && m.cset === (ascii ? 0 : 1) && (!ascii || m.strpad === 0), p);
+    }
+    assert.equal(f.get('MDHistoWorkspace/title').value[0], 'Fe₃Ge₂: types test');
+    assert.equal(f.get('MDHistoWorkspace/experiment0/logs/source/value').value[0], source);
+    assert.equal(f.get('MDHistoWorkspace/experiment0/logs/mdhisto_was_modified/value').value[0], '1');
+    assert.match(f.get('MDHistoWorkspace/experiment0/sample').attrs.shape_xml.value, /<goniometer a11="1.000000"/);
+  } finally {
+    f.close();
+  }
+});
+
+test('H5WASM_HDF5_VERSION is the HDF5 of the h5wasm the workers load', async () => {
+  const Module = await h5wasm.ready;
+  Module.activate_throwing_error_handler();
+  try {
+    assert.throws(() => new h5wasm.File('/no/such/file.h5', 'r'), (err) => String(err.message).includes(`HDF5 (${H5WASM_HDF5_VERSION})`));
+  } finally {
+    Module.deactivate_throwing_error_handler();
+  }
+  // The browser's workers load h5wasm from a CDN: the version tested here.
+  const { version } = JSON.parse(readFileSync(new URL('../node_modules/h5wasm/package.json', import.meta.url), 'utf8'));
+  for (const file of ['../js/worker.js', '../js/rigaku-worker.js']) {
+    assert.ok(readFileSync(new URL(file, import.meta.url), 'utf8').includes(`/npm/h5wasm@${version}/`), file);
   }
 });
 

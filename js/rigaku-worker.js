@@ -169,12 +169,16 @@ async function reduce(options) {
   if (report.background) Object.assign(report.background, { stem: iso ? null : bkg.stem, scale, negativeVoxels: v.negative });
   const cell = report.grid.cell;
   const rows = [0, 3, 6].map((i) => report.grid.transform.slice(i, i + 3));
+  const num = (x) => String(Number(x.toPrecision(6)));
+  const cellTag = report.grid.multiplier ? `x${num(report.grid.multiplier)}` : `T${rows.map((r) => `(${r.map(num).join(',')})`).join('')}`;
+  const bkgTag = report.background ? `_bkg${{ rotation: 'rot', isotropic: 'iso' }[report.background.mode] ?? ''}${scale === 1 ? '' : num(scale)}` : '';
+  const name = `${exp.stem}_hkl_${cellTag}_step${Number(grid.step.toPrecision(6))}${bkgTag}.nxs`;
   const { FS } = await h5wasm.ready;
   const path = '/rigaku-reduced.nxs';
   const T = meta.coll.temperature;
   writeMantidMD(h5wasm, path, {
     shape: [grid.shape[2], grid.shape[1], grid.shape[0]], edges: gridEdges(grid), signal: v.signal, errors2: v.errors2, events: v.events,
-    ub: ubMantid, cell, title: `${exp.stem}: Rigaku XRD reduced in the NeXus Viewer`,
+    ub: ubMantid, cell, title: `${exp.stem}: Rigaku XRD reduced in the NeXus Viewer`, fileName: name,
     logs: {
       wavelength: { value: model.g.wavelength, units: 'Angstrom' },
       ...(T ? { temperature_min: { value: T[0], units: 'K' }, temperature_max: { value: T[1], units: 'K' } } : {}),
@@ -191,9 +195,5 @@ async function reduce(options) {
   });
   const blob = new Blob([FS.readFile(path)], { type: 'application/x-hdf5' });
   FS.unlink(path);
-  const num = (x) => String(Number(x.toPrecision(6)));
-  const cellTag = report.grid.multiplier ? `x${num(report.grid.multiplier)}` : `T${rows.map((r) => `(${r.map(num).join(',')})`).join('')}`;
-  const bkgTag = report.background ? `_bkg${{ rotation: 'rot', isotropic: 'iso' }[report.background.mode] ?? ''}${scale === 1 ? '' : num(scale)}` : '';
-  const name = `${exp.stem}_hkl_${cellTag}_step${Number(grid.step.toPrecision(6))}${bkgTag}.nxs`;
   self.postMessage({ type: 'done', blob, name, report });
 }

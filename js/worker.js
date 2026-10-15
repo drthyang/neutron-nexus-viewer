@@ -249,7 +249,7 @@ function reindexPlan({ id, T }) {
 
 // The volume as measured (the user mask and symmetry are not applied), resampled onto
 // `grid` with nsub³ sub-samples per voxel, as a Mantid MDHistoWorkspace with the new UB.
-async function reindex({ id, T, grid, nsub, ub, cell, title, logs }) {
+async function reindex({ id, T, grid, nsub, ub, cell, title, logs, fileName }) {
   if (!volume) throw new Error('No histogram loaded.');
   const t0 = performance.now();
   let last = 0;
@@ -269,7 +269,7 @@ async function reindex({ id, T, grid, nsub, ub, cell, title, logs }) {
   const file = '/reindexed.nxs';
   writeMantidMD(h5wasm, file, {
     shape: [grid.shape[2], grid.shape[1], grid.shape[0]], edges: grid.edges, signal: out.signal, errors2: out.errors2, events: out.events,
-    ub, cell, title, logs,
+    ub, cell, title, logs, fileName,
   });
   const blob = new Blob([FS.readFile(file)], { type: 'application/x-hdf5' });
   FS.unlink(file);
