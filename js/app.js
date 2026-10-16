@@ -5,6 +5,7 @@ import { cartesianBasis, isDirect, nominalCell, planeGeometry, reciprocalMetric 
 import { parseBins, powderPlan, qExtent } from './powder.js';
 import { setupReindex } from './reindex-ui.js';
 import { setupRigaku } from './rigaku-ui.js';
+import { setupUBRefine } from './ub-refine-ui.js';
 import { IDENTITY_MAP } from './slab.js';
 import { closeGroup, formatOp, indexMaps, metricChange, parseOps, PRESETS } from './symmetry.js';
 
@@ -79,8 +80,10 @@ let ownRanges = false, ranges = [], rangeK = 0;
 // The export for NEBULA3D being built: { name, send, attrs }. `handoff` is the
 // NEBULA3D tab it is sent to (Open in NEBULA3D): { id, win | channel, origin, ready, file, sent }.
 let exportJob = null, handoff = null;
-// The Reindex with a new UB dialog (reindex-ui.js): { handle, refresh, reset }.
+// The Reindex with a new UB dialog (reindex-ui.js): { handle, refresh, reset, useUB }.
 let reindexUI = null;
+// The Refine the UB dialog (ub-refine-ui.js): { handle, refresh, reset }.
+let ubRefineUI = null;
 // ?nebula3d= points Open in NEBULA3D at another deployment (a local dev server).
 const NEBULA3D_URL = new URLSearchParams(location.search).get('nebula3d') || 'https://drthyang.github.io/nebula3d/';
 const newLayer = () => ({ data: null, version: 0, busy: false, wanted: null, image: null, imageKey: null, error: '' });
@@ -311,6 +314,7 @@ function openFile(file) {
   slots = [null, null, null];
   exportJob = null;
   reindexUI?.reset();
+  ubRefineUI?.reset();
   jobs.clear();
   showCompare();
   closePopovers();
@@ -386,6 +390,7 @@ const handlers = {
     status('ok', 'ready');
     setupViewer();
     reindexUI.refresh();
+    ubRefineUI.refresh();
     show('workspace');
     showCompare();
     redraw();
@@ -503,6 +508,9 @@ const handlers = {
   'progress-reindex': (msg) => reindexUI.handle(msg),
   'reindex-file': (msg) => reindexUI.handle(msg),
   'reindex-error': (msg) => reindexUI.handle(msg),
+  'ub-peaks': (msg) => ubRefineUI.handle(msg),
+  'progress-ub-peaks': (msg) => ubRefineUI.handle(msg),
+  'ub-peaks-error': (msg) => ubRefineUI.handle(msg),
 };
 
 /**
@@ -3842,6 +3850,15 @@ reindexUI = setupReindex({
   datasetA: () => (panels.length ? meta : null),
   name: () => sourceName,
   post: (message) => worker.postMessage(message),
+});
+// Refine A's UB against its Bragg peaks (ub-refine-ui.js): the peaks are found in A's worker,
+// and the refined UB goes to the reindexing dialog.
+ubRefineUI = setupUBRefine({
+  datasetA: () => (panels.length ? meta : null),
+  name: () => sourceName,
+  post: (message) => worker.postMessage(message),
+  laue: () => (symmetry.ops.length > 1 ? symmetry.name : null),
+  reindexWith: (name, parsed) => reindexUI.useUB(name, parsed),
 });
 segmented($('compare-view'), (value) => {
   compareView = value;

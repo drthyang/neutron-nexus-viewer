@@ -13,6 +13,7 @@ import { measuredBox, reindexGeometry, reindexVolume } from './reindex.js';
 import { writeMantidMD } from './savemd.js';
 import { averageSlab, selectBins } from './slab.js';
 import { indexMaps } from './symmetry.js';
+import { findPeaks } from './ub-refine.js';
 
 // `variance` (σ² per voxel) is read from the file when I(Q) or a line cut first needs it:
 // undefined until then, null without uncertainties.
@@ -31,10 +32,11 @@ self.onmessage = async ({ data }) => {
     else if (data.type === 'cut') cut(data);
     else if (data.type === 'reindex-plan') reindexPlan(data);
     else if (data.type === 'reindex') await reindex(data);
+    else if (data.type === 'ub-peaks') ubPeaks(data);
   } catch (err) {
     const type = {
       iso: 'iso-error', mask: 'mask-error', 'mask-download': 'mask-error', export: 'export-error', powder: 'powder-error', cut: 'cut-error',
-      'reindex-plan': 'reindex-error', reindex: 'reindex-error',
+      'reindex-plan': 'reindex-error', reindex: 'reindex-error', 'ub-peaks': 'ub-peaks-error',
     }[data.type] ?? 'error';
     self.postMessage({ type, id: data.id, fixed: data.fixed, message: err?.message ?? String(err) });
   }
@@ -250,7 +252,7 @@ function reindexPlan({ id, T }) {
 
 // The volume as measured (the user mask and symmetry are not applied), resampled onto
 // `grid` with nsub³ sub-samples per voxel, as a Mantid MDHistoWorkspace with the new UB.
-async function reindex({ id, T, grid, nsub, ub, cell, title, logs, fileName }) {
+async function reindex({ id, T, grid, nsub, ub, cell, cellErrors, title, logs, fileName }) {
   if (!volume) throw new Error('No histogram loaded.');
   const t0 = performance.now();
   let last = 0;
@@ -270,7 +272,7 @@ async function reindex({ id, T, grid, nsub, ub, cell, title, logs, fileName }) {
   const file = '/reindexed.nxs';
   writeMantidMD(h5wasm, file, {
     shape: [grid.shape[2], grid.shape[1], grid.shape[0]], edges: grid.edges, signal: out.signal, errors2: out.errors2, events: out.events,
-    ub, cell, title, logs, fileName,
+    ub, cell, cellErrors, title, logs, fileName,
   });
   const blob = new Blob([FS.readFile(file)], { type: 'application/x-hdf5' });
   FS.unlink(file);
@@ -278,6 +280,24 @@ async function reindex({ id, T, grid, nsub, ub, cell, title, logs, fileName }) {
     type: 'reindex-file', id, blob, covered: out.covered, voxels: grid.voxels, errors: !!variance, errorsNote: varianceNote,
     seconds: (performance.now() - t0) / 1000,
   });
+}
+
+// The Bragg peaks of the volume as measured, for refining its UB (see ub-refine.js; the fit
+// runs on the page).
+function ubPeaks({ id, threshold, maxPeaks, radius }) {
+  if (!volume) throw new Error('No histogram loaded.');
+  let last = 0;
+  const { peaks, stats } = findPeaks(volume, info.shape, info.dims, {
+    threshold, maxPeaks, radius,
+    onProgress: (fraction) => {
+      const now = performance.now();
+      if (now - last > 100 || fraction === 1) {
+        last = now;
+        self.postMessage({ type: 'progress-ub-peaks', id, fraction });
+      }
+    },
+  });
+  self.postMessage({ type: 'ub-peaks', id, peaks, stats });
 }
 
 // The symmetrized, masked volume as a NEBULA3D input file (see export.js):

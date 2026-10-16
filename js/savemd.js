@@ -39,7 +39,8 @@ const det3 = (m) => m[0] * (m[4] * m[8] - m[5] * m[7]) - m[1] * (m[3] * m[8] - m
  *
  * `ub` is the UB matrix without 2π (Mantid's convention), row-major: the oriented lattice
  * when it is right-handed (Mantid refuses others) with `cell` (a, b, c, α, β, γ; from the UB
- * when omitted); without one, num_oriented_lattice is 0. `logs` become run logs, `fileName`
+ * when omitted) and `cellErrors` (their standard uncertainties; 0 when omitted); without one,
+ * num_oriented_lattice is 0. `logs` become run logs, `fileName`
  * the root file_name attribute (the name the file is saved under), `gzip` the volumes'
  * compression level. `nebula3d` adds NEBULA3D's group of what Mantid does not know (`attrs`,
  * the exact bin `centers` of D0, D1, D2 and the `ub` with 2π), as NEBULA3D writes it, so
@@ -54,7 +55,7 @@ const det3 = (m) => m[0] * (m[4] * m[8] - m[5] * m[7]) - m[1] * (m[3] * m[8] - m
  */
 export function writeMantidMD(h5wasm, path, {
   shape, edges, labels = ['[H,0,0]', '[0,K,0]', '[0,0,L]'], signal, errors2, events, mask = null,
-  ub = null, cell = null, logs = {}, title = '', fileName = path.split('/').pop(), nebula3d = null, gzip = 4,
+  ub = null, cell = null, cellErrors = null, logs = {}, title = '', fileName = path.split('/').pop(), nebula3d = null, gzip = 4,
 }) {
   const f = new h5wasm.File(path, 'w', { libver: ['earliest', 'latest'] });
   // h5wasm's dtype 'A' is ASCII (null-terminated), 'S' UTF-8; without a length, variable-length.
@@ -170,7 +171,7 @@ export function writeMantidMD(h5wasm, path, {
       ol.create_dataset({ name: 'orientation_matrix', data: Float64Array.from(lattice), shape: [3, 3] });
       ['a', 'b', 'c', 'alpha', 'beta', 'gamma'].forEach((k, i) => {
         ol.create_dataset({ name: `unit_cell_${k}`, data: Float64Array.of(c[i]) });
-        ol.create_dataset({ name: `unit_cell_${k}_error`, data: Float64Array.of(0) });
+        ol.create_dataset({ name: `unit_cell_${k}_error`, data: Float64Array.of(cellErrors?.[i] > 0 ? cellErrors[i] : 0) });
       });
     }
     if (nebula3d) {

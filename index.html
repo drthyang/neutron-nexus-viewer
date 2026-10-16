@@ -423,6 +423,10 @@ body.panel-collapsed .panel { visibility: hidden; }
 .ri-steps { display: grid; grid-template-columns: repeat(4, minmax(0, 1fr)); gap: 1.2rem; }
 .ri-mono { font-family: var(--font-mono); font-size: 1.15rem; }
 @media (max-width: 560px) { .ri-steps { grid-template-columns: repeat(2, minmax(0, 1fr)); } }
+.rk-dialog #ur-result { display: flex; flex-direction: column; gap: 1.2rem; }
+.rk-dialog #ur-result[hidden] { display: none; }
+.ur-grid { display: grid; grid-template-columns: minmax(0, 3fr) minmax(0, 1fr); gap: 1.2rem; }
+@media (max-width: 560px) { .ur-grid { grid-template-columns: minmax(0, 1fr); } }
 
 /* ---- start, loading, toast --------------------------------------------------------- */
 /* One column no wider than the screen, so the start page never scrolls sideways. */
@@ -680,11 +684,11 @@ body.dragging.drop-b::after { content: "Drop to compare as dataset " attr(data-d
         </div>
 
         <div id="reindex-sub" class="sub">
-          <div class="sub-head" title="Resamples the volume onto the HKL grid of another UB matrix, such as a refined one or another cell setting, as a new dataset.">
+          <div class="sub-head" title="Refines the UB against the Bragg peaks, with the cell constrained to a crystal system, or loads another UB, such as one refined in Mantid or another cell setting, and resamples the volume onto its HKL grid as a new dataset.">
             <svg width="16" height="16" viewBox="0 0 18 18" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linejoin="round" aria-hidden="true"><rect x="2" y="2" width="9" height="9" rx="1"/><path d="M11.5 6.5 16 11l-4.5 4.5L7 11Z" opacity="0.6"/></svg>
-            <span class="sub-title">Reindex · new UB</span><span id="reindex-state" class="state">—</span>
+            <span class="sub-title">UB · refine, reindex</span><span id="reindex-state" class="state">—</span>
           </div>
-          <span class="inline"><button id="reindex-open" class="btn btn-ghost" type="button" style="flex: 1" disabled title="An ISAW UB file (.mat), as Mantid's SaveIsawUB writes it">Load ISAW UB file…</button></span>
+          <span class="inline"><button id="ubref-open" class="btn btn-ghost" type="button" style="flex: 1" disabled title="Fit the orientation and the cell, constrained to a crystal system, to the Bragg peaks of the volume">Refine UB…</button><button id="reindex-open" class="btn btn-ghost" type="button" style="flex: 1" disabled title="An ISAW UB file (.mat), as Mantid's SaveIsawUB writes it">Load ISAW UB…</button></span>
           <p id="reindex-status" class="note"></p>
         </div>
 
@@ -853,6 +857,36 @@ body.dragging.drop-b::after { content: "Drop to compare as dataset " attr(data-d
     </div>
   </div>
   <div class="rk-foot"><button id="ri-cancel" class="btn btn-ghost" type="button">Close</button><button id="ri-run" class="btn btn-primary" type="button" disabled>Reindex</button></div>
+</dialog>
+
+<!-- Refine dataset A's UB against its Bragg peaks (ub-refine-ui.js) -->
+<dialog id="ubref" class="rk-dialog" aria-label="Refine the UB">
+  <div class="pop-head"><span class="pop-title">Refine the UB against the Bragg peaks</span>
+    <button id="ur-close" class="icon-btn" type="button" title="Close" aria-label="Close"><svg width="12" height="12" viewBox="0 0 12 12" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" aria-hidden="true"><path d="M2 2l8 8M10 2l-8 8"/></svg></button></div>
+  <div class="pop-body">
+    <p class="note">The Bragg peaks of A, as measured, are indexed with its UB, and an orientation and a cell, constrained to a crystal system, are fitted to their positions in Q. Refine a volume that is not symmetrized: averaging with a wrong UB splits the peaks. <a href="https://github.com/drthyang/neutron-nexus-viewer/blob/main/docs/METHOD.md#refining-the-ub" target="_blank" rel="noopener noreferrer">Method</a></p>
+    <dl id="ur-summary" class="kv rk-kv"></dl>
+    <div class="ur-grid">
+      <div class="field"><label class="label" for="ur-system">Crystal system (refined parameters)</label><select id="ur-system"></select></div>
+      <div class="field"><label class="label" for="ur-tol">Index tolerance</label><input id="ur-tol" class="num" type="number" min="0.01" max="0.49" step="0.01" value="0.15" title="Peaks within this many r.l.u. of integer indices (in every index) are fitted"></div>
+    </div>
+    <p id="ur-system-note" class="note" hidden></p>
+    <details class="help"><summary>Peak search</summary>
+      <div class="ri-steps">
+        <div class="field"><label class="label" for="ur-max">Peaks</label><input id="ur-max" class="num" type="number" min="10" step="10" value="500" title="The strongest local maxima are used, up to this many"></div>
+        <div class="field"><label class="label" for="ur-threshold">Threshold k·σ</label><input id="ur-threshold" class="num" type="number" min="0" step="any" value="10" title="Local maxima more than k robust standard deviations (1.4826 × MAD) above the median of the measured voxels"></div>
+        <div class="field"><label class="label" for="ur-radius">Box (voxels)</label><input id="ur-radius" class="num" type="number" min="2" max="20" step="1" placeholder="auto" title="Half size of the box around each peak, whose surface gives the background and whose inside the centre; empty: 1 + 2 × the peaks' half width"></div>
+      </div>
+    </details>
+    <div id="ur-progress" hidden><div class="boot-bar"><div id="ur-progress-fill" class="boot-fill"></div></div>
+      <div class="load-foot"><span id="ur-progress-label"></span><span id="ur-progress-pct"></span></div></div>
+    <p id="ur-note" class="note" hidden></p>
+    <div id="ur-result" hidden>
+      <dl id="ur-report" class="kv rk-kv"></dl>
+      <div class="inline rk-actions"><button id="ur-reindex" class="btn btn-primary" type="button" title="Resample A onto the HKL grid of the refined UB">Reindex with this UB…</button><button id="ur-save" class="btn btn-ghost" type="button" title="ISAW UB file with the cell and its standard uncertainties, as Mantid's SaveIsawUB writes it: LoadIsawUB reads it">Save UB (.mat)</button><button id="ur-peaks" class="btn btn-ghost" type="button" title="Every peak found: indices, position, residual and whether it was used">Peaks (.csv)</button></div>
+    </div>
+  </div>
+  <div class="rk-foot"><button id="ur-cancel" class="btn btn-ghost" type="button">Close</button><button id="ur-run" class="btn btn-primary" type="button">Find peaks and refine</button></div>
 </dialog>
 
 <!-- Popovers, positioned under their trigger buttons by app.js -->

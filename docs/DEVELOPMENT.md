@@ -24,7 +24,7 @@ CI runs the same tests on every push (`.github/workflows/test.yml`).
 | --- | --- |
 | `index.html` | Markup and styles (light variant of the nebula3d design tokens). Sizes are in rem, 10 px at 1×; a script in its head scales the root size on large screens at 100%, and the canvases draw at the same scale |
 | `js/app.js` | UI: control panel, views, layouts, interaction, canvas drawing (the slices, and the 1-D plots of I(Q) and the line cut) and the second (comparison) dataset |
-| `js/worker.js` | Module worker (one per open dataset): opens the file with h5wasm, holds the volume, answers slice, line cut, mask, isosurface, I(Q), export and reindexing requests |
+| `js/worker.js` | Module worker (one per open dataset): opens the file with h5wasm, holds the volume, answers slice, line cut, mask, isosurface, I(Q), export, reindexing and peak-search requests |
 | `js/nexus.js` | Finds the histogram (and its uncertainties) in the file, reads it, and handles the UB matrix and lattice geometry |
 | `js/slab.js` | Slab selection and symmetry-pooled slab averaging (pure functions) |
 | `js/cut.js` | Line cuts: the points and band of a cut in a slice, and its symmetry-pooled profile with σ (pure functions) |
@@ -34,8 +34,10 @@ CI runs the same tests on every push (`.github/workflows/test.yml`).
 | `js/powder.js` | I(Q): the \|Q\| metric, shells, and the normalized spherical average with split voxels and propagated uncertainties |
 | `js/export.js` | NEBULA3D export: grid plan and padding, full-volume symmetrization, and the file as NEBULA3D writes its own (through `savemd.js`) |
 | `js/savemd.js` | The Mantid `MDHistoWorkspace` writer (`SaveMD` version 2, with Mantid's HDF5 types), for the Rigaku reduction, the reindexing and the NEBULA3D export |
-| `js/reindex.js` | Reindexing with another UB: ISAW UB files, the transformation between the indexings, the new grid, and the resampling with propagated σ (pure functions) |
+| `js/reindex.js` | Reindexing with another UB: ISAW UB files (read and written), the transformation between the indexings, the new grid, and the resampling with propagated σ (pure functions) |
 | `js/reindex-ui.js` | The *Reindex with a new UB* dialog; the work runs in dataset A's worker, and the file is written by `savemd.js` |
+| `js/ub-refine.js` | Refining a UB against the volume's Bragg peaks: peak search and centring, the fit with the cell constrained to a crystal system, and the s.u. notation (pure functions; the least squares is `rigaku-geometry.js`'s) |
+| `js/ub-refine-ui.js` | The *Refine the UB* dialog: the peaks are found in dataset A's worker, the fit runs on the page, and the result goes to `reindex-ui.js` or an ISAW UB file |
 | `js/rigaku-format.js` | Rigaku Oxford Diffraction frames: header, TY6 decoding with the header-statistics check, and the CrysAlisPro text files (.par, crystal.ini, datacoll.ini) |
 | `js/rigaku-geometry.js` | Kappa-goniometer and detector geometry, Ewald prediction, cells, and the Levenberg-Marquardt fit |
 | `js/rigaku-reduce.js` | The reduction: detector mask, 3-D peak search, geometry refinement and gridding |
