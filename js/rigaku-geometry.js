@@ -141,7 +141,8 @@ export const CELL_SYSTEMS = {
 export function crystalSystem(laue, cell) {
   const near = (x, y) => Math.abs(x - y) < 1;
   const [a, b, c, al, be, ga] = cell;
-  const want = /6|-3|3/.test(laue ?? '') ? 'hexagonal' : /m-3|^23/.test(laue ?? '') ? 'cubic'
+  // Cubic first: m-3 and m-3m also contain a 3.
+  const want = /m-3|m3|^23/.test(laue ?? '') ? 'cubic' : /6|3/.test(laue ?? '') ? 'hexagonal'
     : /4/.test(laue ?? '') ? 'tetragonal' : /mmm/.test(laue ?? '') ? 'orthorhombic' : /2\/m/.test(laue ?? '') ? 'monoclinic' : 'triclinic';
   const fits = {
     hexagonal: near(al, 90) && near(be, 90) && near(ga, 120) && Math.abs(a - b) / a < 0.01,

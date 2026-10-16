@@ -85,6 +85,12 @@ test('geometry: cells, prediction and its inverse agree', () => {
   assert.ok(cellFromUB(bMatrix(...cell)).every((v, i) => Math.abs(v - cell[i]) < 1e-9));
   assert.equal(crystalSystem('6/m', cell), 'hexagonal');
   assert.equal(crystalSystem('6/m', [4, 4.2, 5, 90, 90, 120]), 'triclinic'); // a != b: not that setting
+  // The cubic classes also contain a 3, and the trigonal ones use the hexagonal metric.
+  for (const laue of ['m-3m', 'm-3']) assert.equal(crystalSystem(laue, [5, 5, 5, 90, 90, 90]), 'cubic', laue);
+  for (const laue of ['-3', '-3m', '-31m', '6/mmm']) assert.equal(crystalSystem(laue, cell), 'hexagonal', laue);
+  for (const [laue, want] of [['4/mmm', 'tetragonal'], ['mmm', 'orthorhombic'], ['2/m', 'monoclinic'], ['-1', 'triclinic']]) {
+    assert.equal(crystalSystem(laue, [4, laue === '4/mmm' ? 4 : 4.5, 5, 90, 90, 90]), want, laue);
+  }
   const g = { wavelength: 0.71073, ox: 388.8, oy: 192.4, distance: 45.28, pixelMM: 0.1, d1: -0.44, d2: 0.02, theta: 20, thetaOffset: 0.05,
     alpha: 90, omegaOffset: 90, kappaOffset: 0.02, phiOffset: 0, tx: -0.05, ty: 0.06, tz: 0.01 };
   const G = prepare(g);
