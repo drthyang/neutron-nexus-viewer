@@ -6,14 +6,15 @@
 // of the volume (one per axis, along the axis's basis vector, so h = W·u) is at
 // h′ = T·W·u, and a new voxel centre h′ reads the old volume at u = (T·W)⁻¹·h′.
 
-import { isHKL } from './nexus.js';
+import { cellFromUB, isHKL } from './nexus.js';
 import { det3, inv3, mul, transpose } from './rigaku-geometry.js';
 
 /**
  * An ISAW UB file (*.mat, as Mantid's SaveIsawUB writes it): three rows of the transposed
  * UB in ISAW's frame (x along the beam, z up), then a b c α β γ and the cell volume.
  * Returns the UB in Mantid's frame (z along the beam, y up), row-major and without 2π,
- * as Mantid's LoadIsawUB reads it, and the cell the file lists (or null).
+ * as Mantid's LoadIsawUB reads it, the cell the file lists (or null) and the standard
+ * uncertainties on the line after it (a … γ and volume; null without that line).
  */
 export function parseIsawUB(text) {
   const rows = [];
@@ -32,9 +33,36 @@ export function parseIsawUB(text) {
   const ub = [];
   for (let i = 0; i < 3; i++) for (let j = 0; j < 3; j++) ub.push(F[j][(i + 1) % 3]);
   if (!(Math.abs(det3(ub)) > 1e-12)) throw new Error('The UB matrix in this file is singular.');
-  const listed = rows.slice(3).find((r) => r.length >= 6 && r.slice(0, 3).every((x) => x > 0) && r.slice(3, 6).every((x) => x > 0 && x < 180));
+  const at = rows.findIndex((r, i) => i >= 3 && r.length >= 6 && r.slice(0, 3).every((x) => x > 0) && r.slice(3, 6).every((x) => x > 0 && x < 180));
+  const listed = at >= 0 ? rows[at] : null, su = at >= 0 ? rows[at + 1] : null;
   const cell = listed ? { a: listed[0], b: listed[1], c: listed[2], alpha: listed[3], beta: listed[4], gamma: listed[5] } : null;
-  return { ub, cell };
+  const errors = su?.length >= 6 && su.every((x) => x >= 0) ? Object.fromEntries([...CELL_KEYS, 'volume'].map((k, i) => [k, su[i] ?? null])) : null;
+  return { ub, cell, errors };
+}
+
+const CELL_KEYS = ['a', 'b', 'c', 'alpha', 'beta', 'gamma'];
+
+/**
+ * An ISAW UB file for `ub` (Mantid's frame, row-major, no 2π), in the layout of Mantid's
+ * SaveIsawUB, which LoadIsawUB and parseIsawUB read: three rows of the transposed UB in
+ * ISAW's frame, a b c α β γ and the volume, their standard uncertainties (`errors`, as
+ * parseIsawUB returns them; 0 when unknown), then free text (`note` and the convention).
+ */
+export function formatIsawUB(ub, { errors = null, note = '' } = {}) {
+  const cell = cellFromUB(ub);
+  if (!cell) throw new Error('This UB matrix gives no valid cell.');
+  const r = Math.PI / 180, [ca, cb, cg] = [cell.alpha, cell.beta, cell.gamma].map((x) => Math.cos(x * r));
+  const volume = cell.a * cell.b * cell.c * Math.sqrt(1 - ca * ca - cb * cb - cg * cg + 2 * ca * cb * cg);
+  const num = (x, d) => x.toFixed(d).padStart(d + 6);
+  // File row j = column j of the ISAW UB; ISAW row r = Mantid row (r + 2) mod 3.
+  const lines = [0, 1, 2].map((j) => [0, 1, 2].map((k) => num(ub[3 * ((k + 2) % 3) + j], 10)).join(''));
+  lines.push([...CELL_KEYS.map((k) => cell[k]), volume].map((x) => num(x, 6)).join(''));
+  lines.push([...CELL_KEYS, 'volume'].map((k) => num(errors?.[k] ?? 0, 8)).join(''));
+  lines.push('', '', ...(note ? [note] : []),
+    'The above matrix is the transpose of the UB matrix in ISAW\'s frame (x along the beam, z up): the UB maps the',
+    'column vector (h, k, l) to (q\'x, q\'y, q\'z) with |Q\'| = 1/d. The next lines are a, b, c, alpha, beta, gamma,',
+    'the cell volume, and their standard uncertainties.');
+  return `${lines.join('\n')}\n`;
 }
 
 /** The display→hkl matrix W: column d is display axis d's basis vector (h = W·u). */

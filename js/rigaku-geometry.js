@@ -141,7 +141,8 @@ export const CELL_SYSTEMS = {
 export function crystalSystem(laue, cell) {
   const near = (x, y) => Math.abs(x - y) < 1;
   const [a, b, c, al, be, ga] = cell;
-  const want = /6|-3|3/.test(laue ?? '') ? 'hexagonal' : /m-3|^23/.test(laue ?? '') ? 'cubic'
+  // Cubic first: m-3 and m-3m also contain a 3.
+  const want = /m-3|m3|^23/.test(laue ?? '') ? 'cubic' : /6|3/.test(laue ?? '') ? 'hexagonal'
     : /4/.test(laue ?? '') ? 'tetragonal' : /mmm/.test(laue ?? '') ? 'orthorhombic' : /2\/m/.test(laue ?? '') ? 'monoclinic' : 'triclinic';
   const fits = {
     hexagonal: near(al, 90) && near(be, 90) && near(ga, 120) && Math.abs(a - b) / a < 0.01,
@@ -258,7 +259,8 @@ export function pixelX(G, i, j, R) {
 /**
  * Levenberg-Marquardt with a numerical Jacobian and a robust soft-L1 loss (iteratively
  * reweighted, scale `fScale` in residual units). `f(p)` returns a Float64Array of
- * residuals; `steps` are the finite-difference steps. Returns { p, cost, sigma, iterations }.
+ * residuals; `steps` are the finite-difference steps. Returns { p, cost, residuals, sigma,
+ * covariance (n × n, row-major), iterations }.
  */
 export function levenbergMarquardt(f, p0, { steps, maxIter = 60, fScale = 1.5, onIter } = {}) {
   let p = Float64Array.from(p0);
@@ -315,14 +317,15 @@ export function levenbergMarquardt(f, p0, { steps, maxIter = 60, fScale = 1.5, o
     }
   }
   const s2 = r.reduce((s, x, i) => s + (w[i] * x) ** 2, 0) / Math.max(1, m - n);
-  const sigma = new Float64Array(n);
+  const sigma = new Float64Array(n), covariance = new Float64Array(n * n).fill(NaN);
   for (let k = 0; k < n; k++) {
     const e = new Float64Array(n);
     e[k] = 1;
     const col = solve(Float64Array.from(A), e, n);
     sigma[k] = col ? Math.sqrt(Math.abs(col[k]) * s2) : NaN;
+    if (col) for (let j = 0; j < n; j++) covariance[j * n + k] = col[j] * s2;
   }
-  return { p, cost, residuals: r, sigma, iterations: iter };
+  return { p, cost, residuals: r, sigma, covariance, iterations: iter };
 }
 
 /** Solve A x = b (n x n, row-major Float64Array) by Gaussian elimination with pivoting. */

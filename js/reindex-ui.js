@@ -1,6 +1,7 @@
-// The "Reindex with a new UB" dialog: load an ISAW UB file, show how its indexing relates to
-// dataset A's, choose the new grid, resample A in its worker (worker.js, reindex.js), then
-// open the resulting Mantid MDHistoWorkspace as a new dataset or to compare, or save it.
+// The "Reindex with a new UB" dialog: load an ISAW UB file (or take the UB refined by
+// ub-refine-ui.js), show how its indexing relates to dataset A's, choose the new grid,
+// resample A in its worker (worker.js, reindex.js), then open the resulting Mantid
+// MDHistoWorkspace as a new dataset or to compare, or save it.
 
 import { cellFromUB } from './nexus.js';
 import { defaultSteps, defaultSubsamples, describeTransform, parseIsawUB, reindexGeometry, reindexGrid, reindexMatrix, reindexProblem } from './reindex.js';
@@ -18,8 +19,9 @@ const MAX_VOXELS = 6.5e7;
  * `hooks`: datasetA() returns A's description (dims, lattice) or null; name() its file name;
  * post(message) sends to A's worker; openFile(file) opens a file as dataset A,
  * openCompare(file) as the next comparison dataset; canCompare() says whether one can be added.
- * Returns handle(message) for the worker's replies, refresh() for when A is ready and
- * reset() for when A is replaced.
+ * Returns handle(message) for the worker's replies, refresh() for when A is ready,
+ * reset() for when A is replaced and useUB(name, parsed) to reindex with a UB given as
+ * parseIsawUB returns it (with an optional `note` for the file's logs).
  */
 export function setupReindex(hooks) {
   const dlg = $('reindex');
@@ -98,6 +100,7 @@ export function setupReindex(hooks) {
       ['New UB', `${esc(ub.name)}: ${cellText(cellNew)}`],
     ];
     const off = listed && (['a', 'b', 'c'].some((k) => Math.abs(listed[k] / cellNew[k] - 1) > 0.005) || ['alpha', 'beta', 'gamma'].some((k) => Math.abs(listed[k] - cellNew[k]) > 0.5));
+    ub.off = !!off;
     if (off) items.push(['', `<span class="rk-bad">The file lists ${cellText(listed)}, which its UB does not give: is it an ISAW UB file?</span>`]);
     items.push(['Transformation', `<span class="ri-mono">H′ = T·H, T = ${rows(T, 4)}</span>`]);
     let relation;
@@ -158,6 +161,8 @@ export function setupReindex(hooks) {
     progress('Starting', 0);
     hooks.post({
       type: 'reindex', id: ++job, T: ub.T, nsub: grid.nsub, ub: ub.ub, cell: [c.a, c.b, c.c, c.alpha, c.beta, c.gamma],
+      // The uncertainties the UB came with, unless they belong to a cell the UB does not give.
+      cellErrors: ub.errors && !ub.off ? ['a', 'b', 'c', 'alpha', 'beta', 'gamma'].map((k) => ub.errors[k] ?? 0) : null,
       grid: { min: grid.min, steps: grid.steps, shape: grid.shape, voxels: grid.voxels, edges: grid.edges },
       title: `${stem()}: reindexed with ${ub.name} in the NeXus Viewer`, fileName: fileName(),
       logs: {
@@ -166,6 +171,7 @@ export function setupReindex(hooks) {
         reindex_transform: `new indices = T x old indices, T rows: ${rows(ub.T, 8).replace(/−/g, '-')}`,
         reindex_previous_ub: `rows: ${rows(A.lattice.ub, 10).replace(/−/g, '-')}`,
         reindex_subsamples: grid.nsub,
+        ...(ub.note ? { reindex_ub_note: ub.note } : {}),
       },
     });
   };
@@ -225,6 +231,17 @@ export function setupReindex(hooks) {
   $('ri-cancel').onclick = $('ri-close').onclick = () => { if (!busy) dlg.close(); };
   dlg.addEventListener('cancel', (e) => { if (busy) e.preventDefault(); });
 
+  /** Reindex with a UB from elsewhere (the refinement), as if loaded from a file named `name`. */
+  function useUB(name, parsed) {
+    const A = hooks.datasetA(), why = reindexProblem(A);
+    if (why) return note($('reindex-status'), why, 'error');
+    try {
+      load(name, parsed, A);
+    } catch (err) {
+      note($('reindex-status'), `${name}: ${err.message}`, 'error');
+    }
+  }
+
   /** Dataset A was replaced: forget the UB and any reply still on its way. */
   function reset() {
     job++;
@@ -234,5 +251,5 @@ export function setupReindex(hooks) {
     $('ri-options').hidden = $('ri-result').hidden = $('ri-progress').hidden = true;
   }
 
-  return { handle, refresh, reset };
+  return { handle, refresh, reset, useUB };
 }

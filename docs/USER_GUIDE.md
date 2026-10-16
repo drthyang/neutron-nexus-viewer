@@ -69,7 +69,7 @@ Not applied: absorption (it needs the crystal's shape) and symmetry averaging (u
 
 - **Top bar**: the datasets, then the status and ⓘ for the full dataset details, a summary of the method and links to these guides. The status also shows work in progress (building a mask, I(Q), the NEBULA3D export, opening B, C or D): the job that started first and how far it is, with the number of others ("Mask · 45% +1"), and a thin bar along the bottom edge of the top bar for all of them together; hover it for the list. Each dataset is a chip with its file name over one line of facts: the cell (angles other than 90°), the grid and the measured fraction; hover for the details, such as the reciprocal lattice, bin widths and mask. Click A to open another file, or *Compare…* to add another one (B, C, D); see [Comparing](#comparing-datasets). Long file names are shortened in the middle.
 - **Control panel** (left, collapsible; each section folds to a one-line summary), in the order you work:
-  - **Processing**: the pipeline *Measured voxels → Mask → Symmetry average → Views → NEBULA3D*, one line per stage with its state, followed by the Symmetry, Mask and Reindex controls. Active stages are highlighted, and clicking a stage jumps to its controls. Hover a card's title for what it does; longer help in the dialogs and popovers is folded until you open it.
+  - **Processing**: the pipeline *Measured voxels → Mask → Symmetry average → Views → NEBULA3D*, one line per stage with its state, followed by the Symmetry, Mask and UB controls. Active stages are highlighted, and clicking a stage jumps to its controls. Hover a card's title for what it does; longer help in the dialogs and popovers is folded until you open it.
   - **Export**: the last step: I(Q), the volume reduced to 1-D, and handing the processed volume to NEBULA3D.
 - **Workspace**: a header row with the click mode, the display controls (see [Display](#display)) and the layout, then four views: HK, HL, KL, and the 3-D view, I(Q) or the line cut, which share the fourth place (the *3D | I(Q) | Cut* switch in its header picks one). On narrower windows the header row drops its button labels and colorbar (hover a button for its name), and wraps onto a second row when it still does not fit.
 - **Panel footer**: copyright, the license and a link to this documentation. The ⓘ popover links to each guide.
@@ -96,13 +96,33 @@ The mask removes voxels from the measured data before symmetry averaging:
 
 *Apply mask* builds it (a few seconds for a 401³ volume), and *Clear* removes it. *Show removed voxels* averages only what the mask took out, so you can check that it hits artifacts. *Download* saves the mask as a gzipped NumPy `.npy` in the signal's storage order (1 = edge, 2 = outlier): `signal[mask > 0] = np.nan` applies it in Python. See [Method → Mask](METHOD.md#masking-detector-edge-artifacts).
 
+## Refining the UB
+
+*Refine UB…* (in the Processing panel, on the **UB · refine, reindex** card under the mask) fits the orientation and the cell of dataset A's UB to the Bragg peaks of the volume, with the cell constrained to a crystal system, and hands the refined UB to [reindexing](#reindexing-with-a-new-ub). A needs HKL axes with uniform bins and a UB matrix, as for reindexing. Refine a volume that is not symmetrized: averaging with a UB that is off splits each peak into the images of its equivalents.
+
+- **Crystal system**: cubic (a), hexagonal or trigonal on hexagonal axes (a, c), trigonal on rhombohedral axes (a, α), tetragonal (a, c), orthorhombic (a, b, c), monoclinic with b or c unique (a, b, c and β or γ), or triclinic (all six). The dialog starts with the system of the Laue class chosen under **Symmetry averaging** when A's cell fits it, and otherwise with the most symmetric system whose metric A's cell has within 1% and 1°. A system the cell is more than 5% or 5° away from is refused: the cell is in another setting, so reindex it to the standard setting first.
+- **Index tolerance**: peaks within this many r.l.u. of integer indices, in every index, are fitted (0.15 by default).
+- **Peak search** (folded): how many of the strongest peaks to use (500), the threshold (local maxima more than 10 robust standard deviations above the median voxel), and the box around each peak, in voxels (empty: sized to the peaks' width).
+
+*Find peaks and refine* finds the peaks in A's worker, then fits. Changing the system or the tolerance refits at once from the same peaks. The result lists:
+- the peaks found, those within the tolerance, and those used: a peak far off the fit (a twin, a powder ring) is left out;
+- the refined cell with its standard uncertainties, written as 4.19979(3), and its volume;
+- the rms residual, in Å⁻¹ and in voxels, and per index;
+- the unconstrained (triclinic) fit, to compare;
+- how far the orientation turned, and how far reindexing would move the indices at the grid's corners;
+- a warning when the peaks used did not settle, fewer than half were used, the residuals average more than half a voxel, or the constraint raises the rms by more than 50%.
+
+*Reindex with this UB…* opens the [reindexing](#reindexing-with-a-new-ub) dialog with the refined UB. *Save UB (.mat)* writes an ISAW UB file with the cell and its uncertainties, which Mantid's `LoadIsawUB` reads. *Peaks (.csv)* saves every peak found: its integer indices, its indices in A and under the refined UB, d, the residual, its intensity and whether it was used.
+
+The uncertainties are statistical: they do not include the calibration of the reduction (detector distance, flight paths, wavelength), which scales every cell refined from the volume. See [Method → Refining the UB](METHOD.md#refining-the-ub).
+
 ## Reindexing with a new UB
 
-*Load ISAW UB file…* (in the Processing panel, under the mask) resamples dataset A onto the HKL grid of another UB matrix, such as one refined in Mantid or one in another cell setting, and opens the result as a new dataset or to compare. The file is an ISAW UB file (`.mat`), as Mantid's `SaveIsawUB` writes it. A needs HKL axes with uniform bins and a UB matrix, as Mantid `MDHistoWorkspace` files and NEBULA3D volumes have.
+*Load ISAW UB…* (on the **UB · refine, reindex** card) resamples dataset A onto the HKL grid of another UB matrix, such as one refined in Mantid, one [refined here](#refining-the-ub) or one in another cell setting, and opens the result as a new dataset or to compare. The file is an ISAW UB file (`.mat`), as Mantid's `SaveIsawUB` writes it. A needs HKL axes with uniform bins and a UB matrix, as Mantid `MDHistoWorkspace` files and NEBULA3D volumes have.
 
 The dialog shows both cells and the transformation between the indexings, H′ = T·H. When T is close to an integer matrix, it names the setting (the identity for a refined UB of the same cell) and the angle by which the orientation turned. Otherwise it warns that the new UB describes a differently oriented lattice, which usually means a UB from another sample frame. The new grid covers the measured voxels. Each voxel size defaults to one old voxel along that direction, rounded to 1/n so that integer indices fall on voxel centres; *Sub-samples* sets how many samples per axis each new voxel averages. A 101³ volume takes under a second; grids above 65 M voxels are refused, so use larger voxels there.
 
-The result has [H,0,0], [0,K,0] and [0,0,L] axes of the new cell, the new UB, uncertainties when A has them, and the transformation, the previous UB and both file names in its logs. *Download .nxs* saves it as a Mantid file that `LoadMD` reads. The volume is resampled as measured, so mask and symmetrize the result. A dataset opened to compare is drawn on A's axes: equal coordinates are equal indices, which are not the same Q in the two indexings. See [Method → Reindexing](METHOD.md#reindexing-with-a-new-ub).
+The result has [H,0,0], [0,K,0] and [0,0,L] axes of the new cell, the new UB with the cell's standard uncertainties when the UB came with them (Mantid's `unit_cell_*_error`), uncertainties when A has them, and the transformation, the previous UB and both file names (and, for a refined UB, the refinement) in its logs. *Download .nxs* saves it as a Mantid file that `LoadMD` reads. The volume is resampled as measured, so mask and symmetrize the result. A dataset opened to compare is drawn on A's axes: equal coordinates are equal indices, which are not the same Q in the two indexings. See [Method → Reindexing](METHOD.md#reindexing-with-a-new-ub).
 
 ## Display
 
