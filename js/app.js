@@ -72,9 +72,11 @@ let pendingProcessing = null;
 const DEMO = { url: 'examples/demo_300K.nxs', compare: 'examples/demo_10K.nxs', sym: '6/mmm', mask: '1' };
 // True while the color range is the automatic one (not edited by hand).
 let rangeIsAuto = false;
+// The vmax the last Auto set, the middle of the saturation knob (with own ranges, each `ranges[k].base`).
+let autoMax = null;
 // Own color ranges, for datasets on different scales (X-ray and neutron counts):
 // with `ownRanges` each dataset k (0 for A, 1–3 for B–D) has its own `ranges[k]`,
-// { min, max, soft, auto }, and the color controls edit dataset `rangeK`'s. Otherwise
+// { min, max, soft, auto, base }, and the color controls edit dataset `rangeK`'s. Otherwise
 // the controls hold the one range all datasets share.
 let ownRanges = false, ranges = [], rangeK = 0;
 // The export for NEBULA3D being built: { name, send, attrs }. `handoff` is the
@@ -323,6 +325,7 @@ function openFile(file) {
   autoscaled = false;
   ranges = [];
   rangeK = 0;
+  autoMax = null;
   symmetry = NO_SYMMETRY;
   mask = null;
   iso = null;
@@ -1240,7 +1243,8 @@ function autoRange(only = null) {
   if (ownRanges) {
     for (const k of only === null ? readySets() : [only]) {
       const signed = !!(k ? slots[k - 1].meta : meta).signed;
-      ranges[k] = { ...autoLimits(panels.map((p) => layerOf(p, k)), signed), auto: true };
+      const auto = autoLimits(panels.map((p) => layerOf(p, k)), signed);
+      ranges[k] = { ...auto, auto: true, base: auto.max };
     }
     showRange();
   } else {
@@ -1249,8 +1253,29 @@ function autoRange(only = null) {
     $('vmax').value = max;
     $('soft').value = soft;
     rangeIsAuto = true;
+    autoMax = max;
+    showKnob();
   }
   redraw();
+}
+
+/** The middle of the saturation knob: the Auto vmax of the range the controls edit (the vmax shown, if none yet). */
+function knobBase() {
+  const r = ownRanges ? ranges[rangeK] : null;
+  const base = ownRanges ? r?.base : autoMax;
+  if (base > 0) return base;
+  const max = Number($('vmax').value);
+  if (!(max > 0)) return null;
+  if (ownRanges) { if (r) r.base = max; } else autoMax = max;
+  return max;
+}
+
+/** Put the saturation knob at the vmax in the controls: log10(vmax / base), at an end when beyond. */
+function showKnob() {
+  const knob = $('vknob'), base = knobBase(), max = Number($('vmax').value);
+  if (base && max > 0) knob.value = clamp(Math.log10(max / base), Number(knob.min), Number(knob.max));
+  knob.setAttribute('aria-valuetext', `vmax ${$('vmax').value}`);
+  paint(knob);
 }
 
 /** Show dataset k's own color range in the color controls, which then edit it. */
@@ -1263,6 +1288,7 @@ function showRange(k = rangeK) {
     $('soft').value = r.soft;
   }
   showRangeControls();
+  showKnob();
 }
 
 /**
@@ -1272,6 +1298,8 @@ function showRange(k = rangeK) {
  */
 function setOwnRanges(on) {
   const allAuto = readySets().every((k) => ranges[k]?.auto !== false);
+  // Back to one range, the knob keeps the middle of the range left in the controls.
+  if (ownRanges && !on) autoMax = ranges[rangeK]?.base ?? autoMax;
   ownRanges = on;
   // The controls edit the range of the dataset shown alone, or A's.
   rangeK = on ? shownIndex() : 0;
@@ -1280,6 +1308,7 @@ function setOwnRanges(on) {
     autoRange();
   } else {
     rangeIsAuto = false;
+    showKnob();
     redraw();
   }
   showCompare();
@@ -1305,6 +1334,7 @@ function showRangeControls() {
   const of = own ? `${LETTERS[rangeK]}'s color range` : 'the color scale';
   $('vmin').title = `Low end of ${of}`;
   $('vmax').title = `High end of ${of}`;
+  $('vknob').title = `Saturation: vmax of ${of} on a log scale, from about 1/30 to 30 times Auto's in the middle. Left saturates more; arrow keys step it, Auto resets it`;
   $('soft-wrap').title = `Asinh softening${own ? ` of ${LETTERS[rangeK]}'s range` : ''}: values below it are shown nearly linearly`;
   $('auto').title = `vmin 0, vmax at the 97th percentile and softening at the median of positive values in ${own ? 'each dataset\'s own' : 'the current'} slices`;
 }
@@ -3873,12 +3903,28 @@ segmented($('range-of'), (value) => {
 });
 $('error-close').onclick = () => error('');
 // A range edited by hand is no longer automatic (with own ranges, the range of the dataset edited).
+const rangeEdited = (base) => {
+  if (ownRanges) ranges[rangeK] = { min: $('vmin').value, max: $('vmax').value, soft: $('soft').value, auto: false, base: ranges[rangeK]?.base ?? base };
+  else rangeIsAuto = false;
+};
 for (const id of ['vmin', 'vmax', 'soft']) {
   $(id).addEventListener('input', () => {
-    if (ownRanges) ranges[rangeK] = { min: $('vmin').value, max: $('vmax').value, soft: $('soft').value, auto: false };
-    else rangeIsAuto = false;
+    rangeEdited();
+    if (id === 'vmax') showKnob();
   });
 }
+// The saturation knob sets vmax = base · 10^value, as if typed; signed data (a ΔPDF) keeps its range symmetric, vmin = −vmax.
+$('vknob').addEventListener('input', () => {
+  const base = knobBase(), v = Number($('vknob').value);
+  if (!base) return;
+  const max = v === 0 ? base : sig(base * 10 ** v, 3);
+  $('vmax').value = max;
+  const signed = !!(ownRanges && rangeK ? slots[rangeK - 1].meta : meta)?.signed;
+  if (signed && $('scale').dataset.value !== 'log') $('vmin').value = -max;
+  $('vknob').setAttribute('aria-valuetext', `vmax ${max}`);
+  rangeEdited(base);
+  redraw();
+});
 for (const id of ['cmap', 'vmin', 'vmax', 'soft', 'limit', 'angles', 'guides', 'grid']) $(id).addEventListener('input', redraw);
 $('cmap').addEventListener('change', () => { cmapChoice = $('cmap').value; });
 for (const id of ['cmap', 'angles', 'guides', 'grid']) $(id).addEventListener('change', persist);
