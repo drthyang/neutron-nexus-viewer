@@ -129,6 +129,7 @@ The result has [H,0,0], [0,K,0] and [0,0,L] axes of the new cell, the new UB wit
 The color scale is set in the workspace header, above the views: the colormap, vmin and vmax on either side of the colorbar, and the scale.
 
 - **Scale**: asinh (with a softening value), lin or log. *Auto* sets vmin to 0, vmax to the 97th percentile, and softening to the median of the positive values in the current slices.
+- **Saturation knob** (the slider under the colorbar): sets vmax on a log scale, from about 1/30 to 30 times the *Auto* vmax in the middle. Left saturates more. For signed data (a ΔPDF), vmin follows as −vmax, except on log; otherwise vmin stays. vmax and the knob follow each other. The arrow keys step the knob by 10^0.02, and Home and End go to the ends. *Auto* puts it back in the middle. With own color ranges, it sets the range that vmin and vmax show.
 - **Own color ranges** (when comparing): the chain button left of vmin gives each dataset its own vmin, vmax and softening, for data on different scales such as X-ray and neutron counts. See [Comparing datasets](#comparing-datasets).
 
 The sliders button next to *Auto* opens the other options:
