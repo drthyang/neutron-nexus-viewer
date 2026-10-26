@@ -78,7 +78,7 @@ The layout follows the screen:
 
 - **Narrow screens** (below 1000 px, such as phones and tablets held upright): the views come first, one under the other (two per row from 700 px), each at most as tall as the screen, and the panel follows them; the page scrolls. The layout buttons are hidden, since every view is shown. When comparing, the top bar leaves out the app name, the status text and the *Compare…* label (the button keeps its icon), so the file names fit.
 - **Short windows**: the panel stays beside the views, which keep a usable height; the views scroll.
-- **Touch screens**: buttons, fields and sliders are 36–44 px tall, and two fingers pinch and pan a slice (see [Clicking a slice](#clicking-a-slice)).
+- **Touch screens**: buttons, fields and sliders are 36–44 px tall, and two fingers pinch and pan a slice (see [Zoom and pan](#zoom-and-pan)).
 - **Large screens at 100% scaling** (more than 2560×1440, such as 4K and 5K monitors): the whole interface, plot text included, is drawn 1.25–2× larger, so it is not tiny. Browser zoom (⌘ + / Ctrl +) adjusts it further.
 
 ## Symmetry averaging
@@ -148,28 +148,38 @@ Axes are drawn with the reciprocal metric of the cell. Axes that share a unit ha
 - **Header**: plane, position, coverage and processing, with buttons for *Reset zoom*, *Save PNG*, *focus* and *maximize*.
 - **Hover**: shows the coordinates, the value and the number of pooled voxels.
 
+### Zoom and pan
+
+Every slice zooms and pans the same way in any click mode, as the slice views in [NEBULA3D](https://drthyang.github.io/nebula3d/) do, and as an embedded map does:
+
+- **Wheel**: when the page cannot scroll (the views fill the window), the wheel zooms about the pointer. When it can (a short window, or the stacked views on a narrow screen), a plain wheel or two-finger scroll over a view scrolls the page, and the view says *Use Ctrl + scroll to zoom* (*⌘ + scroll* on macOS) for a moment; **Ctrl/⌘ + wheel** zooms about the pointer. A trackpad **pinch** zooms too (Chrome, Edge and Firefox send it as Ctrl + wheel; Safari's pinch gestures are read too). One wheel notch is a factor 2 in any browser; a trackpad zooms smoothly. A sideways scroll is left to the page.
+- **Drag**: a **Shift-drag** or a **middle-button drag** pans; on a touch screen, two fingers pinch and pan. The window's centre stays on the data, so a slice cannot be dragged off screen.
+- **Double-click** (or *Reset zoom* in the view's header) returns to the full view.
+- **Keys**: on a focused slice (click it, or Tab to it), **+ / −** zoom about the centre, the **arrow keys** pan a tenth of the view, and **0** returns to the full view.
+
+Zooming keeps the window's shape and stops at two bins across; zooming out to the full view's size returns to the full view.
+
 ### Clicking a slice
 
-The workspace header switches what the mouse does:
+The workspace header switches what a click or a drag does:
 
 | Mode | Click | Drag |
 | --- | --- | --- |
-| **Navigate** | moves the other two slices through the point | the same, continuously |
-| **Zoom** | zooms in 2× around the point | zooms into the box; with a common unit, the window is widened so both axes span the same length |
-| **Move** | — | slides the visible region |
+| **Navigate** (default) | moves the other two slices through the point | the same, continuously |
+| **Box zoom** | — | zooms into the box, then returns to *Navigate*; with a common unit, the window is widened so both axes span the same length |
 | **Cut** | — | draws a [line cut](#line-cuts); a drag from an end of the cut moves that end |
 
-In every mode, double-click (or *Reset zoom*) returns to the full view. On a touch screen, two fingers zoom by pinching and pan by moving together.
+*Box zoom* is a one-shot tool: its button arms it, one box dragged on a slice or a plot zooms into it, and the views are back in *Navigate*. A second press of its button, or Esc, puts it away; a click, or a box under two bins across, leaves it armed. Shift and the middle button pan in every mode, also in *Cut*: Shift held before a drag pans, and pressed during a drag it keeps the cut along a lattice direction.
 
 ## Line cuts
 
 A line cut is a 1-D profile through the volume along any line in 3-D: drawn in one of the slices (*3-D volume → 2-D slice → 1-D cut*), or typed, like one along (H, H, H). Each point averages a rod of voxels around the line, W across in every direction, not the slice's slab. A cut drawn in a slice lies in its plane, so it follows the slice as you move it; the slice's thickness does not change the cut.
 
-- **Drawing**: choose **Cut** in the workspace header (or *Draw a cut* in the empty cut view) and drag across a slice. The ends snap to voxel centres; hold Shift to keep the cut along a lattice direction, such as (H, 0), (H, H) or (H, 2H). Drag an end to change the cut, or drag elsewhere to draw a new one. The first cut shows in the fourth place; after that the fourth place stays as you set it, so you can change a cut while watching the 3-D view. The cut shows on a slice it lies in as a line between two handles inside a dashed band, where its rod meets the slice's plane; on the other slices, where its rod passes through them: a dashed ellipse, its section, around a dot on its line; and in the 3-D view as a line through the slices inside the translucent rod of voxels it averages.
+- **Drawing**: choose **Cut** in the workspace header (or *Draw a cut* in the empty cut view) and drag across a slice. The ends snap to voxel centres; press Shift during the drag to keep the cut along a lattice direction, such as (H, 0), (H, H) or (H, 2H) (Shift held before the drag pans the slice instead). Drag an end to change the cut, or drag elsewhere to draw a new one. The first cut shows in the fourth place; after that the fourth place stays as you set it, so you can change a cut while watching the 3-D view. The cut shows on a slice it lies in as a line between two handles inside a dashed band, where its rod meets the slice's plane; on the other slices, where its rod passes through them: a dashed ellipse, its section, around a dot on its line; and in the 3-D view as a line through the slices inside the translucent rod of voxels it averages.
 - **Typed ends** (footer): *From* and *To* take three coordinates. When they share one, like `-3, 0, 1` and `3, 0, 1`, the cut lies in the slice through it, which moves there: for these, the HK slice moves to L = 1 (the cut's current slice is kept when the ends fit it). When they share none, like `-2, -2, -2` and `2, 2, 2`, the cut is free in 3-D: here along (H, H, H), and the slices stay where they are.
 - **Width W**: the diameter of the rod around the line, the same in every direction across it: in the slice's plane and out of it. It is in Å⁻¹ with a lattice (with 2π, as for I(Q)) or in the axes' unit otherwise. The slider covers half a voxel to 30 voxels on a log scale; empty means three voxels.
 - **Points**: along the axis the cut changes most along (H for a cut along (H, 0.5H+1, 0) or (H, H, H)), every bin width of that axis by default; *Step* in the options changes it. Each point averages the voxels whose centres lie within W/2 of the line, in 3-D, and within half a step of the point, pooled with their symmetry equivalents as in the slices. See [Method → Line cuts](METHOD.md#line-cuts).
-- **Plot**: as for I(Q): *Lin | Log*, hover to read the point's coordinates and I ± σ with the voxels pooled for each dataset (the point is marked on the slice), drag a box to zoom (a flat drag zooms along the cut only), and double-click for the full range. The options also hide the error band. σ comes from the file's uncertainties, read the first time a cut or I(Q) needs them.
+- **Plot**: as for I(Q): *Lin | Log*, hover to read the point's coordinates and I ± σ with the voxels pooled for each dataset (the point is marked on the slice), drag a box to zoom (a flat drag zooms along the cut only), Ctrl/⌘ + wheel or a pinch to zoom about the pointer, Shift-drag to pan, and double-click for the full range. The options also hide the error band. σ comes from the file's uncertainties, read the first time a cut or I(Q) needs them.
 - **Comparing**: both datasets are cut along the same line with their own grid, symmetry and mask, and drawn as two curves; *A / Split / B* chooses which are shown.
 - **Download** (the arrow in the header) saves the points in a file named after the path, like `<file>_cut_H_0_1.csv` (`<A>_vs_<B>_cut_…` when comparing), as
   - **CSV**: a header row (`H,K,L,I,sigma,voxels`, or `I_A`, `sigma_A`, … for each dataset when comparing), then one row per point with its three coordinates and I, σ and voxels, and empty cells where there is no value; for spreadsheets and `pandas.read_csv`.
@@ -192,7 +202,7 @@ I(Q) reduces the masked, symmetrized volume to one dimension: the mean intensity
 - **Options** (the sliders button): *Split voxels* shares each voxel between the shells it overlaps by dividing it into 2³ or 3³ sub-cells, each binned by its own |Q|; *Centres* bins whole voxels, which is faster but aliases when ΔQ is close to the voxel size. The error band (±σ) and the shell coverage (the dashed line, right axis) can be hidden.
 - **Uncertainties**: σ is propagated from the file's `errors_squared` (or `errors`), read the first time I(Q) is computed. Without them, the curve has no error band and the text file has `nan` in its σ column.
 - **Coverage**: the fraction of each shell's volume that has data, after symmetry. Where it falls (beyond the measured region, or where shells leave the grid), I(Q) rests on few voxels.
-- **Plot**: hover to read Q, d = 2π/Q, and I ± σ with the coverage of each dataset. Drag a box to zoom (a flat drag zooms Q only), click in *Zoom* mode to zoom 2×, drag in *Move* mode to pan, and double-click (or *Reset zoom*) for the full range.
+- **Plot**: hover to read Q, d = 2π/Q, and I ± σ with the coverage of each dataset. Drag a box to zoom (a flat drag zooms Q only), in any click mode; with *Box zoom* armed, the box also returns the views to *Navigate*. The wheel, a pinch, Shift- or middle-drag and the keys zoom and pan as on a slice (see [Zoom and pan](#zoom-and-pan)): along Q, and the intensity too once a box has set its range. The window starts at Q ≥ 0. Double-click (or *Reset zoom*) returns to the full range.
 - **Comparing**: both datasets are reduced on the same shells, each with its own grid, cell and mask, and drawn as two curves; *A / Split / B* chooses which are shown.
 - **Download** (in the view's header or the Export section) saves a text file, `<file>_IQ.dat` (when comparing, the two names joined with their shared words once: `demo_300K` and `demo_10K` give `demo_300K_vs_10K_IQ.dat`): a commented header with the file, cell, shells (also as Rebin parameters, to reproduce them in Mantid), symmetry, mask and normalization, then one row per shell with Q (the shell centre, the midpoint of its edges), I, σ, coverage and the number of voxels with data, for A and B when comparing. `numpy.loadtxt` reads it directly. *Save PNG* exports the plot at 3× with a title and a legend.
 
@@ -232,4 +242,4 @@ The **Export** section at the bottom of the panel hands the processed volume to 
 
 - **Layouts**: *Quad* (2×2), *Focus* (one large view with the other three beside it) and *Single*. In *Focus*, the small views are thumbnails: hovering one highlights it, and clicking it (or Enter) shows it large. Each view's header can focus or maximize it, and double-clicking a header maximizes it. Esc returns.
 - **Save PNG** exports a view at 3× resolution. Slice exports include a title, their own colorbar and the integer grid when it is on, without guides. When comparing, they keep the split and the dataset tags.
-- **Remembered settings**: the colormap, scale, click mode, layout, the view in the fourth place, the I(Q) and line cut options, panel state and folded sections are remembered per browser.
+- **Remembered settings**: the colormap, scale, click mode (*Navigate* or *Cut*; an armed *Box zoom* is not kept), layout, the view in the fourth place, the I(Q) and line cut options, panel state and folded sections are remembered per browser.

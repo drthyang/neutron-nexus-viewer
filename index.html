@@ -328,10 +328,16 @@ body.panel-collapsed .panel { visibility: hidden; }
 .view-body { position: relative; flex: 1; min-height: 0; }
 .view-body canvas { position: absolute; inset: 0; width: 100%; height: 100%; display: block; }
 .view-body canvas.plot { cursor: crosshair; touch-action: none; }
-.workspace[data-click="zoom"] .view-body canvas.plot { cursor: zoom-in; }
-.workspace[data-click="move"] .view-body canvas.plot { cursor: grab; }
-.workspace[data-click="move"] .view-body canvas.plot.panning { cursor: grabbing; }
+.workspace[data-click="box"] .view-body canvas.plot { cursor: zoom-in; }
+.workspace .view-body canvas.plot.panning { cursor: grabbing; }
+.view-body canvas.plot:focus-visible { outline: 2px solid var(--accent-line); outline-offset: -2px; }
 .view-body canvas.scene { cursor: grab; }
+/* The zoom hint: over a view on a page that scrolls, a plain wheel scrolls the page (app.js, wireZoom). */
+.zoom-hint {
+  position: absolute; inset: 0; z-index: 3; display: flex; align-items: center; justify-content: center; padding: 1.2rem; pointer-events: none;
+  background: rgba(18, 24, 33, 0.55); color: #fff; font-size: 1.5rem; font-weight: 600; text-align: center; animation: zoom-hint-in 150ms ease-out;
+}
+@keyframes zoom-hint-in { from { opacity: 0; } }
 /* A button in the middle of an empty view, such as Compute I(Q). */
 .view-cta { position: absolute; left: 50%; top: 50%; z-index: 2; transform: translate(-50%, -50%); box-shadow: var(--shadow-1); }
 .overlay-chip {
@@ -727,13 +733,11 @@ body.dragging.drop-b::after { content: "Drop to compare as dataset " attr(data-d
         <svg width="16" height="16" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.5" aria-hidden="true"><rect x="1.75" y="2.25" width="12.5" height="11.5" rx="1.5"/><path d="M6 2.5v11"/></svg>
       </button>
       <div id="click-mode" class="segmented accent" data-value="navigate" role="group" aria-label="Clicking a slice">
-        <button type="button" data-value="navigate" class="on" title="Navigate: click or drag to move the other two slices through the point">
+        <button type="button" data-value="navigate" class="on" title="Navigate: click or drag to move the other two slices through the point. Wheel with Ctrl/⌘, or pinch, zooms; Shift-, middle- or two-finger drag pans; double-click resets the view">
           <svg width="14" height="14" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" aria-hidden="true"><circle cx="8" cy="8" r="4.5"/><path d="M8 1v3M8 12v3M1 8h3M12 8h3"/></svg><span class="hide-md">Navigate</span></button>
-        <button type="button" data-value="zoom" title="Zoom: drag a rectangle to zoom into it; click to zoom in 2×; double-click for the full view">
-          <svg width="14" height="14" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" aria-hidden="true"><circle cx="7" cy="7" r="4.8"/><path d="M10.5 10.5 14.5 14.5M7 4.8v4.4M4.8 7h4.4"/></svg><span class="hide-md">Zoom</span></button>
-        <button type="button" data-value="move" title="Move: drag to move the visible region; double-click for the full view">
-          <svg width="14" height="14" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M8 1.5v13M1.5 8h13M8 1.5 6 3.5M8 1.5l2 2M8 14.5l-2-2M8 14.5l2-2M1.5 8l2-2M1.5 8l2 2M14.5 8l-2-2M14.5 8l-2 2"/></svg><span class="hide-md">Move</span></button>
-        <button type="button" data-value="cut" title="Cut: drag across a slice to draw a line cut, shown in the fourth view; drag an end to change it, and hold Shift to keep it along a lattice direction">
+        <button type="button" data-value="box" title="Box zoom: drag a box on a view to zoom into it, then back to Navigate (Esc or a second press cancels)">
+          <svg width="14" height="14" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" aria-hidden="true"><path d="M1.75 4.25v-2.5h2.5M9.75 1.75h2.5v2.5M1.75 9.75v2.5h2.5M6.25 1.75h1.5M1.75 6.25v1.5M12.25 6.25v1M6.25 12.25h1"/><circle cx="10.75" cy="10.75" r="2.5"/><path d="M12.6 12.6 14.5 14.5"/></svg><span class="hide-md">Box zoom</span></button>
+        <button type="button" data-value="cut" title="Cut: drag across a slice to draw a line cut, shown in the fourth view; drag an end to change it. Press Shift during the drag to keep the cut along a lattice direction">
           <svg width="14" height="14" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" aria-hidden="true"><path d="M3.5 12.5l9-9"/><circle cx="3" cy="13" r="1.6" fill="currentColor" stroke="none"/><circle cx="13" cy="3" r="1.6" fill="currentColor" stroke="none"/></svg><span class="hide-md">Cut</span></button>
       </div>
       <div id="compare-view" class="segmented" data-value="split" role="group" aria-label="Datasets shown" hidden>
@@ -936,7 +940,7 @@ body.dragging.drop-b::after { content: "Drop to compare as dataset " attr(data-d
       <div id="iq-split" class="segmented fill" data-value="2"><button type="button" data-value="1">Centres</button><button type="button" data-value="2" class="on">2³</button><button type="button" data-value="3">3³</button></div></div>
     <label class="switch"><input id="iq-band" type="checkbox" checked><span class="switch-track"></span><span class="switch-label">Error band (±σ)</span></label>
     <label class="switch" title="Fraction of each shell's volume that has data (right axis)"><input id="iq-coverage" type="checkbox" checked><span class="switch-track"></span><span class="switch-label">Shell coverage</span></label>
-    <p class="note">Drag to zoom, double-click for the full range.</p>
+    <p class="note">Drag a box to zoom, Ctrl/⌘ + scroll or pinch to zoom about the pointer, Shift-drag to pan, double-click for the full range.</p>
   </div>
 </div>
 
@@ -945,7 +949,7 @@ body.dragging.drop-b::after { content: "Drop to compare as dataset " attr(data-d
   <div class="pop-body">
     <div class="prow" title="Spacing of the cut's points along its axis; empty for that axis's bin width"><label class="plabel" for="cut-step">Step</label><input id="cut-step" class="num" type="number" min="0" step="any" aria-label="Cut step"></div>
     <label class="switch"><input id="cut-band" type="checkbox" checked><span class="switch-track"></span><span class="switch-label">Error band (±σ)</span></label>
-    <p class="note">In <b>Cut</b> mode, drag across a slice; Shift keeps it along a lattice direction.</p>
+    <p class="note">In <b>Cut</b> mode, drag across a slice; press Shift during the drag to keep it along a lattice direction.</p>
     <details class="help"><summary>More about cuts</summary><p>Drag an end to change a cut. A cut drawn in a slice lies in its plane and follows the slice's position; typed ends that share no coordinate make a cut free in 3-D, such as one along (H, H, H). Each point averages the voxels in a rod of diameter W around the line, pooled with their symmetry equivalents as in the slices.</p></details>
   </div>
 </div>
