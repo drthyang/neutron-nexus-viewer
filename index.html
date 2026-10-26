@@ -940,7 +940,7 @@ body.dragging.drop-b::after { content: "Drop to compare as dataset " attr(data-d
       <div id="iq-split" class="segmented fill" data-value="2"><button type="button" data-value="1">Centres</button><button type="button" data-value="2" class="on">2³</button><button type="button" data-value="3">3³</button></div></div>
     <label class="switch"><input id="iq-band" type="checkbox" checked><span class="switch-track"></span><span class="switch-label">Error band (±σ)</span></label>
     <label class="switch" title="Fraction of each shell's volume that has data (right axis)"><input id="iq-coverage" type="checkbox" checked><span class="switch-track"></span><span class="switch-label">Shell coverage</span></label>
-    <p class="note">Drag to zoom, double-click for the full range.</p>
+    <p class="note">Drag a box to zoom, Ctrl/⌘ + scroll or pinch to zoom about the pointer, Shift-drag to pan, double-click for the full range.</p>
   </div>
 </div>
 
@@ -949,7 +949,7 @@ body.dragging.drop-b::after { content: "Drop to compare as dataset " attr(data-d
   <div class="pop-body">
     <div class="prow" title="Spacing of the cut's points along its axis; empty for that axis's bin width"><label class="plabel" for="cut-step">Step</label><input id="cut-step" class="num" type="number" min="0" step="any" aria-label="Cut step"></div>
     <label class="switch"><input id="cut-band" type="checkbox" checked><span class="switch-track"></span><span class="switch-label">Error band (±σ)</span></label>
-    <p class="note">In <b>Cut</b> mode, drag across a slice; Shift keeps it along a lattice direction.</p>
+    <p class="note">In <b>Cut</b> mode, drag across a slice; press Shift during the drag to keep it along a lattice direction.</p>
     <details class="help"><summary>More about cuts</summary><p>Drag an end to change a cut. A cut drawn in a slice lies in its plane and follows the slice's position; typed ends that share no coordinate make a cut free in 3-D, such as one along (H, H, H). Each point averages the voxels in a rod of diameter W around the line, pooled with their symmetry equivalents as in the slices.</p></details>
   </div>
 </div>

@@ -23,7 +23,7 @@ What the viewer is for, everything it does with links to the details, and a firs
 
 | Area | What you get | Read more |
 | --- | --- | --- |
-| **Slices** | HK, HL and KL cuts with live slab center and thickness. Click to move the other slices through a point, drag a box to zoom, or drag to pan (pinch on a touch screen); quad, focus and single layouts | [Slice views](USER_GUIDE.md#slice-views) |
+| **Slices** | HK, HL and KL cuts with live slab center and thickness. Click to move the other slices through a point; zoom with Ctrl/⌘ + scroll, a pinch or a box, and pan with Shift-drag, as in NEBULA3D's views; quad, focus and single layouts | [Slice views](USER_GUIDE.md#slice-views) |
 | **Line cuts** | Drag a line across a slice, or type its ends, for a 1-D profile of the volume along any direction in 3-D, such as (H, H, H), averaged over a rod of adjustable diameter around the line, with symmetry pooling, σ and both datasets; saved as CSV or text | [Line cuts](USER_GUIDE.md#line-cuts) · [Method](METHOD.md#line-cuts) |
 | **Symmetry averaging** | Any Laue class or your own operations, closed into a group and applied exactly on the bin grid, with a check that they fit the cell | [Symmetry](METHOD.md#symmetry-averaging) |
 | **Artifact masking** | Removes detector-edge voxels and symmetry outliers before averaging; preview what is removed and export the mask as a NumPy array | [Masking](METHOD.md#masking-detector-edge-artifacts) |
@@ -43,8 +43,9 @@ What the viewer is for, everything it does with links to the details, and a firs
 1. Open the [live app](https://drthyang.github.io/neutron-nexus-viewer/) and choose a `.nxs` file, or drop one on the page.
 2. Pick a Laue class under **Processing → Symmetry averaging**, and apply a
    **Mask** if detector edges show up as bright rims.
-3. Click a slice to move the other two through that point. Switch the header to
-   **Zoom** or **Move** to explore, and **Focus** to show one view large.
+3. Click a slice to move the other two through that point. Zoom with Ctrl/⌘ + scroll
+   or a pinch (or **Box zoom** in the header), Shift-drag to pan, double-click for the
+   full view, and **Focus** to show one view large.
 4. For a 1-D profile, switch the header to **Cut** and drag across a slice: the cut
    appears in the fourth view, and follows the slice as you move it.
 5. To compare, click **Compare…** next to the file in the top bar and open a second file: each slice is split along its diagonal. Add a third and fourth file to share each slice in quadrants.
