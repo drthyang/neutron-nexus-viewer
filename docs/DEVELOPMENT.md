@@ -26,6 +26,7 @@ CI runs the same tests on every push (`.github/workflows/test.yml`).
 | `js/app.js` | UI: control panel, views, layouts, interaction, canvas drawing (the slices, and the 1-D plots of I(Q) and the line cut) and the second (comparison) dataset |
 | `js/worker.js` | Module worker (one per open dataset): opens the file with h5wasm, holds the volume, answers slice, line cut, mask, isosurface, I(Q), export, reindexing and peak-search requests |
 | `js/nexus.js` | Finds the histogram (and its uncertainties) in the file, reads it, and handles the UB matrix and lattice geometry |
+| `js/viewzoom.js` | Zoom and pan of a view's window, for the slices and the 1-D plots: the wheel's zoom rate (NEBULA3D's), zooming about a point and panning with the centre kept on the data (pure functions) |
 | `js/slab.js` | Slab selection and symmetry-pooled slab averaging (pure functions) |
 | `js/cut.js` | Line cuts: the points and band of a cut in a slice, and its symmetry-pooled profile with σ (pure functions) |
 | `js/symmetry.js` | Parsing operations, group closure, metric check and integer index maps |
