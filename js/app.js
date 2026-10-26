@@ -1159,6 +1159,10 @@ function startBox(p, e, panning = false) {
 
 /** Switch the click mode (see clickMode); the header's buttons show it. */
 function setClickMode(mode) {
+  // Putting the box zoom away (Esc) drops a box being dragged, rather than navigating with it.
+  if (clickMode === 'box' && mode !== 'box') {
+    for (const p of panels) if (p.drag && !p.drag.pan) { p.drag = null; drawPanel(p); }
+  }
   clickMode = mode;
   setSegmented($('click-mode'), mode);
   $('workspace').dataset.click = mode;
