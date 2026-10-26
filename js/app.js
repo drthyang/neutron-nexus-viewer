@@ -49,8 +49,9 @@ let requestId = 0, symmetry = NO_SYMMETRY, mask = null;
 // Workspace layout: 'quad', 'focus' or 'single', around the primary view ('hk', 'hl', 'kl' or '3d').
 let layout = 'quad', primary = 'hk', lastMulti = 'quad';
 const views = {};
-// What clicking a slice does: 'navigate' moves the other two slices, 'zoom' zooms in,
-// 'move' drags the visible region and 'cut' draws a line cut.
+// What clicking or dragging on a slice does: 'navigate' moves the other two slices,
+// 'cut' draws a line cut, and 'box', the one-shot box zoom, zooms into one dragged
+// box and returns to 'navigate'. Zoom and pan need no mode (see wireZoom()).
 let clickMode = 'navigate';
 // 3-D view state: the lazily loaded View3D, its elements and the isosurface request queue.
 let view3d = null, iso = null;
@@ -280,6 +281,7 @@ addEventListener('resize', closePopovers);
 addEventListener('keydown', (e) => {
   if (e.key !== 'Escape') return;
   if (document.querySelector('.popover:not([hidden])')) closePopovers();
+  else if (clickMode === 'box') setClickMode('navigate');
   else if (layout === 'single') setLayout(lastMulti, primary);
 });
 
@@ -891,7 +893,7 @@ function setupPowder() {
     <button type="button" class="icon-btn data" title="Download I(Q) as text: Q, I, σ, coverage and voxels per shell">${ICONS.download}</button>
     <button type="button" class="icon-btn save" title="Save PNG">${ICONS.save}</button>`;
   shell.actions.append(shell.focusBtn, shell.maxBtn);
-  shell.q('.view-body').innerHTML = `<canvas class="plot" role="img" aria-label="I(Q), the powder average of the volume"></canvas><span class="overlay-chip" hidden></span>
+  shell.q('.view-body').innerHTML = `<canvas class="plot" role="img" aria-label="I(Q), the powder average of the volume"></canvas><span class="overlay-chip" hidden></span>${zoomHint}
     <button type="button" class="btn btn-primary view-cta" title="Reduce the masked, symmetrized volume to I(Q)">Compute I(Q)</button>`;
   const foot = document.createElement('footer');
   foot.className = 'view-foot';
@@ -1150,11 +1152,12 @@ function startBox(p, e, panning = false) {
   if ((e.button !== 0 && !panning) || !p.inverse) return;
   const [x, y] = localPoint(p, e);
   // Keep the mapping at the start of the drag: panning changes p.inverse as it goes.
-  p.drag = { x0: x, y0: y, x1: x, y1: y, moved: false, view: p.view, inverse: p.inverse, pan: panning || clickMode === 'move' };
+  p.drag = { x0: x, y0: y, x1: x, y1: y, moved: false, view: p.view, inverse: p.inverse, pan: panning };
   try { p.canvas.setPointerCapture(e.pointerId); } catch { /* synthetic or already released pointer */ }
   if (p.drag.pan) p.canvas.classList.add('panning');
 }
 
+/** Switch the click mode (see clickMode); the header's buttons show it. */
 function setClickMode(mode) {
   clickMode = mode;
   setSegmented($('click-mode'), mode);
@@ -1168,14 +1171,14 @@ function setClickMode(mode) {
 }
 
 // A pan slides the visible region. Otherwise, Navigate mode: dragging keeps
-// moving the other slices. Zoom mode: dragging draws the zoom box.
+// moving the other slices. Box zoom: dragging draws the zoom box.
 function moveBox(p, e) {
   if (!p.drag) return;
   [p.drag.x1, p.drag.y1] = localPoint(p, e);
   p.drag.moved ||= Math.hypot(p.drag.x1 - p.drag.x0, p.drag.y1 - p.drag.y0) > (p.drag.pan ? 1 : 5);
   if (!p.drag.moved) return;
   if (p.drag.pan) pan(p, p.drag);
-  else if (clickMode === 'zoom') drawPanel(p);
+  else if (clickMode === 'box') drawPanel(p);
   else navigate(p, e);
 }
 
@@ -1195,17 +1198,21 @@ function endBox(p, e) {
   p.canvas.classList.remove('panning');
   if (!d) return;
   if (d.pan) { if (d.moved) pan(p, d); return; }
-  if (d.moved) {
-    if (clickMode === 'navigate') { navigate(p, e); return; }
-    const box = boxWindow(p, d);
-    if (box) setZoom(p, box);
-    else drawPanel(p);
+  if (clickMode === 'box') {
+    // One box zooms, and the views are back in Navigate; a click or a box under
+    // two bins across leaves the tool armed.
+    const box = d.moved && boxWindow(p, d);
+    if (box) {
+      setZoom(p, box);
+      setClickMode('navigate');
+    } else drawPanel(p);
     return;
   }
+  if (d.moved) { navigate(p, e); return; }
   // A click: wait briefly so a double-click (full view) does not also act on it.
   const { clientX, clientY } = e;
   clearTimeout(p.clickTimer);
-  p.clickTimer = setTimeout(() => (clickMode === 'zoom' ? zoomAt : navigate)(p, { clientX, clientY }), 250);
+  p.clickTimer = setTimeout(() => navigate(p, { clientX, clientY }), 250);
 }
 
 /** A second finger: drop the click or drag of the first, and pinch from here. */
@@ -1242,24 +1249,6 @@ function movePinch(p) {
   const hu = k * (u1 - u0) / 2, hv = k * (v1 - v0) / 2;
   const fit = (c, h, [lo, hi]) => { const m = clamp(c, lo, hi); return [m - h, m + h]; };
   setZoom(p, { u: fit(cu, hu, ex), v: fit(cv, hv, ey) });
-}
-
-/** Zoom in by `factor` around the clicked point, keeping the window inside the data. */
-function zoomAt(p, e, factor = 2) {
-  const pt = pointAt(p, e);
-  if (!pt) return;
-  const [u0, u1, v0, v1] = p.view, X = meta.dims[p.x], Y = meta.dims[p.y];
-  const fit = (c, half, edges) => {
-    const lo = edges[0], hi = edges[edges.length - 1];
-    if (2 * half >= hi - lo) return [lo, hi];
-    const start = clamp(c - half, lo, hi - 2 * half);
-    return [start, start + 2 * half];
-  };
-  const u = fit(pt[0], (u1 - u0) / (2 * factor), X.edges), v = fit(pt[1], (v1 - v0) / (2 * factor), Y.edges);
-  // Stop at two bins across.
-  const wx = 2 * (X.edges[X.edges.length - 1] - X.edges[0]) / (X.edges.length - 1);
-  const wy = 2 * (Y.edges[Y.edges.length - 1] - Y.edges[0]) / (Y.edges.length - 1);
-  if (u[1] - u[0] >= wx && v[1] - v[0] >= wy) setZoom(p, { u, v });
 }
 
 /** The (u, v) window enclosing a dragged screen rectangle, clipped to the data. */
@@ -1842,7 +1831,7 @@ function drawPanel(p) {
   const s = uiScale();
   draw(p, p.canvas, p.canvas.clientWidth / s, p.canvas.clientHeight / s, s * (devicePixelRatio || 1));
   const d = p.drag;
-  if (!d?.moved || d.pan || !p.project || clickMode !== 'zoom') return;
+  if (!d?.moved || d.pan || !p.project || clickMode !== 'box') return;
   const corners = [[d.x0, d.y0], [d.x1, d.y0], [d.x1, d.y1], [d.x0, d.y1]].map(([x, y]) => p.inverse(x, y));
   const u = [Math.min(...corners.map((c) => c[0])), Math.max(...corners.map((c) => c[0]))];
   const v = [Math.min(...corners.map((c) => c[1])), Math.max(...corners.map((c) => c[1]))];
@@ -2725,7 +2714,7 @@ function powderText() {
 //   log(), band(), cover()   the intensity scale, the ±σ band and the coverage
 //                            line on a right-hand axis (I(Q) only)
 //   end(data)                where the x range ends: the last bin with data
-//   xMin                     the smallest x a click zoom may start at
+//   xMin                     the smallest x the window may start at (Q = 0 for I(Q))
 //   xLabel(), yLabel(log)    the axis titles
 //   empty()                  what a plot without curves says, { text, error }, or null
 //   title, extras(data)      an export's title and its line of settings
@@ -2744,9 +2733,9 @@ function shownLayers(plot) {
  * curves (and bands) over them. Intensities are in plot units: log10(I) on a
  * log scale.
  */
-function curveWindow(plot, layers, log, band) {
-  const [x0, x1] = plot.zoom?.x ?? [Math.min(...layers.map((l) => l.data.edges[0])), Math.max(...layers.map((l) => plot.end(l.data)))];
-  if (plot.zoom?.y) return { x0, x1, y0: plot.zoom.y[0], y1: plot.zoom.y[1] };
+function curveWindow(plot, layers, log, band, zoom = plot.zoom) {
+  const [x0, x1] = zoom?.x ?? [Math.min(...layers.map((l) => l.data.edges[0])), Math.max(...layers.map((l) => plot.end(l.data)))];
+  if (zoom?.y) return { x0, x1, y0: zoom.y[0], y1: zoom.y[1] };
   let lo = Infinity, hi = -Infinity;
   for (const { data } of layers) {
     for (let b = 0; b < data.intensity.length; b++) {
@@ -2842,7 +2831,11 @@ function drawCurves(plot, canvas, w, h, dpr, exporting = false) {
   const Y = (v) => T(log ? Math.log10(v) : v);
   // Coverage: 0 at the bottom, 100% a little below the top.
   const C = (f) => bottom - (f / 1.08) * ah;
-  if (!exporting) plot.view = { x0, x1, y0, y1, pad, aw, ah };
+  if (!exporting) {
+    plot.view = { x0, x1, y0, y1, pad, aw, ah };
+    // The full window, where zooms and pans keep the window's centre (plotZoom()).
+    plot.full = plot.zoom ? curveWindow(plot, layers, log, band, null) : { x0, x1, y0, y1 };
+  }
   const xt = niceTicks(x0, x1, Math.max(2, Math.round(aw / 80)));
   const yt = log ? logTicks(y0, y1) : niceTicks(y0, y1, Math.max(2, Math.round(ah / 55)));
   c.strokeStyle = '#eef1f4';
@@ -2944,7 +2937,7 @@ function drawCurves(plot, canvas, w, h, dpr, exporting = false) {
     }
   }
   const d = plot.drag;
-  if (!exporting && d?.moved && clickMode !== 'move') {
+  if (!exporting && d?.moved && !d.pan) {
     // The zoom box being dragged; a flat one zooms x only and spans the height.
     const flat = Math.abs(d.py1 - d.py) < 12;
     const xa = Math.min(d.px, d.px1), ya = flat ? pad.t : Math.min(d.py, d.py1);
@@ -3076,49 +3069,84 @@ function hoverCurve(plot, e) {
   plot.onHover?.();
 }
 
-// Dragging on a plot: a box zooms (a flat one x only), and in Move mode the plot pans.
+// Dragging on a plot: a box zooms (a flat one x only) in any click mode, and
+// with Shift or the middle button the plot pans. A click does nothing.
 function startCurveDrag(plot, e) {
-  const pt = curvePoint(plot, e);
-  if (e.button !== 0 || !pt?.inside) return;
-  plot.drag = { px: pt.px, py: pt.py, px1: pt.px, py1: pt.py, x: pt.x, view: { ...plot.view }, moved: false };
+  if (e.button === 1) e.preventDefault(); // no autoscroll
+  const pt = curvePoint(plot, e), pan = panStart(e);
+  if ((e.button !== 0 && !pan) || !pt?.inside) return;
+  plot.drag = { px: pt.px, py: pt.py, px1: pt.px, py1: pt.py, x: pt.x, view: { ...plot.view }, moved: false, pan };
   try { plot.canvas.setPointerCapture(e.pointerId); } catch { /* synthetic or already released pointer */ }
-  if (clickMode === 'move') plot.canvas.classList.add('panning');
+  if (pan) plot.canvas.classList.add('panning');
 }
 
 function moveCurveDrag(plot, e) {
   const d = plot.drag;
   if (!d) return;
   [d.px1, d.py1] = plotLocal(plot, e);
-  d.moved ||= Math.hypot(d.px1 - d.px, d.py1 - d.py) > (clickMode === 'move' ? 1 : 5);
+  d.moved ||= Math.hypot(d.px1 - d.px, d.py1 - d.py) > (d.pan ? 1 : 5);
   if (!d.moved) return;
-  if (clickMode !== 'move') { drawPlot(plot); return; }
-  const v = d.view, sx = ((d.px1 - d.px) / v.aw) * (v.x1 - v.x0), st = ((d.py1 - d.py) / v.ah) * (v.y1 - v.y0);
-  setCurveZoom(plot, { x: [v.x0 - sx, v.x1 - sx], y: plot.zoom?.y ? [v.y0 + st, v.y1 + st] : null });
+  if (d.pan) panPlot(plot, d.view, d.px1 - d.px, d.py1 - d.py);
+  else drawPlot(plot);
 }
 
 function endCurveDrag(plot) {
   const d = plot.drag;
   plot.drag = null;
   plot.canvas.classList.remove('panning');
-  if (!d || clickMode === 'move') return;
-  // The width of the bin where the drag started: zooms keep at least two such bins across.
-  const v = d.view, edges = shownLayers(plot)[0]?.data.edges ?? [0, 0], s = Math.max(0, shellAt(edges, d.x)), dx = edges[s + 1] - edges[s];
-  if (!d.moved) {
-    // A click in Zoom mode zooms into x 2×, after a pause so a double-click (full range) does not also zoom.
-    if (clickMode !== 'zoom') return;
-    clearTimeout(plot.clickTimer);
-    plot.clickTimer = setTimeout(() => {
-      const half = Math.max((v.x1 - v.x0) / 4, dx), start = Math.max(plot.xMin, d.x - half);
-      setCurveZoom(plot, { x: [start, start + 2 * half], y: null });
-    }, 250);
-    return;
-  }
+  if (!d?.moved || d.pan) return;
+  const v = d.view;
   const x = (px) => v.x0 + ((px - v.pad.l) / v.aw) * (v.x1 - v.x0), t = (py) => v.y0 + ((v.pad.t + v.ah - py) / v.ah) * (v.y1 - v.y0);
   const range = [x(Math.min(d.px, d.px1)), x(Math.max(d.px, d.px1))];
-  // At least two bins across.
-  if (range[1] - range[0] < 2 * dx) { drawPlot(plot); return; }
+  // At least two bins across, of the width of the one where the drag started.
+  if (range[1] - range[0] < 2 * binWidthAt(plot, d.x)) { drawPlot(plot); return; }
   setCurveZoom(plot, { x: range, y: Math.abs(d.py1 - d.py) < 12 ? null : [t(Math.max(d.py, d.py1)), t(Math.min(d.py, d.py1))] });
+  // The box zoom is one-shot: the views are back in Navigate.
+  if (clickMode === 'box') setClickMode('navigate');
 }
+
+/** The width of a plot's bin at x (of the nearest bin outside them): zooms keep two across. */
+function binWidthAt(plot, x) {
+  const edges = shownLayers(plot)[0]?.data.edges ?? [0, 0], n = edges.length - 1;
+  const s = x < edges[0] ? 0 : x >= edges[n] ? n - 1 : shellAt(edges, x);
+  return edges[s + 1] - edges[s];
+}
+
+/** A plot's x range, moved right to start at its xMin when it would start below (Q ≥ 0 for I(Q)). */
+const fromXMin = (plot, r) => (r && r[0] < plot.xMin ? [plot.xMin, plot.xMin + r[1] - r[0]] : r);
+
+/**
+ * Pan a plot as a drag of (dx, dy) px over its drawing `v` does, with the
+ * window's centre kept in the full range. The intensities pan only once a box
+ * has set their range; otherwise they fit the curves in view.
+ */
+function panPlot(plot, v, dx, dy) {
+  if (!dx && !plot.zoom?.y) return;
+  const full = plot.full, sx = (dx / v.aw) * (v.x1 - v.x0), st = (dy / v.ah) * (v.y1 - v.y0);
+  setCurveZoom(plot, {
+    x: fromXMin(plot, keepCentreIn([v.x0 - sx, v.x1 - sx], [full.x0, full.x1])),
+    y: plot.zoom?.y ? keepCentreIn([v.y0 + st, v.y1 + st], [full.y0, full.y1]) : null,
+  });
+}
+
+/** A plot for wireZoom(): its x range zooms about the pointer, and its intensity range too once a box has set it. */
+const plotZoom = (plot) => ({
+  from: () => (plot.view ? { v: plot.view, zoom: plot.zoom, full: plot.full } : null),
+  zoom: ({ v, zoom, full }, k, px, py) => {
+    const x = px === undefined ? (v.x0 + v.x1) / 2 : v.x0 + ((px - v.pad.l) / v.aw) * (v.x1 - v.x0);
+    const xr = zoomRange([v.x0, v.x1], x, k, { least: 2 * binWidthAt(plot, x), full: [full.x0, full.x1] });
+    let yr = null;
+    if (zoom?.y) {
+      // By the factor x zoomed by, which stops at two bins.
+      const t = py === undefined ? (v.y0 + v.y1) / 2 : v.y0 + ((v.pad.t + v.ah - py) / v.ah) * (v.y1 - v.y0);
+      yr = zoomRange([v.y0, v.y1], t, xr ? (xr[1] - xr[0]) / (v.x1 - v.x0) : k, { least: 0, full: [full.y0, full.y1] });
+    }
+    setCurveZoom(plot, xr || yr ? { x: fromXMin(plot, xr), y: yr } : null);
+  },
+  pan: (dx, dy) => plot.view && panPlot(plot, plot.view, dx, dy),
+  reset: () => setCurveZoom(plot, null),
+  busy: () => !!plot.drag,
+});
 
 function setCurveZoom(plot, zoom) {
   plot.zoom = zoom;
@@ -3133,8 +3161,9 @@ function wirePlot(plot) {
   plot.canvas.onpointerup = () => endCurveDrag(plot);
   plot.canvas.onpointercancel = () => { plot.drag = null; plot.canvas.classList.remove('panning'); drawPlot(plot); };
   plot.canvas.onpointerleave = () => hoverCurve(plot, null);
-  plot.canvas.ondblclick = () => { clearTimeout(plot.clickTimer); setCurveZoom(plot, null); };
+  plot.canvas.ondblclick = () => setCurveZoom(plot, null);
   plot.zoomReset.onclick = () => setCurveZoom(plot, null);
+  wireZoom(plot.canvas, plot.canvas.parentElement.querySelector('.zoom-hint'), plotZoom(plot));
   resized.observe(plot.canvas);
 }
 
@@ -3163,7 +3192,7 @@ function setupCut() {
     <button type="button" class="icon-btn" title="Download the cut: CSV or text" aria-haspopup="menu" aria-expanded="false" data-pop="pop-cut-download">${ICONS.download}</button>
     <button type="button" class="icon-btn save" title="Save PNG">${ICONS.save}</button>`;
   shell.actions.append(shell.focusBtn, shell.maxBtn);
-  shell.q('.view-body').innerHTML = `<canvas class="plot" role="img" aria-label="Line cut: the intensity along a line in a slice"></canvas><span class="overlay-chip" hidden></span>
+  shell.q('.view-body').innerHTML = `<canvas class="plot" role="img" aria-label="Line cut: the intensity along a line in a slice"></canvas><span class="overlay-chip" hidden></span>${zoomHint}
     <button type="button" class="btn btn-primary view-cta" title="Switch the click mode to Cut, then drag across a slice">Draw a cut</button>`;
   const foot = document.createElement('footer');
   foot.className = 'view-foot';
@@ -3930,7 +3959,8 @@ function restore() {
   if (typeof saved.angles === 'boolean') $('angles').checked = saved.angles;
   if (typeof saved.guides === 'boolean') $('guides').checked = saved.guides;
   if (typeof saved.grid === 'boolean') $('grid').checked = saved.grid;
-  setClickMode(['zoom', 'move', 'cut'].includes(saved.clickMode) ? saved.clickMode : 'navigate');
+  // The box zoom is one-shot, and the Zoom and Move modes of older versions are gone: they open in Navigate.
+  setClickMode(saved.clickMode === 'cut' ? 'cut' : 'navigate');
   if (['linear', 'log'].includes(saved.iqScale)) powderScale = saved.iqScale;
   if (['1', '2', '3'].includes(saved.iqSplit)) setSegmented($('iq-split'), saved.iqSplit);
   if (typeof saved.iqBand === 'boolean') $('iq-band').checked = saved.iqBand;
@@ -3948,7 +3978,8 @@ function restore() {
 
 function persist() {
   const values = {
-    cmap: cmapChoice, scale: $('scale').dataset.value, angles: $('angles').checked, guides: $('guides').checked, grid: $('grid').checked, clickMode,
+    cmap: cmapChoice, scale: $('scale').dataset.value, angles: $('angles').checked, guides: $('guides').checked, grid: $('grid').checked,
+    clickMode: clickMode === 'box' ? 'navigate' : clickMode,
     iqScale: powderScale, iqSplit: $('iq-split').dataset.value, iqBand: $('iq-band').checked, iqCoverage: $('iq-coverage').checked,
     cutScale, cutBand: $('cut-band').checked,
   };
@@ -4053,7 +4084,13 @@ $('cmap').addEventListener('change', () => { cmapChoice = $('cmap').value; });
 for (const id of ['cmap', 'angles', 'guides', 'grid']) $(id).addEventListener('change', persist);
 $('angles').addEventListener('change', () => { if (meta) { describe(); requestCut(); } });
 $('cmap').addEventListener('input', paintColorbar);
-segmented($('click-mode'), (mode) => { setClickMode(mode); persist(); });
+// The click modes; the box zoom is armed by its button, and a second press (or Esc) disarms it.
+$('click-mode').addEventListener('click', (e) => {
+  const mode = e.target.closest('button')?.dataset.value;
+  if (!mode || (mode === clickMode && mode !== 'box')) return;
+  setClickMode(mode === clickMode ? 'navigate' : mode);
+  persist();
+});
 segmented($('layout'), (mode) => setLayout(mode, primary));
 segmented($('scale'), (value) => {
   if (value === 'log') {
