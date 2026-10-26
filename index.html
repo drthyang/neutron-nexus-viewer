@@ -331,7 +331,15 @@ body.panel-collapsed .panel { visibility: hidden; }
 .workspace[data-click="zoom"] .view-body canvas.plot { cursor: zoom-in; }
 .workspace[data-click="move"] .view-body canvas.plot { cursor: grab; }
 .workspace[data-click="move"] .view-body canvas.plot.panning { cursor: grabbing; }
+.workspace .view-body canvas.plot.panning { cursor: grabbing; }
+.view-body canvas.plot:focus-visible { outline: 2px solid var(--accent-line); outline-offset: -2px; }
 .view-body canvas.scene { cursor: grab; }
+/* The zoom hint: over a view on a page that scrolls, a plain wheel scrolls the page (app.js, wireZoom). */
+.zoom-hint {
+  position: absolute; inset: 0; z-index: 3; display: flex; align-items: center; justify-content: center; padding: 1.2rem; pointer-events: none;
+  background: rgba(18, 24, 33, 0.55); color: #fff; font-size: 1.5rem; font-weight: 600; text-align: center; animation: zoom-hint-in 150ms ease-out;
+}
+@keyframes zoom-hint-in { from { opacity: 0; } }
 /* A button in the middle of an empty view, such as Compute I(Q). */
 .view-cta { position: absolute; left: 50%; top: 50%; z-index: 2; transform: translate(-50%, -50%); box-shadow: var(--shadow-1); }
 .overlay-chip {

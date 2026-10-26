@@ -8,6 +8,7 @@ import { setupRigaku } from './rigaku-ui.js';
 import { setupUBRefine } from './ub-refine-ui.js';
 import { IDENTITY_MAP } from './slab.js';
 import { closeGroup, formatOp, indexMaps, metricChange, parseOps, PRESETS } from './symmetry.js';
+import { keepCentreIn, panWindow, wheelZoomFactor, zoomRange, zoomWindow } from './viewzoom.js';
 
 const $ = (id) => document.getElementById(id);
 // [fixed, x, y] display dimensions: HK, HL and KL planes for Mantid HKL data.
@@ -774,7 +775,7 @@ function setupViewer() {
       <button type="button" class="btn btn-ghost btn-xs zoom-reset" hidden title="Back to the full view (or double-click the plot)">Reset zoom</button>
       <button type="button" class="icon-btn save" title="Save PNG">${ICONS.save}</button>`;
     shell.actions.append(shell.focusBtn, shell.maxBtn);
-    shell.q('.view-body').innerHTML = `<canvas class="plot" role="img"></canvas><span class="overlay-chip" hidden></span>`;
+    shell.q('.view-body').innerHTML = `<canvas class="plot" role="img"></canvas><span class="overlay-chip" hidden></span>${zoomHint}`;
     const units = F.units ? escapeHTML(F.units) : '';
     const foot = document.createElement('footer');
     foot.className = `view-foot cut--${fixed}`;
@@ -804,11 +805,16 @@ function setupViewer() {
     p.center.oninput = () => { p.slider.value = p.center.value; paint(p.slider); request(p); };
     p.wslider.oninput = () => { p.width.value = p.wslider.value; request(p); };
     p.width.oninput = () => { p.wslider.value = p.width.value; paint(p.wslider); request(p); };
-    // One pointer clicks or drags (by the click mode); two fingers pinch and pan.
+    // One pointer clicks or drags by the click mode, or pans with Shift or the
+    // middle button in any mode; two fingers pinch and pan.
     p.canvas.onpointerdown = (ev) => {
       if (ev.pointerType === 'touch') p.pointers.set(ev.pointerId, localPoint(p, ev));
       if (p.pointers.size === 2) startPinch(p, ev);
-      else if (p.pointers.size < 2) (clickMode === 'cut' ? startCutDrag : startBox)(p, ev);
+      else if (p.pointers.size < 2) {
+        if (ev.button === 1) ev.preventDefault(); // no autoscroll
+        if (panStart(ev)) startBox(p, ev, true);
+        else (clickMode === 'cut' ? startCutDrag : startBox)(p, ev);
+      }
     };
     p.canvas.onpointermove = (ev) => {
       if (p.pointers.has(ev.pointerId)) p.pointers.set(ev.pointerId, localPoint(p, ev));
@@ -837,6 +843,7 @@ function setupViewer() {
     p.canvas.onpointerleave = () => { p.hover.hidden = true; };
     p.canvas.ondblclick = () => { clearTimeout(p.clickTimer); setZoom(p, null); };
     p.zoomReset.onclick = () => setZoom(p, null);
+    wireZoom(p.canvas, q('.zoom-hint'), sliceZoom(p));
     q('.save').onclick = () => savePNG(p);
     resized.observe(p.canvas);
     panels.push(p);
@@ -983,6 +990,8 @@ function setLayout(mode, key = primary) {
     v.section.classList.toggle('thumb', thumb);
     if (thumb) v.section.tabIndex = 0;
     else v.section.removeAttribute('tabindex');
+    // A thumbnail's plot takes no keys (wireZoom): Enter shows it large.
+    for (const canvas of v.section.querySelectorAll('canvas.plot')) canvas.tabIndex = thumb ? -1 : 0;
     const back = mode === 'focus' && isPrimary;
     v.focusBtn.innerHTML = back ? ICONS.quad : ICONS.focus;
     v.focusBtn.title = back ? 'Back to four views' : 'Show this view large';
@@ -1011,6 +1020,123 @@ const resized = new ResizeObserver(() => {
   requestAnimationFrame(() => { resizeQueued = false; redraw(); updatePowder(); updateCut(); });
 });
 
+// ---- Zoom and pan ---------------------------------------------------------------------
+//
+// The slices and the plots zoom and pan alike in every click mode, as NEBULA3D's
+// slice views do, and as an embedded map does ("cooperative" gestures):
+//   wheel   Ctrl/⌘ + wheel zooms about the pointer, and so does a trackpad pinch
+//           (ctrl+wheel in Chromium and Firefox, GestureEvents in Safari). A plain
+//           wheel zooms only when the page around the view cannot scroll; otherwise
+//           it scrolls the page and a hint says how to zoom. A sideways scroll is the page's.
+//   drag    Shift or the middle button pans; on a slice two fingers pinch and pan.
+//           The window's centre stays on the data, so it cannot be dragged off screen.
+//   keys    on the focused view, + / − zoom about the centre, the arrows pan, 0 resets.
+//   double-click (or Reset zoom) returns to the full view.
+
+const MAC = /Mac|iPhone|iPad|iPod/.test(navigator.platform || navigator.userAgent);
+/** What a plain wheel over a view says on a page that scrolls. */
+const ZOOM_HINT = `Use ${MAC ? '⌘' : 'Ctrl'} + scroll to zoom`;
+const zoomHint = `<div class="zoom-hint" role="status" hidden>${ZOOM_HINT}</div>`;
+
+/** Shift or the middle button starts a pan, in any click mode. */
+const panStart = (e) => e.button === 1 || (e.button === 0 && e.shiftKey);
+
+/**
+ * Whether the page around `el` can scroll vertically: an ancestor that scrolls
+ * (the workspace in a short window) or the document (the stacked views on a
+ * narrow screen). A plain wheel over a view is then the page's.
+ */
+function pageCanScroll(el) {
+  for (let a = el.parentElement; a && a !== document.body && a !== document.documentElement; a = a.parentElement) {
+    if (a.scrollHeight <= a.clientHeight + 1) continue;
+    if (['auto', 'scroll', 'overlay'].includes(getComputedStyle(a).overflowY)) return true;
+  }
+  const doc = document.scrollingElement ?? document.documentElement;
+  const hidden = (e) => getComputedStyle(e).overflowY === 'hidden';
+  return doc.scrollHeight > doc.clientHeight + 1 && !hidden(document.documentElement) && !hidden(document.body);
+}
+
+/**
+ * Wheel, pinch and key zoom on a view's canvas, with its zoom `hint`. `view`:
+ *   from()               what a zoom starts from, or null while the view is empty
+ *   zoom(from, k, x, y)  zoom by k (< 1 zooms in) about the canvas point (x, y) in
+ *                        drawing px, or about the window's centre without one
+ *   pan(dx, dy)          pan as a drag of (dx, dy) drawing px does
+ *   reset()              back to the full view
+ *   busy()               true during a drag or a touch (their own handlers zoom then)
+ */
+function wireZoom(canvas, hint, view) {
+  let gesture = null, hintTimer = 0;
+  const local = (e) => {
+    const r = canvas.getBoundingClientRect(), s = uiScale();
+    return [(e.clientX - r.left) / s, (e.clientY - r.top) / s];
+  };
+  canvas.addEventListener('wheel', (e) => {
+    if (Math.abs(e.deltaX) > Math.abs(e.deltaY) || e.deltaY === 0) return;
+    const modifier = e.ctrlKey || e.metaKey;
+    if (gesture) { if (modifier) e.preventDefault(); return; }
+    if (!modifier && pageCanScroll(canvas)) {
+      hint.hidden = false;
+      clearTimeout(hintTimer);
+      hintTimer = setTimeout(() => { hint.hidden = true; }, 1500);
+      return;
+    }
+    e.preventDefault();
+    hint.hidden = true;
+    const from = view.busy() ? null : view.from();
+    if (from) view.zoom(from, wheelZoomFactor(e.deltaY, e.deltaMode, canvas.clientHeight), ...local(e));
+  }, { passive: false });
+  // Safari's trackpad pinch: GestureEvents, scaled from the start of the gesture.
+  // A touch pinch sends them too, but the pointer handlers zoom a slice then.
+  canvas.addEventListener('gesturestart', (e) => {
+    e.preventDefault();
+    gesture = { from: view.busy() ? null : view.from(), at: e.clientX === undefined ? [] : local(e) };
+  });
+  canvas.addEventListener('gesturechange', (e) => {
+    e.preventDefault();
+    if (gesture?.from && e.scale > 0 && !view.busy()) view.zoom(gesture.from, 1 / e.scale, ...gesture.at);
+  });
+  canvas.addEventListener('gestureend', (e) => { e.preventDefault(); gesture = null; });
+  // Keys on the focused view: + / − zoom about the centre, the arrows pan a tenth of it, 0 resets.
+  canvas.tabIndex = 0;
+  canvas.addEventListener('keydown', (e) => {
+    if (e.ctrlKey || e.metaKey || e.altKey) return; // the browser's own shortcuts (Ctrl + is its page zoom)
+    const from = view.busy() ? null : view.from();
+    if (!from) return;
+    const step = Math.min(canvas.clientWidth, canvas.clientHeight) / uiScale() / 10;
+    const arrows = { ArrowLeft: [step, 0], ArrowRight: [-step, 0], ArrowUp: [0, step], ArrowDown: [0, -step] };
+    if (e.key === '+' || e.key === '=') view.zoom(from, 0.5);
+    else if (e.key === '-' || e.key === '_') view.zoom(from, 2);
+    else if (e.key === '0') view.reset();
+    else if (arrows[e.key]) view.pan(...arrows[e.key]);
+    else return;
+    e.preventDefault();
+  });
+}
+
+/** A slice for wireZoom(): its window, zoomed within windowLimits(). */
+const sliceZoom = (p) => ({
+  from: () => (p.data && p.inverse ? { view: p.view, inverse: p.inverse } : null),
+  zoom: ({ view: [u0, u1, v0, v1], inverse }, k, x, y) => {
+    const at = x === undefined ? [(u0 + u1) / 2, (v0 + v1) / 2] : inverse(x, y);
+    setZoom(p, zoomWindow({ u: [u0, u1], v: [v0, v1] }, at, k, windowLimits(p)));
+  },
+  pan: (dx, dy) => pan(p, { x0: 0, y0: 0, x1: dx, y1: dy, view: p.view, inverse: p.inverse }),
+  reset: () => setZoom(p, null),
+  busy: () => !!(p.drag || p.cutDrag || p.pinch) || p.pointers.size > 0,
+});
+
+/** The limits of a slice's window (see zoomWindow()): two bins across, the full view, and the data. */
+function windowLimits(p) {
+  const X = meta.dims[p.x], Y = meta.dims[p.y];
+  const bins = (e) => 2 * (e[e.length - 1] - e[0]) / (e.length - 1), span = (e) => [e[0], e[e.length - 1]];
+  return {
+    least: [bins(X.edges), bins(Y.edges)],
+    full: { u: viewRange(X, settings.limit), v: viewRange(Y, settings.limit) },
+    extent: { u: span(X.edges), v: span(Y.edges) },
+  };
+}
+
 // ---- Box zoom and clicks -------------------------------------------------------------
 
 /** The pointer in the plot's drawing coordinates (CSS px over the UI scale). */
@@ -1019,13 +1145,14 @@ function localPoint(p, e) {
   return [(e.clientX - box.left) / s, (e.clientY - box.top) / s];
 }
 
-function startBox(p, e) {
-  if (e.button !== 0 || !p.inverse) return;
+/** A drag on a slice: by the click mode, or a pan (`panning`, with Shift or the middle button). */
+function startBox(p, e, panning = false) {
+  if ((e.button !== 0 && !panning) || !p.inverse) return;
   const [x, y] = localPoint(p, e);
   // Keep the mapping at the start of the drag: panning changes p.inverse as it goes.
-  p.drag = { x0: x, y0: y, x1: x, y1: y, moved: false, view: p.view, inverse: p.inverse };
+  p.drag = { x0: x, y0: y, x1: x, y1: y, moved: false, view: p.view, inverse: p.inverse, pan: panning || clickMode === 'move' };
   try { p.canvas.setPointerCapture(e.pointerId); } catch { /* synthetic or already released pointer */ }
-  if (clickMode === 'move') p.canvas.classList.add('panning');
+  if (p.drag.pan) p.canvas.classList.add('panning');
 }
 
 function setClickMode(mode) {
@@ -1040,15 +1167,15 @@ function setClickMode(mode) {
   if (p) drawPanel(p);
 }
 
-// Navigate mode: dragging keeps moving the other slices. Zoom mode: dragging
-// draws the zoom box. Move mode: dragging slides the visible region.
+// A pan slides the visible region. Otherwise, Navigate mode: dragging keeps
+// moving the other slices. Zoom mode: dragging draws the zoom box.
 function moveBox(p, e) {
   if (!p.drag) return;
   [p.drag.x1, p.drag.y1] = localPoint(p, e);
-  p.drag.moved ||= Math.hypot(p.drag.x1 - p.drag.x0, p.drag.y1 - p.drag.y0) > (clickMode === 'move' ? 1 : 5);
+  p.drag.moved ||= Math.hypot(p.drag.x1 - p.drag.x0, p.drag.y1 - p.drag.y0) > (p.drag.pan ? 1 : 5);
   if (!p.drag.moved) return;
-  if (clickMode === 'zoom') drawPanel(p);
-  else if (clickMode === 'move') pan(p, p.drag);
+  if (p.drag.pan) pan(p, p.drag);
+  else if (clickMode === 'zoom') drawPanel(p);
   else navigate(p, e);
 }
 
@@ -1058,12 +1185,8 @@ function moveBox(p, e) {
  */
 function pan(p, d) {
   const [a0, b0] = d.inverse(d.x0, d.y0), [a1, b1] = d.inverse(d.x1, d.y1);
-  const [u0, u1, v0, v1] = d.view, X = meta.dims[p.x], Y = meta.dims[p.y];
-  const shift = (lo, hi, delta, edges) => {
-    const c = clamp((lo + hi) / 2 - delta, edges[0], edges[edges.length - 1]);
-    return [c - (hi - lo) / 2, c + (hi - lo) / 2];
-  };
-  setZoom(p, { u: shift(u0, u1, a1 - a0, X.edges), v: shift(v0, v1, b1 - b0, Y.edges) });
+  const [u0, u1, v0, v1] = d.view;
+  setZoom(p, panWindow({ u: [u0, u1], v: [v0, v1] }, a0 - a1, b0 - b1, windowLimits(p).extent));
 }
 
 function endBox(p, e) {
@@ -1071,7 +1194,7 @@ function endBox(p, e) {
   p.drag = null;
   p.canvas.classList.remove('panning');
   if (!d) return;
-  if (clickMode === 'move') { if (d.moved) pan(p, d); return; }
+  if (d.pan) { if (d.moved) pan(p, d); return; }
   if (d.moved) {
     if (clickMode === 'navigate') { navigate(p, e); return; }
     const box = boxWindow(p, d);
@@ -1719,7 +1842,7 @@ function drawPanel(p) {
   const s = uiScale();
   draw(p, p.canvas, p.canvas.clientWidth / s, p.canvas.clientHeight / s, s * (devicePixelRatio || 1));
   const d = p.drag;
-  if (!d?.moved || !p.project || clickMode !== 'zoom') return;
+  if (!d?.moved || d.pan || !p.project || clickMode !== 'zoom') return;
   const corners = [[d.x0, d.y0], [d.x1, d.y0], [d.x1, d.y1], [d.x0, d.y1]].map(([x, y]) => p.inverse(x, y));
   const u = [Math.min(...corners.map((c) => c[0])), Math.max(...corners.map((c) => c[0]))];
   const v = [Math.min(...corners.map((c) => c[1])), Math.max(...corners.map((c) => c[1]))];
