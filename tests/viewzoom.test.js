@@ -1,7 +1,7 @@
 import assert from 'node:assert/strict';
 import test from 'node:test';
 
-import { keepCentreIn, panWindow, wheelZoomFactor, zoomRange, zoomWindow } from '../js/viewzoom.js';
+import { keepCentreIn, panWindow, pinchRange, wheelZoomFactor, zoomRange, zoomWindow } from '../js/viewzoom.js';
 
 const close = (a, b, eps = 1e-9) => assert.ok(Math.abs(a - b) < eps, `${a} ≠ ${b}`);
 const closeAll = (a, b) => a.forEach((x, i) => close(x, b[i]));
@@ -74,4 +74,22 @@ test('a plot\'s range zooms about the pointer, at least two bins across', () => 
   assert.equal(zoomRange([2, 7], 4, 2, opts), null);
   // Its centre stays on the data.
   closeAll(zoomRange([0, 10], -10, 0.5, opts), [-2.5, 2.5]);
+});
+
+test('two fingers on a plot zoom about their midpoint and pan with it', () => {
+  const opts = { least: 0.1, full: [0, 10] };
+  // Spread twice as far, midpoint still: the value under it (4, 40% along) stays there.
+  closeAll(pinchRange([0, 10], 4, 0.4, 0.5, opts), [2, 7]);
+  // The same spread, the midpoint moved from 40% to 60% along: a pan by a fifth of the range.
+  closeAll(pinchRange([2, 7], 4, 0.6, 1, opts), [1, 6]);
+  // A pinch and a pan at once: the value 4 lands 25% along a range half as wide.
+  closeAll(pinchRange([2, 7], 4, 0.25, 0.5, opts), [3.375, 5.875]);
+  // Not below two bins across, nor out past the full range's size.
+  closeAll(pinchRange([4, 6], 5, 0.5, 0.001, opts), [4.95, 5.05]);
+  closeAll(pinchRange([2, 7], 4.5, 0.5, 8, opts), [-0.5, 9.5]); // the full size, 4.5 still mid-way
+  // No snap to the full range mid-gesture: at the full size, a two-finger pan pans.
+  closeAll(pinchRange([0, 10], 5, 0.6, 1.02, opts), [-1, 9]);
+  // Its centre stays on the data.
+  closeAll(pinchRange([0, 10], 5, -2, 1, opts), [5, 15]);
+  closeAll(pinchRange([2, 4], 3, -10, 1, opts), [9, 11]);
 });
