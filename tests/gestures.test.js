@@ -43,7 +43,7 @@ test('the desktop card: the mouse, trackpad and keyboard ways, with the platform
   assert.deepEqual(ways(mac, 'box'), ['Box zoom then drag a box', 'Esc cancels']);
   assert.deepEqual(ways(mac, 'cut'), ['Cut then drag across a slice', 'Shift mid-drag: lattice direction']);
   assert.equal(mac.sub, 'in any mode, on the slices and plots');
-  assert.equal(mac.note, 'Keys act on the view you clicked last.');
+  assert.equal(mac.note, 'Keys act on the focused view (click it or Tab to it).');
   // Only the modifier differs.
   assert.deepEqual(pc.rows.slice(1), mac.rows.slice(1));
 });
@@ -57,6 +57,7 @@ test('the touch card: pinch, two-finger drag and double-tap, and no keys', () =>
   assert.deepEqual(ways(card, 'box'), ['Box zoom then drag a box', 'tap it again to cancel']);
   assert.deepEqual(ways(card, 'cut'), ['Cut then drag across a slice']);
   assert.ok(card.rows.every((r) => r.ways.flat().every((tk) => tk.t !== 'key')));
+  assert.equal(card.sub, 'in any mode, on the slices and plots');
   assert.equal(card.note, undefined);
   assert.deepEqual(gestureCard({ mac: false, touch: true }), card);
 });

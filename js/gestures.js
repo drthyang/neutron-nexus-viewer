@@ -3,10 +3,11 @@
 // action, each with the ways to do it, drawn as key caps and pointer glyphs.
 // Every way here is one app.js handles; keep the two in step:
 //   zoom   Ctrl/⌘ + wheel or a pinch (wireZoom: the wheel and Safari's
-//          GestureEvents; startPinch and movePinch: two fingers on a slice);
+//          GestureEvents; movePinch and moveCurvePinch: two fingers on a
+//          slice or a plot);
 //          + / − on a focused view (wireZoom's keys)
 //   move   Shift + drag or a middle-button drag (panStart); the arrow keys on a
-//          focused view; two fingers dragged together on a slice (movePinch)
+//          focused view; two fingers dragged together on a slice or a plot
 //   reset  double-click (and a double-tap on a touch screen, tapTracker below),
 //          0 on a focused view, Reset zoom in the view's header
 //   box    the Box zoom button, then one drag; Esc or a second press puts it away
@@ -14,7 +15,7 @@
 //          drag keeps the cut along a lattice direction (moveCutDrag), while
 //          Shift held before it pans
 // The slices and the I(Q) and cut plots take all of these (the 3-D view has its
-// own camera); on a touch screen, pinch and two-finger drag work on the slices.
+// own camera), the touch gestures too.
 // Touch-only devices get the touch gestures; everything else the mouse,
 // trackpad and keyboard ones, with ⌘ on Apple platforms and Ctrl elsewhere.
 // Pure functions: no DOM here.
@@ -54,7 +55,7 @@ export function gestureCard({ mac, touch }) {
   const cut = [button('Cut'), text('then'), glyph('drag', 'drag across a slice')];
   if (touch) {
     return {
-      sub: 'in any mode, on the slices',
+      sub: 'in any mode, on the slices and plots',
       rows: [
         { id: 'zoom', name: 'Zoom', ways: [[glyph('pinch', 'pinch')]] },
         { id: 'move', name: 'Move', ways: [[glyph('two-finger', 'two-finger drag')]] },
@@ -81,7 +82,7 @@ export function gestureCard({ mac, touch }) {
       { id: 'box', name: 'Box zoom', ways: [box, [key('Esc'), text('cancels')]] },
       { id: 'cut', name: 'Cut', ways: [cut, [key('⇧ Shift', 'Shift'), text('mid-drag: lattice direction')]] },
     ],
-    note: 'Keys act on the view you clicked last.',
+    note: 'Keys act on the focused view (click it or Tab to it).',
   };
 }
 
