@@ -627,10 +627,11 @@ body.dragging.drop-b::after { content: "Drop to compare as dataset " attr(data-d
   .switch-track::after { width: 2rem; height: 2rem; }
   .switch input:checked + .switch-track::after { transform: translateX(1.8rem); }
   .switch { min-height: 4rem; }
-  /* The "?" of the gesture card: a 40 px target around a larger circle, and a larger close button. */
+  /* The gesture card's "?" and ×: 40 px targets, around a larger circle and the same ×, so its title row keeps to one line. */
   .gh-trigger { width: 2.4rem; height: 2.4rem; font-size: 1.25rem; }
   .gh-trigger::before { inset: -0.8rem; }
-  .gh-close { width: 3.2rem; height: 3.2rem; margin: -0.5rem -0.6rem -0.5rem 0; }
+  .gh-close { position: relative; }
+  .gh-close::before { content: ""; position: absolute; inset: -0.9rem; }
 }
 </style>
 </head>
