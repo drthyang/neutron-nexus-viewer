@@ -1,7 +1,7 @@
 import { COLORMAPS } from './colormaps.js';
 import { cutAxis, cutBand, cutCrossing, cutEdges } from './cut.js';
 import { exportPlan } from './export.js';
-import { setupGestureCard } from './gesture-card.js';
+import { modKeyCap, setupGestureCard } from './gesture-card.js';
 import { cartesianBasis, isDirect, nominalCell, planeGeometry, reciprocalMetric } from './nexus.js';
 import { parseBins, powderPlan, qExtent } from './powder.js';
 import { setupReindex } from './reindex-ui.js';
@@ -1036,10 +1036,8 @@ const resized = new ResizeObserver(() => {
 //   keys    on the focused view, + / − zoom about the centre, the arrows pan, 0 resets.
 //   double-click (or Reset zoom) returns to the full view.
 
-const MAC = /Mac|iPhone|iPad|iPod/.test(navigator.platform || navigator.userAgent);
-/** What a plain wheel over a view says on a page that scrolls. */
-const ZOOM_HINT = `Use ${MAC ? '⌘' : 'Ctrl'} + scroll to zoom`;
-const zoomHint = `<div class="zoom-hint" role="status" hidden>${ZOOM_HINT}</div>`;
+/** What a plain wheel over a view says on a page that scrolls: "Use [⌘] + scroll to zoom", the key as a key cap (Ctrl off Apple platforms). */
+const zoomHint = `<div class="zoom-hint" role="status" hidden><span>Use ${modKeyCap()} + scroll to zoom</span></div>`;
 
 /** Shift or the middle button starts a pan, in any click mode. */
 const panStart = (e) => e.button === 1 || (e.button === 0 && e.shiftKey);
