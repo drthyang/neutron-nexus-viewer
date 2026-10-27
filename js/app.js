@@ -280,9 +280,13 @@ document.addEventListener('click', (e) => {
   else if (!e.target.closest('.popover')) closePopovers();
 });
 addEventListener('resize', closePopovers);
+// Esc, wherever focus is: closes a popover, else puts an armed Box zoom away, else
+// leaves the single layout. An open dialog keeps it for itself (the gesture card
+// handles its own first, gesture-card.js; a modal dialog closes on it).
 addEventListener('keydown', (e) => {
   if (e.key !== 'Escape') return;
   if (document.querySelector('.popover:not([hidden])')) closePopovers();
+  else if (e.target instanceof Element && e.target.closest('dialog')) return;
   else if (clickMode === 'box') setClickMode('navigate');
   else if (layout === 'single') setLayout(lastMulti, primary);
 });
@@ -776,7 +780,7 @@ function setupViewer() {
     const shell = viewShell(key, `<span class="badge hue-${fixed}">${escapeHTML(F.label)}</span>`, `${escapeHTML(X.label)} – ${escapeHTML(Y.label)}`);
     shell.q('.view-pos').insertAdjacentHTML('beforebegin', '<span class="view-angle" hidden></span>');
     shell.actions.innerHTML = `
-      <button type="button" class="btn btn-ghost btn-xs zoom-reset" hidden title="Back to the full view (or double-click the plot)">Reset zoom</button>
+      <button type="button" class="btn btn-ghost btn-xs zoom-reset" hidden title="${RESET_ZOOM_TITLE}">Reset zoom</button>
       <button type="button" class="icon-btn save" title="Save PNG">${ICONS.save}</button>`;
     shell.actions.append(shell.focusBtn, shell.maxBtn);
     shell.q('.view-body').innerHTML = `<canvas class="plot" role="img"></canvas><span class="overlay-chip" hidden></span>${zoomHint}`;
@@ -894,7 +898,7 @@ function setupViewer() {
 function setupPowder() {
   const shell = viewShell('iq', slotSwitch('iq'), 'Powder average');
   shell.actions.innerHTML = `
-    <button type="button" class="btn btn-ghost btn-xs zoom-reset" hidden title="Back to the full range (or double-click the plot)">Reset zoom</button>
+    <button type="button" class="btn btn-ghost btn-xs zoom-reset" hidden title="${RESET_ZOOM_TITLE}">Reset zoom</button>
     <div class="segmented sm pq-scale" role="group" aria-label="Intensity scale"><button type="button" data-value="linear" title="Linear intensity scale">Lin</button><button type="button" data-value="log" title="Logarithmic intensity scale">Log</button></div>
     <button type="button" class="icon-btn" title="I(Q) options" aria-haspopup="dialog" aria-expanded="false" data-pop="pop-iq">${ICONS.gear}</button>
     <button type="button" class="icon-btn data" title="Download I(Q) as text: Q, I, σ, coverage and voxels per shell">${ICONS.download}</button>
@@ -1042,6 +1046,8 @@ const resized = new ResizeObserver(() => {
 //   keys    on the focused view, + / − zoom about the centre, the arrows pan, 0 resets.
 //   double-click (or Reset zoom) returns to the full view.
 
+/** The tooltip of a view's Reset zoom (NEBULA3D's wording). */
+const RESET_ZOOM_TITLE = 'Reset zoom (double-click the view, or 0)';
 /** What a plain wheel over a view says on a page that scrolls: "Use [⌘] + scroll to zoom", the key as a key cap (Ctrl off Apple platforms). */
 const zoomHint = `<div class="zoom-hint" role="status" hidden><span>Use ${modKeyCap()} + scroll to zoom</span></div>`;
 
@@ -3218,7 +3224,7 @@ const CUT_GRAB = 10;
 function setupCut() {
   const shell = viewShell('cut', slotSwitch('cut'), 'Line cut');
   shell.actions.innerHTML = `
-    <button type="button" class="btn btn-ghost btn-xs zoom-reset" hidden title="Back to the full range (or double-click the plot)">Reset zoom</button>
+    <button type="button" class="btn btn-ghost btn-xs zoom-reset" hidden title="${RESET_ZOOM_TITLE}">Reset zoom</button>
     <div class="segmented sm cut-scale" role="group" aria-label="Intensity scale"><button type="button" data-value="linear" title="Linear intensity scale">Lin</button><button type="button" data-value="log" title="Logarithmic intensity scale">Log</button></div>
     <button type="button" class="icon-btn" title="Line cut options" aria-haspopup="dialog" aria-expanded="false" data-pop="pop-cut">${ICONS.gear}</button>
     <button type="button" class="icon-btn" title="Download the cut: CSV or text" aria-haspopup="menu" aria-expanded="false" data-pop="pop-cut-download">${ICONS.download}</button>
