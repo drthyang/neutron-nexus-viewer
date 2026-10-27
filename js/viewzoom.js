@@ -62,3 +62,20 @@ export function zoomRange(range, at, k, { least, full, extent = full }) {
   if (k > 1 && reaches(size * k, full[1] - full[0])) return null;
   return keepCentreIn(scaleAbout(range, at, k), extent);
 }
+
+/**
+ * A plot's range under two fingers, from `range` at the start of the gesture:
+ * scaled by `k` (the fingers' spread at the start over now; < 1 zooms in) and
+ * placed so `at`, the value under their midpoint at the start, is under it now,
+ * a fraction `f` along the range. As in a slice's pinch (and NEBULA3D's), it
+ * zooms and pans in one, between `least` across and `full`'s size, with its
+ * centre in `extent` (default `full`). It does not snap to the full range
+ * mid-gesture, so a two-finger pan at the full size does not flicker.
+ */
+export function pinchRange(range, at, f, k, { least, full, extent = full }) {
+  const size0 = range[1] - range[0];
+  k = Math.max(k, Math.min(1, least / size0));
+  const size = Math.min(size0 * k, Math.max(size0, full[1] - full[0]));
+  const lo = at - f * size;
+  return keepCentreIn([lo, lo + size], extent);
+}

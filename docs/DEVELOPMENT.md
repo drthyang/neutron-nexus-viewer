@@ -28,7 +28,7 @@ CI runs the same tests on every push (`.github/workflows/test.yml`).
 | `js/nexus.js` | Finds the histogram (and its uncertainties) in the file, reads it, and handles the UB matrix and lattice geometry |
 | `js/gestures.js` | What the gesture card says, one row per action with its ways as key caps and pointer glyphs, by platform (⌘ or Ctrl) and touch-only devices, after NEBULA3D's `gestures.ts`; and the tap counter for a double-tap (pure functions). Its rows follow `app.js`'s handlers: keep the two in step |
 | `js/gesture-card.js` | The gesture card: the **?** beside the click modes, its popover and first-run dot, and the key caps (the wheel hint's ⌘ / Ctrl too) |
-| `js/viewzoom.js` | Zoom and pan of a view's window, for the slices and the 1-D plots: the wheel's zoom rate (NEBULA3D's), zooming about a point and panning with the centre kept on the data (pure functions) |
+| `js/viewzoom.js` | Zoom and pan of a view's window, for the slices and the 1-D plots: the wheel's zoom rate (NEBULA3D's), zooming about a point, panning with the centre kept on the data, and a plot's range under two fingers (pure functions) |
 | `js/slab.js` | Slab selection and symmetry-pooled slab averaging (pure functions) |
 | `js/cut.js` | Line cuts: the points and band of a cut in a slice, and its symmetry-pooled profile with σ (pure functions) |
 | `js/symmetry.js` | Parsing operations, group closure, metric check and integer index maps |

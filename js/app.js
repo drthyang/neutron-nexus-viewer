@@ -10,7 +10,7 @@ import { setupRigaku } from './rigaku-ui.js';
 import { setupUBRefine } from './ub-refine-ui.js';
 import { IDENTITY_MAP } from './slab.js';
 import { closeGroup, formatOp, indexMaps, metricChange, parseOps, PRESETS } from './symmetry.js';
-import { keepCentreIn, panWindow, wheelZoomFactor, zoomRange, zoomWindow } from './viewzoom.js';
+import { keepCentreIn, panWindow, pinchRange, wheelZoomFactor, zoomRange, zoomWindow } from './viewzoom.js';
 
 const $ = (id) => document.getElementById(id);
 // [fixed, x, y] display dimensions: HK, HL and KL planes for Mantid HKL data.
@@ -1041,7 +1041,7 @@ const resized = new ResizeObserver(() => {
 //           (ctrl+wheel in Chromium and Firefox, GestureEvents in Safari). A plain
 //           wheel zooms only when the page around the view cannot scroll; otherwise
 //           it scrolls the page and a hint says how to zoom. A sideways scroll is the page's.
-//   drag    Shift or the middle button pans; on a slice two fingers pinch and pan.
+//   drag    Shift or the middle button pans; two fingers pinch and pan a slice or a plot.
 //           The window's centre stays on the data, so it cannot be dragged off screen.
 //   keys    on the focused view, + / − zoom about the centre, the arrows pan, 0 resets.
 //   double-click, a double-tap (countTap) or Reset zoom returns to the full view.
@@ -1101,7 +1101,7 @@ function wireZoom(canvas, hint, view) {
     if (from) view.zoom(from, wheelZoomFactor(e.deltaY, e.deltaMode, canvas.clientHeight), ...local(e));
   }, { passive: false });
   // Safari's trackpad pinch: GestureEvents, scaled from the start of the gesture.
-  // A touch pinch sends them too, but the pointer handlers zoom a slice then.
+  // A touch pinch sends them too, but the pointer handlers zoom a slice or a plot then.
   canvas.addEventListener('gesturestart', (e) => {
     e.preventDefault();
     gesture = { from: view.busy() ? null : view.from(), at: e.clientX === undefined ? [] : local(e) };
@@ -3182,7 +3182,7 @@ const plotZoom = (plot) => ({
   },
   pan: (dx, dy) => plot.view && panPlot(plot, plot.view, dx, dy),
   reset: () => setCurveZoom(plot, null),
-  busy: () => !!plot.drag,
+  busy: () => !!(plot.drag || plot.pinch) || plot.pointers.size > 0,
 });
 
 function setCurveZoom(plot, zoom) {
@@ -3191,13 +3191,80 @@ function setCurveZoom(plot, zoom) {
   drawPlot(plot);
 }
 
-/** Hover, zoom and pan on a plot's canvas, and its redraw on resizes; a double-click or double-tap resets it. */
+/** A second finger on a plot: drop the first one's drag, and pinch from here (see moveCurvePinch()). */
+function startCurvePinch(plot, e) {
+  plot.drag = null;
+  plot.canvas.classList.remove('panning');
+  if (!plot.view) return;
+  try { plot.canvas.setPointerCapture(e.pointerId); } catch { /* synthetic or already released pointer */ }
+  const [a, b] = [...plot.pointers.values()];
+  plot.pinch = { a, b, v: plot.view, zoom: plot.zoom, full: plot.full };
+  hoverCurve(plot, null);
+  drawPlot(plot);
+}
+
+/**
+ * Two fingers on a plot zoom and pan it in one, from its window at the start
+ * of the pinch: x by the change in their spread, about the value that was under
+ * their midpoint, which stays under it as they move (pinchRange()); the
+ * intensities as the wheel zooms them: by the factor x zoomed by, only once a
+ * box has set their range, and back to fitting the curves in view once zoomed
+ * out to their full size. The window starts at the plot's xMin (Q ≥ 0 for
+ * I(Q)), and its centre stays in the full range.
+ */
+function moveCurvePinch(plot) {
+  const d = plot.pinch, [a, b] = [...plot.pointers.values()];
+  const spread = (s, t) => Math.hypot(t[0] - s[0], t[1] - s[1]);
+  if (!b || spread(a, b) < 1) return;
+  const { v, full } = d, mid0 = [(d.a[0] + d.b[0]) / 2, (d.a[1] + d.b[1]) / 2], mid = [(a[0] + b[0]) / 2, (a[1] + b[1]) / 2];
+  const at = v.x0 + ((mid0[0] - v.pad.l) / v.aw) * (v.x1 - v.x0);
+  const x = pinchRange([v.x0, v.x1], at, (mid[0] - v.pad.l) / v.aw, spread(d.a, d.b) / spread(a, b),
+    { least: 2 * binWidthAt(plot, at), full: [full.x0, full.x1] });
+  let y = null;
+  const kx = (x[1] - x[0]) / (v.x1 - v.x0);
+  // As for the wheel, intensities zoomed out to their full size fit the curves again.
+  if (d.zoom?.y && !(kx > 1 && (v.y1 - v.y0) * kx >= (full.y1 - full.y0) * (1 - 1e-9))) {
+    const t = v.y0 + ((v.pad.t + v.ah - mid0[1]) / v.ah) * (v.y1 - v.y0);
+    y = pinchRange([v.y0, v.y1], t, (v.pad.t + v.ah - mid[1]) / v.ah, kx, { least: 0, full: [full.y0, full.y1] });
+  }
+  setCurveZoom(plot, { x: fromXMin(plot, x), y });
+}
+
+/**
+ * Hover, zoom and pan on a plot's canvas, and its redraw on resizes. One
+ * pointer drags (a box, or a pan with Shift or the middle button); two fingers
+ * pinch and pan; a double-click or double-tap resets it.
+ */
 function wirePlot(plot) {
   const taps = tapTracker();
-  plot.canvas.onpointerdown = (e) => { countTap(taps, e); startCurveDrag(plot, e); };
-  plot.canvas.onpointermove = (e) => { countTap(taps, e); hoverCurve(plot, e); moveCurveDrag(plot, e); };
-  plot.canvas.onpointerup = (e) => { endCurveDrag(plot); if (countTap(taps, e)) setCurveZoom(plot, null); };
-  plot.canvas.onpointercancel = (e) => { countTap(taps, e); plot.drag = null; plot.canvas.classList.remove('panning'); drawPlot(plot); };
+  plot.pointers = new Map(); // touch pointers down, in drawing coordinates
+  plot.pinch = null;
+  plot.canvas.onpointerdown = (e) => {
+    countTap(taps, e);
+    if (e.pointerType === 'touch') plot.pointers.set(e.pointerId, plotLocal(plot, e));
+    if (plot.pointers.size === 2) startCurvePinch(plot, e);
+    else if (plot.pointers.size < 2) startCurveDrag(plot, e);
+  };
+  plot.canvas.onpointermove = (e) => {
+    countTap(taps, e);
+    if (plot.pointers.has(e.pointerId)) plot.pointers.set(e.pointerId, plotLocal(plot, e));
+    if (plot.pinch) moveCurvePinch(plot);
+    else { hoverCurve(plot, e); moveCurveDrag(plot, e); }
+  };
+  plot.canvas.onpointerup = (e) => {
+    plot.pointers.delete(e.pointerId);
+    // The finger left after a pinch does nothing until it lifts.
+    if (plot.pinch) { if (plot.pointers.size < 2) plot.pinch = null; }
+    else endCurveDrag(plot);
+    if (countTap(taps, e)) setCurveZoom(plot, null);
+  };
+  plot.canvas.onpointercancel = (e) => {
+    countTap(taps, e);
+    plot.pointers.delete(e.pointerId);
+    plot.drag = plot.pinch = null;
+    plot.canvas.classList.remove('panning');
+    drawPlot(plot);
+  };
   plot.canvas.onpointerleave = () => hoverCurve(plot, null);
   // Not again for the dblclick a browser may send after a double-tap.
   plot.canvas.ondblclick = () => { if (!taps.justDoubleTapped(performance.now())) setCurveZoom(plot, null); };
