@@ -1044,7 +1044,8 @@ const resized = new ResizeObserver(() => {
 //   drag    Shift or the middle button pans; on a slice two fingers pinch and pan.
 //           The window's centre stays on the data, so it cannot be dragged off screen.
 //   keys    on the focused view, + / − zoom about the centre, the arrows pan, 0 resets.
-//   double-click (or Reset zoom) returns to the full view.
+//   double-click, a double-tap (countTap) or Reset zoom returns to the full view.
+// The gesture card (gestures.js, gesture-card.js) lists these: keep its rows in step.
 
 /** The tooltip of a view's Reset zoom (NEBULA3D's wording). */
 const RESET_ZOOM_TITLE = 'Reset zoom (double-click the view, or 0)';
