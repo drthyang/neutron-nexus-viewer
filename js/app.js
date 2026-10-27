@@ -1,6 +1,7 @@
 import { COLORMAPS } from './colormaps.js';
 import { cutAxis, cutBand, cutCrossing, cutEdges } from './cut.js';
 import { exportPlan } from './export.js';
+import { setupGestureCard } from './gesture-card.js';
 import { cartesianBasis, isDirect, nominalCell, planeGeometry, reciprocalMetric } from './nexus.js';
 import { parseBins, powderPlan, qExtent } from './powder.js';
 import { setupReindex } from './reindex-ui.js';
@@ -4095,6 +4096,8 @@ $('click-mode').addEventListener('click', (e) => {
   setClickMode(mode === clickMode ? 'navigate' : mode);
   persist();
 });
+// The "?" beside them: how to zoom, move and reset (gesture-card.js).
+setupGestureCard($('gesture-hint'));
 segmented($('layout'), (mode) => setLayout(mode, primary));
 segmented($('scale'), (value) => {
   if (value === 'log') {

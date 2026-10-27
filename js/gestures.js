@@ -79,7 +79,7 @@ export function gestureCard({ mac, touch }) {
       },
       { id: 'reset', name: 'Reset', ways: [[glyph('double-click', 'double-click')], [key('0')], [button('Reset zoom')]] },
       { id: 'box', name: 'Box zoom', ways: [box, [key('Esc'), text('cancels')]] },
-      { id: 'cut', name: 'Cut', ways: [cut, [key('⇧ Shift', 'Shift'), text('mid-drag: along a lattice direction')]] },
+      { id: 'cut', name: 'Cut', ways: [cut, [key('⇧ Shift', 'Shift'), text('mid-drag: lattice direction')]] },
     ],
     note: 'Keys act on the view you clicked last.',
   };

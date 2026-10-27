@@ -402,6 +402,69 @@ body.panel-collapsed .panel { visibility: hidden; }
 .menu-item b { font-size: 1.25rem; font-weight: 650; }
 .menu-item span { font-size: 1.15rem; line-height: 1.4; color: var(--text-3); }
 
+/* ---- key caps: the gesture card's keys and the zoom hint's ⌘ / Ctrl ------------------- */
+.kbd {
+  display: inline-flex; align-items: center; justify-content: center; min-width: 2rem; height: 2rem; padding: 0 0.5rem;
+  font: 600 1.1rem/1 var(--font-mono); color: var(--text); white-space: nowrap;
+  background: linear-gradient(180deg, var(--surface), var(--surface-2));
+  border: 1px solid var(--border-strong); border-bottom-width: 2px; border-radius: 0.5rem; box-shadow: 0 1px 0 rgba(16, 24, 40, 0.08);
+}
+/* Text for a screen reader only, such as "Command" for ⌘. */
+.vh { position: absolute; width: 1px; height: 1px; margin: -1px; padding: 0; border: 0; overflow: hidden; clip-path: inset(50%); white-space: nowrap; }
+
+/* ---- the gesture card (gesture-card.js): the "?" beside the click modes -------------- */
+.click-group { display: inline-flex; align-items: center; gap: 0.6rem; flex: none; }
+.gh { position: relative; display: inline-flex; }
+.gh-trigger {
+  position: relative; display: inline-grid; place-items: center; width: 1.8rem; height: 1.8rem; padding: 0;
+  font-size: 1.05rem; font-weight: 700; line-height: 1; color: var(--text-3); background: none;
+  border: 1px solid var(--border-strong); border-radius: 50%; cursor: pointer; transition: color 120ms ease, border-color 120ms ease;
+}
+.gh-trigger:hover, .gh-trigger[aria-expanded="true"] { color: var(--accent); border-color: var(--accent); }
+/* A target larger than the circle. */
+.gh-trigger::before { content: ""; position: absolute; inset: -0.6rem; }
+/* Until the card has been opened once: a small dot that breathes (and holds still with reduced motion). */
+.gh-new::after {
+  content: ""; position: absolute; top: -3px; right: -3px; width: 7px; height: 7px; border-radius: 50%;
+  background: var(--accent); box-shadow: 0 0 0 2px var(--bg); animation: gh-pulse 2s ease-out infinite;
+}
+@keyframes gh-pulse {
+  0% { box-shadow: 0 0 0 2px var(--bg), 0 0 0 2px rgba(47, 116, 230, 0.55); }
+  70%, 100% { box-shadow: 0 0 0 2px var(--bg), 0 0 0 9px rgba(47, 116, 230, 0); }
+}
+@media (prefers-reduced-motion: reduce) { .gh-new::after { animation: none; } }
+/* The card hangs under the "?", 8 px below it; gesture-card.js keeps it inside the window. */
+.gh-pop { position: absolute; top: 100%; left: 0; z-index: 50; padding-top: 0.8rem; }
+.gh-card {
+  width: 37.2rem; max-width: calc(100vw - 1.6rem); overflow-y: auto; padding: 1.1rem 1.4rem 1.2rem; background: var(--surface);
+  border: 1px solid var(--border); border-radius: 1.2rem; box-shadow: var(--shadow-2); outline: none; animation: gh-in 120ms ease-out;
+}
+.gh-card:focus-visible { box-shadow: var(--shadow-2), 0 0 0 2px var(--accent); }
+@keyframes gh-in { from { opacity: 0; transform: translateY(-3px); } }
+.gh-head { display: flex; align-items: baseline; gap: 0.8rem; margin-bottom: 0.4rem; }
+.gh-title { font-size: 1.25rem; font-weight: 650; color: var(--text); white-space: nowrap; }
+.gh-sub { flex: 1; min-width: 0; font-size: 1.1rem; color: var(--text-3); }
+.gh-close {
+  align-self: center; width: 2.2rem; height: 2.2rem; padding: 0; font-size: 1.6rem; line-height: 1; color: var(--text-3);
+  background: none; border: 0; border-radius: 0.5rem; cursor: pointer; flex: none;
+}
+.gh-close:hover { color: var(--text); background: var(--surface-3); }
+.gh-rows { margin: 0; padding: 0; list-style: none; }
+.gh-row { display: grid; grid-template-columns: 2rem 6.6rem minmax(0, 1fr); align-items: start; gap: 0.8rem; padding: 0.8rem 0; border-top: 1px solid var(--border-subtle); }
+.gh-row:first-child { border-top: 0; }
+.gh-icon { display: grid; place-items: center; height: 2.2rem; color: var(--accent); }
+.gh-name { font-size: 1.2rem; font-weight: 600; line-height: 2.2rem; color: var(--text); }
+.gh-ways { display: flex; flex-wrap: wrap; align-items: center; gap: 0.6rem 1rem; min-width: 0; }
+.gh-way { display: inline-flex; flex-wrap: wrap; align-items: center; gap: 0.4rem; min-height: 2.2rem; white-space: nowrap; }
+.gh-text, .gh-glyph { font-size: 1.15rem; color: var(--text-2); }
+.gh-glyph { display: inline-flex; align-items: center; gap: 0.4rem; }
+.gh-glyph svg { color: var(--text); }
+.gh-btn {
+  padding: 1px 0.7rem; font-size: 1.1rem; font-weight: 600; line-height: 1.8rem; color: var(--accent-hi); white-space: nowrap;
+  background: var(--accent-soft); border: 1px solid var(--accent-line); border-radius: 0.5rem;
+}
+.gh-note { margin: 0.6rem 0 0; padding-top: 0.8rem; font-size: 1.1rem; color: var(--text-3); border-top: 1px solid var(--border-subtle); }
+
 /* ---- Rigaku reduction dialog ------------------------------------------------------- */
 .rk-dialog { width: min(66rem, calc(100vw - 2.4rem)); max-height: calc(100vh - 4rem); padding: 0; border: 1px solid var(--border); border-radius: 1.2rem; background: var(--surface); color: var(--text); box-shadow: var(--shadow-2); }
 .rk-dialog::backdrop { background: rgba(16, 24, 40, 0.28); }
@@ -563,6 +626,10 @@ body.dragging.drop-b::after { content: "Drop to compare as dataset " attr(data-d
   .switch-track::after { width: 2rem; height: 2rem; }
   .switch input:checked + .switch-track::after { transform: translateX(1.8rem); }
   .switch { min-height: 4rem; }
+  /* The "?" of the gesture card: a 40 px target around a larger circle, and a larger close button. */
+  .gh-trigger { width: 2.4rem; height: 2.4rem; font-size: 1.25rem; }
+  .gh-trigger::before { inset: -0.8rem; }
+  .gh-close { width: 3.2rem; height: 3.2rem; margin: -0.5rem -0.6rem -0.5rem 0; }
 }
 </style>
 </head>
@@ -732,13 +799,29 @@ body.dragging.drop-b::after { content: "Drop to compare as dataset " attr(data-d
       <button id="panel-toggle" class="icon-btn" type="button" title="Hide the control panel" aria-pressed="true">
         <svg width="16" height="16" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.5" aria-hidden="true"><rect x="1.75" y="2.25" width="12.5" height="11.5" rx="1.5"/><path d="M6 2.5v11"/></svg>
       </button>
-      <div id="click-mode" class="segmented accent" data-value="navigate" role="group" aria-label="Clicking a slice">
-        <button type="button" data-value="navigate" class="on" title="Navigate: click or drag to move the other two slices through the point. Wheel with Ctrl/⌘, or pinch, zooms; Shift-, middle- or two-finger drag pans; double-click resets the view">
-          <svg width="14" height="14" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" aria-hidden="true"><circle cx="8" cy="8" r="4.5"/><path d="M8 1v3M8 12v3M1 8h3M12 8h3"/></svg><span class="hide-md">Navigate</span></button>
-        <button type="button" data-value="box" title="Box zoom: drag a box on a view to zoom into it, then back to Navigate (Esc or a second press cancels)">
-          <svg width="14" height="14" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" aria-hidden="true"><path d="M1.75 4.25v-2.5h2.5M9.75 1.75h2.5v2.5M1.75 9.75v2.5h2.5M6.25 1.75h1.5M1.75 6.25v1.5M12.25 6.25v1M6.25 12.25h1"/><circle cx="10.75" cy="10.75" r="2.5"/><path d="M12.6 12.6 14.5 14.5"/></svg><span class="hide-md">Box zoom</span></button>
-        <button type="button" data-value="cut" title="Cut: drag across a slice to draw a line cut, shown in the fourth view; drag an end to change it. Press Shift during the drag to keep the cut along a lattice direction">
-          <svg width="14" height="14" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" aria-hidden="true"><path d="M3.5 12.5l9-9"/><circle cx="3" cy="13" r="1.6" fill="currentColor" stroke="none"/><circle cx="13" cy="3" r="1.6" fill="currentColor" stroke="none"/></svg><span class="hide-md">Cut</span></button>
+      <div class="click-group">
+        <div id="click-mode" class="segmented accent" data-value="navigate" role="group" aria-label="Clicking a slice">
+          <button type="button" data-value="navigate" class="on" title="Navigate: click or drag to move the other two slices through the point. Wheel with Ctrl/⌘, or pinch, zooms; Shift-, middle- or two-finger drag pans; double-click resets the view">
+            <svg width="14" height="14" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" aria-hidden="true"><circle cx="8" cy="8" r="4.5"/><path d="M8 1v3M8 12v3M1 8h3M12 8h3"/></svg><span class="hide-md">Navigate</span></button>
+          <button type="button" data-value="box" title="Box zoom: drag a box on a view to zoom into it, then back to Navigate (Esc or a second press cancels)">
+            <svg width="14" height="14" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" aria-hidden="true"><path d="M1.75 4.25v-2.5h2.5M9.75 1.75h2.5v2.5M1.75 9.75v2.5h2.5M6.25 1.75h1.5M1.75 6.25v1.5M12.25 6.25v1M6.25 12.25h1"/><circle cx="10.75" cy="10.75" r="2.5"/><path d="M12.6 12.6 14.5 14.5"/></svg><span class="hide-md">Box zoom</span></button>
+          <button type="button" data-value="cut" title="Cut: drag across a slice to draw a line cut, shown in the fourth view; drag an end to change it. Press Shift during the drag to keep the cut along a lattice direction">
+            <svg width="14" height="14" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" aria-hidden="true"><path d="M3.5 12.5l9-9"/><circle cx="3" cy="13" r="1.6" fill="currentColor" stroke="none"/><circle cx="13" cy="3" r="1.6" fill="currentColor" stroke="none"/></svg><span class="hide-md">Cut</span></button>
+        </div>
+        <!-- The gesture card (gesture-card.js, which draws its rows): how to zoom, move and reset, from the "?" -->
+        <div id="gesture-hint" class="gh">
+          <button type="button" class="gh-trigger" aria-label="Zoom, move and reset: the gestures" title="Zoom, move and reset: the gestures" aria-haspopup="dialog" aria-expanded="false">?</button>
+          <div class="gh-pop" hidden>
+            <div id="gesture-card" class="gh-card" role="dialog" aria-modal="false" aria-labelledby="gesture-card-title" tabindex="-1">
+              <div class="gh-head">
+                <span id="gesture-card-title" class="gh-title">Zoom, move, reset</span><span class="gh-sub"></span>
+                <button type="button" class="gh-close" aria-label="Close" title="Close">×</button>
+              </div>
+              <ul class="gh-rows"></ul>
+              <p class="gh-note" hidden></p>
+            </div>
+          </div>
+        </div>
       </div>
       <div id="compare-view" class="segmented" data-value="split" role="group" aria-label="Datasets shown" hidden>
         <button type="button" data-value="a" title="Show dataset A only">A</button>

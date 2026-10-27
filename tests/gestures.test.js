@@ -41,7 +41,7 @@ test('the desktop card: the mouse, trackpad and keyboard ways, with the platform
   assert.deepEqual(ways(mac, 'move'), ['Shift + drag', 'middle-drag', 'Left Up Down Right']);
   assert.deepEqual(ways(mac, 'reset'), ['double-click', '0', 'Reset zoom']);
   assert.deepEqual(ways(mac, 'box'), ['Box zoom then drag a box', 'Esc cancels']);
-  assert.deepEqual(ways(mac, 'cut'), ['Cut then drag across a slice', 'Shift mid-drag: along a lattice direction']);
+  assert.deepEqual(ways(mac, 'cut'), ['Cut then drag across a slice', 'Shift mid-drag: lattice direction']);
   assert.equal(mac.sub, 'in any mode, on the slices and plots');
   assert.equal(mac.note, 'Keys act on the view you clicked last.');
   // Only the modifier differs.
