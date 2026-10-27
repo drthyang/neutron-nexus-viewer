@@ -1,6 +1,8 @@
 import { COLORMAPS } from './colormaps.js';
 import { cutAxis, cutBand, cutCrossing, cutEdges } from './cut.js';
 import { exportPlan } from './export.js';
+import { modKeyCap, setupGestureCard } from './gesture-card.js';
+import { DOUBLE_TAP_MS, tapTracker } from './gestures.js';
 import { cartesianBasis, isDirect, nominalCell, planeGeometry, reciprocalMetric } from './nexus.js';
 import { parseBins, powderPlan, qExtent } from './powder.js';
 import { setupReindex } from './reindex-ui.js';
@@ -278,9 +280,13 @@ document.addEventListener('click', (e) => {
   else if (!e.target.closest('.popover')) closePopovers();
 });
 addEventListener('resize', closePopovers);
+// Esc, wherever focus is: closes a popover, else puts an armed Box zoom away, else
+// leaves the single layout. An open dialog keeps it for itself (the gesture card
+// handles its own first, gesture-card.js; a modal dialog closes on it).
 addEventListener('keydown', (e) => {
   if (e.key !== 'Escape') return;
   if (document.querySelector('.popover:not([hidden])')) closePopovers();
+  else if (e.target instanceof Element && e.target.closest('dialog')) return;
   else if (clickMode === 'box') setClickMode('navigate');
   else if (layout === 'single') setLayout(lastMulti, primary);
 });
@@ -774,7 +780,7 @@ function setupViewer() {
     const shell = viewShell(key, `<span class="badge hue-${fixed}">${escapeHTML(F.label)}</span>`, `${escapeHTML(X.label)} – ${escapeHTML(Y.label)}`);
     shell.q('.view-pos').insertAdjacentHTML('beforebegin', '<span class="view-angle" hidden></span>');
     shell.actions.innerHTML = `
-      <button type="button" class="btn btn-ghost btn-xs zoom-reset" hidden title="Back to the full view (or double-click the plot)">Reset zoom</button>
+      <button type="button" class="btn btn-ghost btn-xs zoom-reset" hidden title="${RESET_ZOOM_TITLE}">Reset zoom</button>
       <button type="button" class="icon-btn save" title="Save PNG">${ICONS.save}</button>`;
     shell.actions.append(shell.focusBtn, shell.maxBtn);
     shell.q('.view-body').innerHTML = `<canvas class="plot" role="img"></canvas><span class="overlay-chip" hidden></span>${zoomHint}`;
@@ -793,7 +799,7 @@ function setupViewer() {
     shell.section.append(foot);
     const q = shell.q;
     const p = {
-      fixed, x, y, step, lo, hi, version: 0, key, section: shell.section, zoom: null, drag: null, pinch: null, cutDrag: null, pointers: new Map(), more: [newLayer(), newLayer(), newLayer()],
+      fixed, x, y, step, lo, hi, version: 0, key, section: shell.section, zoom: null, drag: null, pinch: null, cutDrag: null, pointers: new Map(), taps: tapTracker(), more: [newLayer(), newLayer(), newLayer()],
       zoomReset: q('.zoom-reset'), slider: q('.slider'), center: q('.center'), wslider: q('.wslider'), width: q('.width'),
       caption: q('.view-caption'), pos: q('.view-pos'), angle: q('.view-angle'), canvas: q('canvas'), hover: q('.overlay-chip'),
     };
@@ -808,8 +814,9 @@ function setupViewer() {
     p.wslider.oninput = () => { p.width.value = p.wslider.value; request(p); };
     p.width.oninput = () => { p.wslider.value = p.width.value; paint(p.wslider); request(p); };
     // One pointer clicks or drags by the click mode, or pans with Shift or the
-    // middle button in any mode; two fingers pinch and pan.
+    // middle button in any mode; two fingers pinch and pan, and a double-tap resets.
     p.canvas.onpointerdown = (ev) => {
+      countTap(p.taps, ev);
       if (ev.pointerType === 'touch') p.pointers.set(ev.pointerId, localPoint(p, ev));
       if (p.pointers.size === 2) startPinch(p, ev);
       else if (p.pointers.size < 2) {
@@ -819,6 +826,7 @@ function setupViewer() {
       }
     };
     p.canvas.onpointermove = (ev) => {
+      countTap(p.taps, ev);
       if (p.pointers.has(ev.pointerId)) p.pointers.set(ev.pointerId, localPoint(p, ev));
       if (p.pinch) movePinch(p);
       else {
@@ -835,15 +843,18 @@ function setupViewer() {
       if (p.pinch) { if (p.pointers.size < 2) p.pinch = null; }
       else if (p.cutDrag) p.cutDrag = null;
       else endBox(p, ev);
+      if (countTap(p.taps, ev)) resetSlice(p);
     };
     p.canvas.onpointercancel = (ev) => {
+      countTap(p.taps, ev);
       p.pointers.delete(ev.pointerId);
       p.drag = p.pinch = p.cutDrag = null;
       p.canvas.classList.remove('panning');
       redraw();
     };
     p.canvas.onpointerleave = () => { p.hover.hidden = true; };
-    p.canvas.ondblclick = () => { clearTimeout(p.clickTimer); setZoom(p, null); };
+    // Not again for the dblclick a browser may send after a double-tap.
+    p.canvas.ondblclick = () => { if (!p.taps.justDoubleTapped(performance.now())) resetSlice(p); };
     p.zoomReset.onclick = () => setZoom(p, null);
     wireZoom(p.canvas, q('.zoom-hint'), sliceZoom(p));
     q('.save').onclick = () => savePNG(p);
@@ -887,7 +898,7 @@ function setupViewer() {
 function setupPowder() {
   const shell = viewShell('iq', slotSwitch('iq'), 'Powder average');
   shell.actions.innerHTML = `
-    <button type="button" class="btn btn-ghost btn-xs zoom-reset" hidden title="Back to the full range (or double-click the plot)">Reset zoom</button>
+    <button type="button" class="btn btn-ghost btn-xs zoom-reset" hidden title="${RESET_ZOOM_TITLE}">Reset zoom</button>
     <div class="segmented sm pq-scale" role="group" aria-label="Intensity scale"><button type="button" data-value="linear" title="Linear intensity scale">Lin</button><button type="button" data-value="log" title="Logarithmic intensity scale">Log</button></div>
     <button type="button" class="icon-btn" title="I(Q) options" aria-haspopup="dialog" aria-expanded="false" data-pop="pop-iq">${ICONS.gear}</button>
     <button type="button" class="icon-btn data" title="Download I(Q) as text: Q, I, σ, coverage and voxels per shell">${ICONS.download}</button>
@@ -1033,12 +1044,13 @@ const resized = new ResizeObserver(() => {
 //   drag    Shift or the middle button pans; on a slice two fingers pinch and pan.
 //           The window's centre stays on the data, so it cannot be dragged off screen.
 //   keys    on the focused view, + / − zoom about the centre, the arrows pan, 0 resets.
-//   double-click (or Reset zoom) returns to the full view.
+//   double-click, a double-tap (countTap) or Reset zoom returns to the full view.
+// The gesture card (gestures.js, gesture-card.js) lists these: keep its rows in step.
 
-const MAC = /Mac|iPhone|iPad|iPod/.test(navigator.platform || navigator.userAgent);
-/** What a plain wheel over a view says on a page that scrolls. */
-const ZOOM_HINT = `Use ${MAC ? '⌘' : 'Ctrl'} + scroll to zoom`;
-const zoomHint = `<div class="zoom-hint" role="status" hidden>${ZOOM_HINT}</div>`;
+/** The tooltip of a view's Reset zoom (NEBULA3D's wording). */
+const RESET_ZOOM_TITLE = 'Reset zoom (double-click the view, or 0)';
+/** What a plain wheel over a view says on a page that scrolls: "Use [⌘] + scroll to zoom", the key as a key cap (Ctrl off Apple platforms). */
+const zoomHint = `<div class="zoom-hint" role="status" hidden><span>Use ${modKeyCap()} + scroll to zoom</span></div>`;
 
 /** Shift or the middle button starts a pan, in any click mode. */
 const panStart = (e) => e.button === 1 || (e.button === 0 && e.shiftKey);
@@ -1213,10 +1225,31 @@ function endBox(p, e) {
     return;
   }
   if (d.moved) { navigate(p, e); return; }
-  // A click: wait briefly so a double-click (full view) does not also act on it.
+  // A click: wait briefly so a double-click (full view) does not also act on it,
+  // and a tap long enough for a second tap to make it a double-tap.
   const { clientX, clientY } = e;
   clearTimeout(p.clickTimer);
-  p.clickTimer = setTimeout(() => navigate(p, { clientX, clientY }), 250);
+  p.clickTimer = setTimeout(() => navigate(p, { clientX, clientY }), e.pointerType === 'touch' ? DOUBLE_TAP_MS : 250);
+}
+
+/** A double-click or double-tap on a slice: back to the full view, without the click it began with. */
+function resetSlice(p) {
+  clearTimeout(p.clickTimer);
+  setZoom(p, null);
+}
+
+/**
+ * Feed a view's touch pointers to its tap counter (gestures.js tapTracker):
+ * true when this pointerup ends a double-tap. Browsers do not reliably send
+ * dblclick for one (Safari on iOS), so the views count taps themselves.
+ */
+function countTap(taps, e) {
+  if (e.pointerType !== 'touch') return false;
+  if (e.type === 'pointerdown') taps.down(e.pointerId, e.clientX, e.clientY);
+  else if (e.type === 'pointermove') taps.move(e.pointerId, e.clientX, e.clientY);
+  else if (e.type === 'pointerup') return taps.up(e.pointerId, e.clientX, e.clientY, performance.now());
+  else taps.cancel(e.pointerId);
+  return false;
 }
 
 /** A second finger: drop the click or drag of the first, and pinch from here. */
@@ -3158,14 +3191,16 @@ function setCurveZoom(plot, zoom) {
   drawPlot(plot);
 }
 
-/** Hover, zoom and pan on a plot's canvas, and its redraw on resizes. */
+/** Hover, zoom and pan on a plot's canvas, and its redraw on resizes; a double-click or double-tap resets it. */
 function wirePlot(plot) {
-  plot.canvas.onpointerdown = (e) => startCurveDrag(plot, e);
-  plot.canvas.onpointermove = (e) => { hoverCurve(plot, e); moveCurveDrag(plot, e); };
-  plot.canvas.onpointerup = () => endCurveDrag(plot);
-  plot.canvas.onpointercancel = () => { plot.drag = null; plot.canvas.classList.remove('panning'); drawPlot(plot); };
+  const taps = tapTracker();
+  plot.canvas.onpointerdown = (e) => { countTap(taps, e); startCurveDrag(plot, e); };
+  plot.canvas.onpointermove = (e) => { countTap(taps, e); hoverCurve(plot, e); moveCurveDrag(plot, e); };
+  plot.canvas.onpointerup = (e) => { endCurveDrag(plot); if (countTap(taps, e)) setCurveZoom(plot, null); };
+  plot.canvas.onpointercancel = (e) => { countTap(taps, e); plot.drag = null; plot.canvas.classList.remove('panning'); drawPlot(plot); };
   plot.canvas.onpointerleave = () => hoverCurve(plot, null);
-  plot.canvas.ondblclick = () => setCurveZoom(plot, null);
+  // Not again for the dblclick a browser may send after a double-tap.
+  plot.canvas.ondblclick = () => { if (!taps.justDoubleTapped(performance.now())) setCurveZoom(plot, null); };
   plot.zoomReset.onclick = () => setCurveZoom(plot, null);
   wireZoom(plot.canvas, plot.canvas.parentElement.querySelector('.zoom-hint'), plotZoom(plot));
   resized.observe(plot.canvas);
@@ -3190,7 +3225,7 @@ const CUT_GRAB = 10;
 function setupCut() {
   const shell = viewShell('cut', slotSwitch('cut'), 'Line cut');
   shell.actions.innerHTML = `
-    <button type="button" class="btn btn-ghost btn-xs zoom-reset" hidden title="Back to the full range (or double-click the plot)">Reset zoom</button>
+    <button type="button" class="btn btn-ghost btn-xs zoom-reset" hidden title="${RESET_ZOOM_TITLE}">Reset zoom</button>
     <div class="segmented sm cut-scale" role="group" aria-label="Intensity scale"><button type="button" data-value="linear" title="Linear intensity scale">Lin</button><button type="button" data-value="log" title="Logarithmic intensity scale">Log</button></div>
     <button type="button" class="icon-btn" title="Line cut options" aria-haspopup="dialog" aria-expanded="false" data-pop="pop-cut">${ICONS.gear}</button>
     <button type="button" class="icon-btn" title="Download the cut: CSV or text" aria-haspopup="menu" aria-expanded="false" data-pop="pop-cut-download">${ICONS.download}</button>
@@ -4095,6 +4130,8 @@ $('click-mode').addEventListener('click', (e) => {
   setClickMode(mode === clickMode ? 'navigate' : mode);
   persist();
 });
+// The "?" beside them: how to zoom, move and reset (gesture-card.js).
+setupGestureCard($('gesture-hint'));
 segmented($('layout'), (mode) => setLayout(mode, primary));
 segmented($('scale'), (value) => {
   if (value === 'log') {

@@ -23,7 +23,7 @@ What the viewer is for, everything it does with links to the details, and a firs
 
 | Area | What you get | Read more |
 | --- | --- | --- |
-| **Slices** | HK, HL and KL cuts with live slab center and thickness. Click to move the other slices through a point; zoom with Ctrl/⌘ + scroll, a pinch or a box, and pan with Shift-drag, as in NEBULA3D's views; quad, focus and single layouts | [Slice views](USER_GUIDE.md#slice-views) |
+| **Slices** | HK, HL and KL cuts with live slab center and thickness. Click to move the other slices through a point; zoom with Ctrl/⌘ + scroll, a pinch or a box, and pan with Shift-drag, as in NEBULA3D's views, with a **?** that lists every gesture; quad, focus and single layouts | [Slice views](USER_GUIDE.md#slice-views) |
 | **Line cuts** | Drag a line across a slice, or type its ends, for a 1-D profile of the volume along any direction in 3-D, such as (H, H, H), averaged over a rod of adjustable diameter around the line, with symmetry pooling, σ and both datasets; saved as CSV or text | [Line cuts](USER_GUIDE.md#line-cuts) · [Method](METHOD.md#line-cuts) |
 | **Symmetry averaging** | Any Laue class or your own operations, closed into a group and applied exactly on the bin grid, with a check that they fit the cell | [Symmetry](METHOD.md#symmetry-averaging) |
 | **Artifact masking** | Removes detector-edge voxels and symmetry outliers before averaging; preview what is removed and export the mask as a NumPy array | [Masking](METHOD.md#masking-detector-edge-artifacts) |
@@ -33,7 +33,7 @@ What the viewer is for, everything it does with links to the details, and a firs
 | **3-D view** | A transparent isosurface of the processed volume, with the current slices as planes and the line cut, inside the rod it averages, passing through them | [3-D view](USER_GUIDE.md#3-d-view) |
 | **I(Q)** | The processed volume reduced to 1-D, on request: the mean intensity per \|Q\| shell over the voxels with data, with symmetry orbits weighted by multiplicity, split voxels, propagated σ and shell coverage; saved as text | [I(Q)](USER_GUIDE.md#iq) · [Method](METHOD.md#powder-average-iq) |
 | **Hand-off to NEBULA3D** | One click sends the masked, symmetrized volume to [NEBULA3D](https://github.com/drthyang/nebula3d)'s 3D-ΔPDF pipeline in a new tab, or saves it as a file | [Export](USER_GUIDE.md#export-for-nebula3d) |
-| **Any screen** | Laptops to 4K and 5K monitors (drawn larger at 100% scaling), tablets and phones: views first on narrow screens, touch-sized controls and pinch zoom | [The screen](USER_GUIDE.md#the-screen) |
+| **Any screen** | Laptops to 4K and 5K monitors (drawn larger at 100% scaling), tablets and phones: views first on narrow screens, touch-sized controls, pinch zoom and double-tap reset | [The screen](USER_GUIDE.md#the-screen) |
 | **Rigaku XRD reduction** | Raw CrysAlisPro frames (`*.rod_img`) to an HKL volume in the browser: detector mask, Bragg-peak search, geometry refinement per run, solid-angle and polarization normalization, in any cell setting (a transformation matrix) or on an open dataset's grid, optional background subtraction (measured, static or rotation-resolved, or an isotropic one such as a Kapton mount's estimated from the frames), using all CPU cores with the same result as one; opens for comparison and saves as a Mantid file that `LoadMD` reads | [Reducing frames](USER_GUIDE.md#reducing-rigaku-xrd-frames) · [Method](METHOD.md#rigaku-reduction) |
 | **Files and links** | Mantid `MDHistoWorkspace` (`SaveMD`), any 3-D `NXdata`, and NEBULA3D's processed volumes and 3D-ΔPDFs (drawn at the real-space cell angles); local files or links that open a file, a comparison, symmetry and mask; PNG export with a colorbar | [Supported files](USER_GUIDE.md#supported-files) |
 | **Agent tools** | The analysis as tools for AI agents over MCP (Claude Code, Claude Desktop, any MCP client): open a volume, set symmetry and a mask, look at slices, take line cuts and I(Q), read the intensity at NEXPLAN's Bragg nodes, export for NEBULA3D, with the viewer's own code | [Agent tools](AGENT.md) |
@@ -45,7 +45,8 @@ What the viewer is for, everything it does with links to the details, and a firs
    **Mask** if detector edges show up as bright rims.
 3. Click a slice to move the other two through that point. Zoom with Ctrl/⌘ + scroll
    or a pinch (or **Box zoom** in the header), Shift-drag to pan, double-click for the
-   full view, and **Focus** to show one view large.
+   full view, and **Focus** to show one view large. The **?** beside the click modes
+   lists these gestures, for your device.
 4. For a 1-D profile, switch the header to **Cut** and drag across a slice: the cut
    appears in the fourth view, and follows the slice as you move it.
 5. To compare, click **Compare…** next to the file in the top bar and open a second file: each slice is split along its diagonal. Add a third and fourth file to share each slice in quadrants.
